@@ -1,0 +1,28 @@
+# .NET build output
+bin/
+obj/
+TestResults/
+
+# IDE/user-local files
+.vs/
+.vscode/
+**/Properties/launchSettings.json
+*.user
+*.suo
+
+# Local runtime data
+data/
+artifacts/
+*.db
+*.db-shm
+*.db-wal
+
+# BMad / agent workflow files
+_bmad/
+_bmad-output/
+.agents/
+.claude/
+AGENTS.md
+
+# Claude Code local settings
+.claude/settings.local.json

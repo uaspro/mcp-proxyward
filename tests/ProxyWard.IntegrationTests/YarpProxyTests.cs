@@ -1,0 +1,164 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Testing;
+
+namespace ProxyWard.IntegrationTests;
+
+public class YarpProxyTests
+{
+    [Fact]
+    public async Task ConfiguredRouteProxiesToUpstreamWithMappedPathAndQuery()
+    {
+        await using var upstream = await StartUpstreamAsync();
+        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
+        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.GetAsync("/github/mcp/tools/list?cursor=abc");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+
+            Assert.Equal("/mcp/tools/list", payload.RootElement.GetProperty("path").GetString());
+            Assert.Equal("?cursor=abc", payload.RootElement.GetProperty("query").GetString());
+            Assert.Equal("GET", payload.RootElement.GetProperty("method").GetString());
+
+            using var exactResponse = await client.GetAsync("/github/mcp?ping=1");
+
+            Assert.Equal(HttpStatusCode.OK, exactResponse.StatusCode);
+
+            await using var exactStream = await exactResponse.Content.ReadAsStreamAsync();
+            using var exactPayload = await JsonDocument.ParseAsync(exactStream);
+
+            Assert.Equal("/mcp", exactPayload.RootElement.GetProperty("path").GetString());
+            Assert.Equal("?ping=1", exactPayload.RootElement.GetProperty("query").GetString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+        }
+    }
+
+    [Fact]
+    public async Task UnknownRouteReturnsClearNotFoundError()
+    {
+        await using var upstream = await StartUpstreamAsync();
+        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
+        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.GetAsync("/unknown/mcp");
+
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.Contains("No MCP proxy route configured for this request.", body, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+        }
+    }
+
+    private static async Task<UpstreamApp> StartUpstreamAsync()
+    {
+        var port = GetFreePort();
+        var baseAddress = $"http://127.0.0.1:{port}";
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls(baseAddress);
+
+        var app = builder.Build();
+        app.Map("/{**path}", (HttpRequest request) => Results.Json(new
+        {
+            method = request.Method,
+            path = request.Path.Value,
+            query = request.QueryString.Value
+        }));
+
+        await app.StartAsync();
+        return new UpstreamApp(baseAddress, app);
+    }
+
+    private static int GetFreePort()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        return ((IPEndPoint)listener.LocalEndpoint).Port;
+    }
+
+    private static string WriteTempPolicy(string yaml)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
+        File.WriteAllText(path, yaml);
+        return path;
+    }
+
+    private static string CreatePolicy(string upstreamBaseAddress) =>
+        $$"""
+        mode: audit
+        inspection:
+          maxBodyBytes: 1048576
+          unsupportedStreaming: warn
+        audit:
+          sink: sqlite
+          sqlitePath: ./data/proxyward.db
+        observability:
+          serviceName: mcp-proxyward
+          console:
+            enabled: true
+          otlp:
+            enabled: false
+            endpoint: http://otel-collector:4317
+          applicationInsights:
+            enabled: false
+            connectionStringEnv: APPLICATIONINSIGHTS_CONNECTION_STRING
+          sampling:
+            tracesRatio: 1.0
+        servers:
+          github:
+            route: /github/mcp
+            upstream: {{upstreamBaseAddress}}/mcp
+            allowed: true
+            tools:
+              default: deny
+              allow: []
+              block: []
+            arguments:
+              paths:
+                allowedRoots:
+                  - /workspace
+                blockTraversal: true
+              hosts:
+                allow: []
+                blockPrivateNetworks: true
+              commands:
+                blockShell: true
+                dangerous:
+                  - rm
+        """;
+
+    private sealed class UpstreamApp(string baseAddress, WebApplication app) : IAsyncDisposable
+    {
+        public string BaseAddress { get; } = baseAddress;
+
+        public async ValueTask DisposeAsync()
+        {
+            await app.StopAsync();
+            await app.DisposeAsync();
+        }
+    }
+}

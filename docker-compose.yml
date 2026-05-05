@@ -1,0 +1,38 @@
+services:
+  proxyward:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      PROXYWARD_POLICY_PATH: /app/config/proxyward.yaml
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./samples/compose/proxyward.yaml:/app/config/proxyward.yaml:ro
+      - proxyward-data:/app/data
+    depends_on:
+      - sample-mcp
+      - otel-collector
+
+  sample-mcp:
+    build:
+      context: .
+      dockerfile: samples/SampleMcpServer/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+    expose:
+      - "8080"
+
+  otel-collector:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector:0.150.0
+    command:
+      - --config=/etc/otelcol/config.yaml
+    volumes:
+      - ./samples/compose/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+
+volumes:
+  proxyward-data:

@@ -1,0 +1,39 @@
+mode: audit
+inspection:
+  maxBodyBytes: 1048576
+  unsupportedStreaming: warn
+  batchToolCalls: failClosed
+audit:
+  sink: sqlite
+  sqlitePath: /app/data/proxyward.db
+observability:
+  serviceName: mcp-proxyward
+  console:
+    enabled: true
+  otlp:
+    enabled: true
+    endpoint: http://otel-collector:4317
+  applicationInsights:
+    enabled: false
+    connectionStringEnv: APPLICATIONINSIGHTS_CONNECTION_STRING
+  sampling:
+    tracesRatio: 1.0
+servers:
+  sample:
+    route: /sample/mcp
+    upstream: http://sample-mcp:8080/mcp
+    allowed: true
+    tools:
+      default: allow
+      allow: []
+      block: []
+    arguments:
+      paths:
+        allowedRoots: []
+        blockTraversal: false
+      hosts:
+        allow: []
+        blockPrivateNetworks: false
+      commands:
+        blockShell: false
+        dangerous: []
