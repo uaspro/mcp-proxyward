@@ -339,6 +339,6 @@ Deferred (designed for, not built yet): approval workflow queue, PostgreSQL audi
 
 If ProxyWard is useful to you, a star helps other people find it.
 
-[![GitHub stars](https://img.shields.io/github/stars/OWNER/mcp-proxyward?style=social)](https://github.com/OWNER/mcp-proxyward/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/uaspro/mcp-proxyward?style=social)](https://github.com/uaspro/mcp-proxyward/stargazers)
 
-[![Star History Chart](https://api.star-history.com/svg?repos=OWNER/mcp-proxyward&type=Date)](https://star-history.com/#OWNER/mcp-proxyward&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=uaspro/mcp-proxyward&type=Date)](https://star-history.com/#uaspro/mcp-proxyward&Date)
