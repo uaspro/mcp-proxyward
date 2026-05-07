@@ -4,6 +4,7 @@
     <Project Path="src/ProxyWard.Audit/ProxyWard.Audit.csproj" />
     <Project Path="src/ProxyWard.Core/ProxyWard.Core.csproj" />
     <Project Path="src/ProxyWard.Locking/ProxyWard.Locking.csproj" />
+    <Project Path="src/ProxyWard.Management.Api/ProxyWard.Management.Api.csproj" />
     <Project Path="src/ProxyWard.Policy/ProxyWard.Policy.csproj" />
   </Folder>
   <Folder Name="/tests/">

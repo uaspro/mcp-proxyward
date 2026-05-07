@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ProxyWard.Api.Observability;
+using ProxyWard.Api.Runtime;
 using ProxyWard.Audit.Events;
 using ProxyWard.Core.Policies;
 using ProxyWard.Policy.Configuration;
@@ -9,7 +10,7 @@ namespace ProxyWard.Api.Middleware;
 
 public sealed class ServerAllowlistMiddleware(
     RequestDelegate next,
-    ProxyWardPolicy policy,
+    IProxyWardPolicyProvider policyProvider,
     ServerAllowlistPolicyEvaluator evaluator,
     IAuditSink auditSink,
     ILogger<ServerAllowlistMiddleware> logger)
@@ -19,8 +20,9 @@ public sealed class ServerAllowlistMiddleware(
 
     public async Task InvokeAsync(HttpContext context)
     {
+        var policy = policyProvider.Current;
         var stopwatch = Stopwatch.StartNew();
-        var server = ResolveServer(context.Request.Path);
+        var server = ResolveServer(context.Request.Path, policy);
 
         if (server is null)
         {
@@ -28,16 +30,18 @@ public sealed class ServerAllowlistMiddleware(
             return;
         }
 
+        context.Items[ServerResolutionItems.PolicySnapshot] = policy;
         context.Items[ServerResolutionItems.ServerPolicy] = server;
 
         PolicyDecision decision;
         using (var activity = ProxyWardTelemetry.StartActivity(
             ProxyWardTelemetry.PolicyEvaluationActivity,
-            CreateTelemetryMetadata(context, server)))
+            CreateTelemetryMetadata(context, policy, server)))
         {
             decision = evaluator.Evaluate(policy.Mode, server);
             var telemetry = CreateTelemetryMetadata(
                 context,
+                policy,
                 server,
                 decision: FormatDecision(decision.Type),
                 reasons: decision.Reasons);
@@ -53,8 +57,8 @@ public sealed class ServerAllowlistMiddleware(
 
         stopwatch.Stop();
 
-        LogDecision(context, server, decision);
-        await EmitAuditAsync(context, server, decision, stopwatch.ElapsedMilliseconds);
+        LogDecision(context, policy, server, decision);
+        await EmitAuditAsync(context, policy, server, decision, stopwatch.ElapsedMilliseconds);
 
         if (decision.Type == PolicyDecisionType.WouldBlock)
         {
@@ -72,7 +76,7 @@ public sealed class ServerAllowlistMiddleware(
         });
     }
 
-    private ServerPolicy? ResolveServer(PathString path)
+    private static ServerPolicy? ResolveServer(PathString path, ProxyWardPolicy policy)
     {
         var requestPath = path.Value ?? "/";
 
@@ -88,7 +92,7 @@ public sealed class ServerAllowlistMiddleware(
             .FirstOrDefault();
     }
 
-    private void LogDecision(HttpContext context, ServerPolicy server, PolicyDecision decision)
+    private void LogDecision(HttpContext context, ProxyWardPolicy policy, ServerPolicy server, PolicyDecision decision)
     {
         logger.LogWarning(
             ServerAllowlistEvent,
@@ -103,7 +107,12 @@ public sealed class ServerAllowlistMiddleware(
             ResolveCorrelationId(context));
     }
 
-    private async Task EmitAuditAsync(HttpContext context, ServerPolicy server, PolicyDecision decision, long durationMs)
+    private async Task EmitAuditAsync(
+        HttpContext context,
+        ProxyWardPolicy policy,
+        ServerPolicy server,
+        PolicyDecision decision,
+        long durationMs)
     {
         var auditEvent = new AuditEvent(
             Timestamp: DateTimeOffset.UtcNow,
@@ -125,6 +134,7 @@ public sealed class ServerAllowlistMiddleware(
             ProxyWardTelemetry.AuditWriteActivity,
             CreateTelemetryMetadata(
                 context,
+                policy,
                 server,
                 decision: FormatDecision(decision.Type),
                 reasons: decision.Reasons,
@@ -139,6 +149,7 @@ public sealed class ServerAllowlistMiddleware(
             activity?.SetStatus(ActivityStatusCode.Error, "audit_sink_failure");
             ProxyWardTelemetry.RecordAuditSinkFailure(CreateTelemetryMetadata(
                 context,
+                policy,
                 server,
                 decision: FormatDecision(decision.Type),
                 reasons: decision.Reasons,
@@ -156,6 +167,7 @@ public sealed class ServerAllowlistMiddleware(
 
     private TelemetryMetadata CreateTelemetryMetadata(
         HttpContext context,
+        ProxyWardPolicy policy,
         ServerPolicy server,
         string? decision = null,
         IReadOnlyCollection<string>? reasons = null,

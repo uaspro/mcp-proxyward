@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\ProxyWard.Api\ProxyWard.Api.csproj" />
     <ProjectReference Include="..\..\src\ProxyWard.Core\ProxyWard.Core.csproj" />
+    <ProjectReference Include="..\..\src\ProxyWard.Management.Api\ProxyWard.Management.Api.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,8 @@
 using ProxyWard.Api.Hosts;
+using ProxyWard.Api.Control;
 using ProxyWard.Api.Middleware;
 using ProxyWard.Api.Observability;
+using ProxyWard.Api.Runtime;
 using ProxyWard.Api.Yarp;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Redaction;
@@ -11,6 +13,7 @@ using ProxyWard.Locking.Persistence;
 using ProxyWard.Locking.Tools;
 using ProxyWard.Policy.Configuration;
 using ProxyWard.Policy.Engine;
+using Yarp.ReverseProxy.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,8 +22,16 @@ var policyPath = Environment.GetEnvironmentVariable("PROXYWARD_POLICY_PATH")
     ?? "proxyward.yaml";
 
 var policy = ProxyWardPolicyLoader.LoadFile(policyPath);
+var controlOptions = ProxyWardControlOptions.Load(builder.Configuration);
+var yarpConfigProvider = new DynamicProxyWardYarpConfigProvider(
+    ProxyWardYarpConfig.CreateRoutes(policy),
+    ProxyWardYarpConfig.CreateClusters(policy));
 builder.AddProxyWardObservability(policy);
 builder.Services.AddSingleton(policy);
+builder.Services.AddSingleton<IProxyWardPolicyProvider>(new InMemoryProxyWardPolicyProvider(policy));
+builder.Services.AddSingleton(controlOptions);
+builder.Services.AddSingleton<IProxyWardYarpConfigProvider>(yarpConfigProvider);
+builder.Services.AddSingleton<IProxyConfigProvider>(yarpConfigProvider);
 builder.Services.AddSingleton<IMcpMessageParser, McpMessageParser>();
 builder.Services.AddSingleton<IMcpMethodClassifier, McpMethodClassifier>();
 builder.Services.AddSingleton<IRedactor, Redactor>();
@@ -38,23 +49,26 @@ builder.Services.AddSingleton<CommandArgumentRuleEvaluator>();
 builder.Services.AddSingleton<ArgumentPolicyOverrideResolver>();
 builder.Services.AddSingleton<IAuditSink>(services =>
     CreateAuditSink(policy, services.GetRequiredService<ILoggerFactory>()));
-builder.Services.AddReverseProxy()
-    .LoadFromMemory(
-        ProxyWardYarpConfig.CreateRoutes(policy),
-        ProxyWardYarpConfig.CreateClusters(policy));
+builder.Services.AddReverseProxy();
 
 var app = builder.Build();
 
 app.MapGet("/", () => Results.Redirect("/health"));
 
-app.MapGet("/health", (ProxyWardPolicy loadedPolicy) => Results.Ok(new
+app.MapGet("/health", (IProxyWardPolicyProvider policyProvider) =>
 {
-    status = "healthy",
-    service = "MCP ProxyWard",
-    mode = loadedPolicy.Mode.ToString().ToLowerInvariant(),
-    policyVersion = loadedPolicy.VersionHash,
-    serverCount = loadedPolicy.Servers.Count
-}));
+    var loadedPolicy = policyProvider.Current;
+    return Results.Ok(new
+    {
+        status = "healthy",
+        service = "MCP ProxyWard",
+        mode = loadedPolicy.Mode.ToString().ToLowerInvariant(),
+        policyVersion = loadedPolicy.VersionHash,
+        serverCount = loadedPolicy.Servers.Count
+    });
+});
+
+app.MapProxyWardControlEndpoints();
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<ServerAllowlistMiddleware>();

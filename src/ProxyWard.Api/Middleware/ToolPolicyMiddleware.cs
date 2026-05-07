@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using ProxyWard.Api.Observability;
+using ProxyWard.Api.Runtime;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Redaction;
 using ProxyWard.Core.JsonRpc;
@@ -13,7 +14,7 @@ namespace ProxyWard.Api.Middleware;
 
 public sealed class ToolPolicyMiddleware(
     RequestDelegate next,
-    ProxyWardPolicy policy,
+    IProxyWardPolicyProvider policyProvider,
     ToolPolicyEvaluator evaluator,
     PathArgumentRuleEvaluator pathRules,
     HostArgumentRuleEvaluator hostRules,
@@ -44,6 +45,7 @@ public sealed class ToolPolicyMiddleware(
             return;
         }
 
+        var policy = ResolvePolicySnapshot(context);
         var evaluations = new List<ToolPolicyEvaluation>();
 
         foreach (var message in parseResult.Messages)
@@ -62,6 +64,7 @@ public sealed class ToolPolicyMiddleware(
                 ProxyWardTelemetry.PolicyEvaluationActivity,
                 CreateTelemetryMetadata(
                     context,
+                    policy,
                     server,
                     classification.ToolName)))
             {
@@ -102,6 +105,7 @@ public sealed class ToolPolicyMiddleware(
 
                 var telemetry = CreateTelemetryMetadata(
                     context,
+                    policy,
                     server,
                     classification.ToolName,
                     FormatDecision(decision.Type),
@@ -113,6 +117,7 @@ public sealed class ToolPolicyMiddleware(
 
             await EmitAuditAsync(
                 context,
+                policy,
                 server,
                 classification.ToolName,
                 decision,
@@ -159,6 +164,7 @@ public sealed class ToolPolicyMiddleware(
 
     private async Task EmitAuditAsync(
         HttpContext context,
+        ProxyWardPolicy policy,
         ServerPolicy server,
         string? toolName,
         PolicyDecision decision,
@@ -190,6 +196,7 @@ public sealed class ToolPolicyMiddleware(
             ProxyWardTelemetry.AuditWriteActivity,
             CreateTelemetryMetadata(
                 context,
+                policy,
                 server,
                 toolName,
                 FormatDecision(decision.Type),
@@ -206,6 +213,7 @@ public sealed class ToolPolicyMiddleware(
             activity?.SetStatus(ActivityStatusCode.Error, "audit_sink_failure");
             ProxyWardTelemetry.RecordAuditSinkFailure(CreateTelemetryMetadata(
                 context,
+                policy,
                 server,
                 toolName,
                 FormatDecision(decision.Type),
@@ -383,8 +391,15 @@ public sealed class ToolPolicyMiddleware(
     private static string ResolveCorrelationId(HttpContext context) =>
         context.Items[AuditItems.CorrelationId] as string ?? context.TraceIdentifier;
 
+    private ProxyWardPolicy ResolvePolicySnapshot(HttpContext context) =>
+        context.Items.TryGetValue(ServerResolutionItems.PolicySnapshot, out var snapshot)
+            && snapshot is ProxyWardPolicy policy
+                ? policy
+                : policyProvider.Current;
+
     private TelemetryMetadata CreateTelemetryMetadata(
         HttpContext context,
+        ProxyWardPolicy policy,
         ServerPolicy server,
         string? toolName,
         string? decision = null,

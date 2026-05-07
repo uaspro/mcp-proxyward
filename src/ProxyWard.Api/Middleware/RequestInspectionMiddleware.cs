@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ProxyWard.Api.Observability;
+using ProxyWard.Api.Runtime;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Redaction;
 using ProxyWard.Core.JsonRpc;
@@ -11,7 +12,7 @@ namespace ProxyWard.Api.Middleware;
 
 public sealed class RequestInspectionMiddleware(
     RequestDelegate next,
-    ProxyWardPolicy policy,
+    IProxyWardPolicyProvider policyProvider,
     IMcpMessageParser parser,
     IMcpMethodClassifier classifier,
     IRedactor redactor,
@@ -30,11 +31,12 @@ public sealed class RequestInspectionMiddleware(
         }
 
         var server = (ServerPolicy)context.Items[ServerResolutionItems.ServerPolicy]!;
+        var policy = ResolvePolicySnapshot(context);
         var stopwatch = Stopwatch.StartNew();
         var headerBytes = context.Request.ContentLength ?? 0;
         using var activity = ProxyWardTelemetry.StartActivity(
             ProxyWardTelemetry.RequestInspectionActivity,
-            CreateTelemetryMetadata(context, server));
+            CreateTelemetryMetadata(context, policy, server));
         ProxyWardTelemetry.SetTag(activity, "request.bytes", headerBytes);
 
         if (!HasBody(context.Request))
@@ -42,9 +44,10 @@ public sealed class RequestInspectionMiddleware(
             stopwatch.Stop();
             ProxyWardTelemetry.Enrich(
                 activity,
-                CreateTelemetryMetadata(context, server, decision: "allow", reasons: []));
+                CreateTelemetryMetadata(context, policy, server, decision: "allow", reasons: []));
             await EmitAuditAsync(
                 context,
+                policy,
                 server,
                 AuditDecision.Allow,
                 method: null,
@@ -64,6 +67,7 @@ public sealed class RequestInspectionMiddleware(
         {
             await HandleUnsupportedAsync(
                 context,
+                policy,
                 server,
                 stopwatch,
                 activity,
@@ -77,6 +81,7 @@ public sealed class RequestInspectionMiddleware(
         {
             await HandleUnsupportedAsync(
                 context,
+                policy,
                 server,
                 stopwatch,
                 activity,
@@ -90,6 +95,7 @@ public sealed class RequestInspectionMiddleware(
         {
             await HandleUnsupportedAsync(
                 context,
+                policy,
                 server,
                 stopwatch,
                 activity,
@@ -120,6 +126,7 @@ public sealed class RequestInspectionMiddleware(
         stopwatch.Stop();
         var telemetry = CreateTelemetryMetadata(
             context,
+            policy,
             server,
             method,
             toolName,
@@ -138,6 +145,7 @@ public sealed class RequestInspectionMiddleware(
 
         await EmitAuditAsync(
             context,
+            policy,
             server,
             decision,
             method,
@@ -166,6 +174,7 @@ public sealed class RequestInspectionMiddleware(
 
     private async Task HandleUnsupportedAsync(
         HttpContext context,
+        ProxyWardPolicy policy,
         ServerPolicy server,
         Stopwatch stopwatch,
         Activity? activity,
@@ -173,12 +182,12 @@ public sealed class RequestInspectionMiddleware(
         int blockStatusCode,
         long requestBytes)
     {
-        var decision = GetUnsupportedDecision();
+        var decision = GetUnsupportedDecision(policy);
         var reasons = (IReadOnlyCollection<string>)[PolicyReasonCodes.InspectionUnsupported];
 
         if (decision is not UnsupportedInspectionDecision.PassThrough)
         {
-            LogUnsupported(context, unsupportedKind, decision, requestBytes);
+            LogUnsupported(context, policy, unsupportedKind, decision, requestBytes);
         }
 
         var auditDecision = decision switch
@@ -192,6 +201,7 @@ public sealed class RequestInspectionMiddleware(
         stopwatch.Stop();
         var telemetry = CreateTelemetryMetadata(
             context,
+            policy,
             server,
             decision: FormatAuditDecision(auditDecision),
             reasons: reasons);
@@ -200,6 +210,7 @@ public sealed class RequestInspectionMiddleware(
 
         await EmitAuditAsync(
             context,
+            policy,
             server,
             auditDecision,
             method: null,
@@ -227,6 +238,7 @@ public sealed class RequestInspectionMiddleware(
 
     private async Task EmitAuditAsync(
         HttpContext context,
+        ProxyWardPolicy policy,
         ServerPolicy server,
         AuditDecision decision,
         string? method,
@@ -257,6 +269,7 @@ public sealed class RequestInspectionMiddleware(
             ProxyWardTelemetry.AuditWriteActivity,
             CreateTelemetryMetadata(
                 context,
+                policy,
                 server,
                 method,
                 toolName,
@@ -274,6 +287,7 @@ public sealed class RequestInspectionMiddleware(
             activity?.SetStatus(ActivityStatusCode.Error, "audit_sink_failure");
             ProxyWardTelemetry.RecordAuditSinkFailure(CreateTelemetryMetadata(
                 context,
+                policy,
                 server,
                 method,
                 toolName,
@@ -291,7 +305,13 @@ public sealed class RequestInspectionMiddleware(
     private static string ResolveCorrelationId(HttpContext context) =>
         context.Items[AuditItems.CorrelationId] as string ?? context.TraceIdentifier;
 
-    private UnsupportedInspectionDecision GetUnsupportedDecision() =>
+    private ProxyWardPolicy ResolvePolicySnapshot(HttpContext context) =>
+        context.Items.TryGetValue(ServerResolutionItems.PolicySnapshot, out var snapshot)
+            && snapshot is ProxyWardPolicy policy
+                ? policy
+                : policyProvider.Current;
+
+    private UnsupportedInspectionDecision GetUnsupportedDecision(ProxyWardPolicy policy) =>
         policy.Inspection.UnsupportedStreaming switch
         {
             UnsupportedInspectionBehavior.Block when policy.Mode == ProxyWardMode.Enforce =>
@@ -305,6 +325,7 @@ public sealed class RequestInspectionMiddleware(
 
     private void LogUnsupported(
         HttpContext context,
+        ProxyWardPolicy policy,
         string unsupportedKind,
         UnsupportedInspectionDecision decision,
         long requestBytes)
@@ -376,6 +397,7 @@ public sealed class RequestInspectionMiddleware(
 
     private TelemetryMetadata CreateTelemetryMetadata(
         HttpContext context,
+        ProxyWardPolicy policy,
         ServerPolicy server,
         string? method = null,
         string? toolName = null,
