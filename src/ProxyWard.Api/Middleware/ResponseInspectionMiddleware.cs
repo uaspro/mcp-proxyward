@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -31,6 +34,11 @@ public sealed class ResponseInspectionMiddleware(
     private const string DefaultMcpProtocol = "2025-11-25";
     private const string ToolsListResponseInspectionEventType = "tools_list_response_inspection";
     private const string ToolResponseSecretInspectionEventType = "tool_response_secret_inspection";
+    private const int MaxDetailedDriftReviewsInAudit = 20;
+    private const int MaxDriftReviewIdsInAudit = 20;
+
+    private static readonly TimeSpan CurrentUnapprovedReviewCacheTtl = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan ToolsListInspectionCacheTtl = TimeSpan.FromSeconds(30);
 
     private static readonly EventId ResponseInspectionEvent = new(1301, "ResponseInspection");
     private static readonly EventId AuditSinkFailureEvent = new(1302, "AuditSinkFailure");
@@ -40,6 +48,10 @@ public sealed class ResponseInspectionMiddleware(
     private static readonly EventId SchemaDriftReviewWriteFailureEvent = new(1306, "SchemaDriftReviewWriteFailure");
     private static readonly EventId SchemaDiffMetadataWriteFailureEvent = new(1307, "SchemaDiffMetadataWriteFailure");
     private static readonly EventId SchemaDriftReviewReadFailureEvent = new(1308, "SchemaDriftReviewReadFailure");
+
+    private readonly ConcurrentDictionary<string, DriftReviewCacheEntry> _currentUnapprovedReviewCache = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _currentUnapprovedReviewCacheRefreshGates = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ToolsListInspectionCacheEntry> _toolsListInspectionCache = new(StringComparer.Ordinal);
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -71,8 +83,7 @@ public sealed class ResponseInspectionMiddleware(
             originalBody,
             context.Response,
             policy.Inspection.MaxBodyBytes,
-            ShouldBlockUnsupported(policy),
-            captureStreamingResponses: target.Kind == ResponseInspectionKind.ToolsList);
+            ShouldBlockUnsupported(policy));
 
         context.Response.Body = capture;
         var stopwatch = Stopwatch.StartNew();
@@ -124,27 +135,43 @@ public sealed class ResponseInspectionMiddleware(
             return;
         }
 
-        var result = ExtractToolsListResponse(body, context.Response.ContentType);
-        if (!result.Success)
+        var toolsListCacheKey = CreateToolsListInspectionCacheKey(server, policy, context.Response.ContentType, body);
+        ToolListExtractionResult result;
+        ToolSurfaceDriftResult driftResult;
+        if (_toolsListInspectionCache.TryGetValue(toolsListCacheKey, out var cachedInspection)
+            && DateTimeOffset.UtcNow - cachedInspection.CachedAtUtc <= ToolsListInspectionCacheTtl)
         {
-            await EmitAuditAsync(
-                context,
-                policy,
-                server,
-                ToolsListResponseInspectionEventType,
-                "tools/list",
-                null,
-                AuditDecision.Warn,
-                result.Reasons.Count == 0 ? [PolicyReasonCodes.InspectionUnsupported] : result.Reasons,
-                body.Length,
-                stopwatch.ElapsedMilliseconds,
-                CreateToolSummary([]));
-
-            await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
-            return;
+            result = ToolListExtractionResult.Extracted(cachedInspection.Tools);
+            driftResult = cachedInspection.DriftResult;
         }
+        else
+        {
+            result = ExtractToolsListResponse(body, context.Response.ContentType);
+            if (!result.Success)
+            {
+                await EmitAuditAsync(
+                    context,
+                    policy,
+                    server,
+                    ToolsListResponseInspectionEventType,
+                    "tools/list",
+                    null,
+                    AuditDecision.Warn,
+                    result.Reasons.Count == 0 ? [PolicyReasonCodes.InspectionUnsupported] : result.Reasons,
+                    body.Length,
+                    stopwatch.ElapsedMilliseconds,
+                    CreateToolSummary([]));
 
-        var driftResult = await EvaluateDriftAsync(context, policy, server, result.Tools);
+                await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
+                return;
+            }
+
+            driftResult = await EvaluateDriftAsync(context, policy, server, result.Tools);
+            if (!driftResult.Skipped && !driftResult.HasDrift)
+            {
+                StoreToolsListInspectionCache(toolsListCacheKey, result.Tools, driftResult);
+            }
+        }
 
         if (driftResult.Skipped)
         {
@@ -185,6 +212,11 @@ public sealed class ResponseInspectionMiddleware(
         {
             var driftReviewResults = await RecordDriftReviewsAsync(context, policy, server, driftResult);
             await RecordDiffMetadataAsync(context, server, driftResult, driftReviewResults);
+            if (driftResult.WasNewVersion)
+            {
+                StoreToolsListInspectionCache(toolsListCacheKey, result.Tools, driftResult);
+            }
+
             var decision = policy.Mode == ProxyWardMode.Enforce
                 ? AuditDecision.Block
                 : AuditDecision.Warn;
@@ -237,8 +269,7 @@ public sealed class ResponseInspectionMiddleware(
         var currentUnapprovedReviews = await GetCurrentUnapprovedDriftReviewsAsync(
             context,
             server,
-            driftResult,
-            result.Tools);
+            driftResult);
         if (currentUnapprovedReviews.Count > 0)
         {
             var reasons = currentUnapprovedReviews
@@ -705,7 +736,8 @@ public sealed class ResponseInspectionMiddleware(
     {
         if (driftResult.PreviousVersion is not { } previousVersion
             || previousVersion < 0
-            || driftResult.Version <= previousVersion)
+            || driftResult.Version <= previousVersion
+            || !driftResult.WasNewVersion)
         {
             return [];
         }
@@ -741,48 +773,142 @@ public sealed class ResponseInspectionMiddleware(
             return [];
         }
 
+        if (results.Count > 0)
+        {
+            _currentUnapprovedReviewCache.TryRemove(CreateDriftReviewCacheKey(server.Id, driftResult.Version), out _);
+        }
+
         return results;
     }
 
     private async Task<IReadOnlyList<DriftReviewRecordResult>> GetCurrentUnapprovedDriftReviewsAsync(
         HttpContext context,
         ServerPolicy server,
-        ToolSurfaceDriftResult driftResult,
-        IReadOnlyList<DiscoveredTool> tools)
+        ToolSurfaceDriftResult driftResult)
     {
         if (driftResult.Version <= 0)
         {
             return [];
         }
 
-        var currentToolNames = tools
-            .Where(tool => !string.IsNullOrWhiteSpace(tool.Name))
-            .Select(tool => tool.Name!)
-            .ToHashSet(StringComparer.Ordinal);
-        if (currentToolNames.Count == 0)
+        var cacheKey = CreateDriftReviewCacheKey(server.Id, driftResult.Version);
+        var now = DateTimeOffset.UtcNow;
+        if (_currentUnapprovedReviewCache.TryGetValue(cacheKey, out var cached))
         {
-            return [];
+            if (now - cached.CachedAtUtc <= CurrentUnapprovedReviewCacheTtl)
+            {
+                return cached.Results;
+            }
+
+            var refreshGate = _currentUnapprovedReviewCacheRefreshGates.GetOrAdd(
+                cacheKey,
+                _ => new SemaphoreSlim(initialCount: 1, maxCount: 1));
+            if (!refreshGate.Wait(0))
+            {
+                return cached.Results;
+            }
+
+            try
+            {
+                return await RefreshCurrentUnapprovedReviewsAsync(
+                        context,
+                        server,
+                        driftResult.Version,
+                        cacheKey)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogSchemaDriftReviewReadFailure(server, ex);
+                return cached.Results;
+            }
+            finally
+            {
+                refreshGate.Release();
+            }
         }
 
+        var initialRefreshGate = _currentUnapprovedReviewCacheRefreshGates.GetOrAdd(
+            cacheKey,
+            _ => new SemaphoreSlim(initialCount: 1, maxCount: 1));
+        await initialRefreshGate.WaitAsync(context.RequestAborted).ConfigureAwait(false);
         try
         {
-            var rows = await driftReviewStore
-                .GetByServerAsync(server.Id, context.RequestAborted)
-                .ConfigureAwait(false);
+            if (_currentUnapprovedReviewCache.TryGetValue(cacheKey, out cached)
+                && DateTimeOffset.UtcNow - cached.CachedAtUtc <= CurrentUnapprovedReviewCacheTtl)
+            {
+                return cached.Results;
+            }
 
-            return rows
-                .Where(row => row.ToVersion == driftResult.Version
-                    && row.Status != DriftReviewStatus.Approved
-                    && currentToolNames.Contains(row.ToolName))
-                .OrderBy(row => row.Id)
-                .Select(row => new DriftReviewRecordResult(row, WasNewlyCreated: false))
-                .ToArray();
+            return await RefreshCurrentUnapprovedReviewsAsync(
+                    context,
+                    server,
+                    driftResult.Version,
+                    cacheKey)
+                .ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LogSchemaDriftReviewReadFailure(server, ex);
             return [];
         }
+        finally
+        {
+            initialRefreshGate.Release();
+        }
+    }
+
+    private async Task<IReadOnlyList<DriftReviewRecordResult>> RefreshCurrentUnapprovedReviewsAsync(
+        HttpContext context,
+        ServerPolicy server,
+        int schemaVersion,
+        string cacheKey)
+    {
+        var rows = await driftReviewStore
+            .GetByServerAsync(server.Id, context.RequestAborted)
+            .ConfigureAwait(false);
+
+        var results = rows
+            .Where(row => row.ToVersion == schemaVersion
+                && row.Status != DriftReviewStatus.Approved)
+            .OrderBy(row => row.Id)
+            .Select(row => new DriftReviewRecordResult(row, WasNewlyCreated: false))
+            .ToArray();
+
+        _currentUnapprovedReviewCache[cacheKey] = new DriftReviewCacheEntry(DateTimeOffset.UtcNow, results);
+        return results;
+    }
+
+    private static string CreateDriftReviewCacheKey(string serverId, int schemaVersion) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"{serverId}\u001f{schemaVersion}");
+
+    private void StoreToolsListInspectionCache(
+        string cacheKey,
+        IReadOnlyList<DiscoveredTool> tools,
+        ToolSurfaceDriftResult driftResult)
+    {
+        var cachedDriftResult = driftResult is { HasDrift: true, WasNewVersion: true }
+            ? ToolSurfaceDriftResult.NoDrift(driftResult.Version, wasNewVersion: false)
+            : driftResult;
+
+        _toolsListInspectionCache[cacheKey] = new ToolsListInspectionCacheEntry(
+            DateTimeOffset.UtcNow,
+            tools,
+            cachedDriftResult);
+    }
+
+    private static string CreateToolsListInspectionCacheKey(
+        ServerPolicy server,
+        ProxyWardPolicy policy,
+        string? contentType,
+        byte[] body)
+    {
+        var bodyHash = Convert.ToHexStringLower(SHA256.HashData(body));
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{server.Id}\u001f{server.Upstream}\u001f{policy.VersionHash}\u001f{SanitizeMediaType(contentType)}\u001f{bodyHash}");
     }
 
     private static IEnumerable<(string FieldName, IReadOnlyCollection<string> Reasons)> CreateDriftReviewFields(
@@ -905,6 +1031,11 @@ public sealed class ResponseInspectionMiddleware(
         AuditDecision decision,
         ToolSurfaceDriftResult driftResult)
     {
+        if (!logger.IsEnabled(LogLevel.Warning))
+        {
+            return;
+        }
+
         logger.LogWarning(
             SchemaDriftEvent,
             "ProxyWard schema drift detected for server {ServerId} at schema version {SchemaVersion}; decision {Decision}; reasons {Reasons}.",
@@ -947,6 +1078,11 @@ public sealed class ResponseInspectionMiddleware(
         int schemaVersion,
         IReadOnlyList<DriftReviewRecordResult> reviewResults)
     {
+        if (!logger.IsEnabled(LogLevel.Warning))
+        {
+            return;
+        }
+
         logger.LogWarning(
             SchemaDriftEvent,
             "ProxyWard schema drift review state requires action for server {ServerId} at schema version {SchemaVersion}; decision {Decision}; review ids {ReviewIds}.",
@@ -1034,28 +1170,49 @@ public sealed class ResponseInspectionMiddleware(
 
         if (driftReviewResults is { Count: > 0 })
         {
-            var orderedReviews = driftReviewResults
-                .OrderBy(result => result.Row.Id)
+            var reviewCount = driftReviewResults.Count;
+            var cappedReviews = driftReviewResults
+                .Take(MaxDriftReviewIdsInAudit)
                 .ToArray();
 
             summary["driftReviewIds"] = new JsonArray(
-                orderedReviews
+                cappedReviews
+                    .Take(MaxDriftReviewIdsInAudit)
                     .Select(result => (JsonNode?)JsonValue.Create(result.Row.Id))
                     .ToArray());
 
-            summary["driftReviews"] = new JsonArray(
-                orderedReviews
-                    .Select(result => (JsonNode?)new JsonObject
-                    {
-                        ["id"] = result.Row.Id,
-                        ["toolName"] = result.Row.ToolName,
-                        ["fieldName"] = result.Row.FieldName,
-                        ["fromVersion"] = result.Row.FromVersion,
-                        ["toVersion"] = result.Row.ToVersion,
-                        ["status"] = FormatDriftReviewStatus(result.Row.Status),
-                        ["wasNewlyCreated"] = result.WasNewlyCreated
-                    })
-                    .ToArray());
+            summary["driftReviewCount"] = reviewCount;
+            if (reviewCount > MaxDriftReviewIdsInAudit)
+            {
+                summary["driftReviewIdsTruncated"] = true;
+                summary["driftReviewIdLimit"] = MaxDriftReviewIdsInAudit;
+            }
+
+            if (reviewCount <= MaxDetailedDriftReviewsInAudit)
+            {
+                var orderedReviews = driftReviewResults
+                    .OrderBy(result => result.Row.Id)
+                    .ToArray();
+
+                summary["driftReviews"] = new JsonArray(
+                    orderedReviews
+                        .Select(result => (JsonNode?)new JsonObject
+                        {
+                            ["id"] = result.Row.Id,
+                            ["toolName"] = result.Row.ToolName,
+                            ["fieldName"] = result.Row.FieldName,
+                            ["fromVersion"] = result.Row.FromVersion,
+                            ["toVersion"] = result.Row.ToVersion,
+                            ["status"] = FormatDriftReviewStatus(result.Row.Status),
+                            ["wasNewlyCreated"] = result.WasNewlyCreated
+                        })
+                        .ToArray());
+            }
+            else
+            {
+                summary["driftReviewsTruncated"] = true;
+                summary["driftReviewDetailLimit"] = MaxDetailedDriftReviewsInAudit;
+            }
         }
 
         return summary;
@@ -1316,12 +1473,20 @@ public sealed class ResponseInspectionMiddleware(
             null);
     }
 
+    private sealed record DriftReviewCacheEntry(
+        DateTimeOffset CachedAtUtc,
+        IReadOnlyList<DriftReviewRecordResult> Results);
+
+    private sealed record ToolsListInspectionCacheEntry(
+        DateTimeOffset CachedAtUtc,
+        IReadOnlyList<DiscoveredTool> Tools,
+        ToolSurfaceDriftResult DriftResult);
+
     private sealed class ResponseInspectionStream(
         Stream passthrough,
         HttpResponse response,
         int maxBodyBytes,
-        bool blockUnsupported,
-        bool captureStreamingResponses) : Stream
+        bool blockUnsupported) : Stream
     {
         private readonly MemoryStream _buffer = new(capacity: Math.Min(maxBodyBytes, 64 * 1024));
         private CaptureMode _mode = CaptureMode.Undecided;
@@ -1419,31 +1584,13 @@ public sealed class ResponseInspectionMiddleware(
                 return;
             }
 
-            var contentLength = response.ContentLength;
-            if (IsStreamingContentType(response.ContentType))
-            {
-                if (captureStreamingResponses)
-                {
-                    _mode = CaptureMode.Buffer;
-                    return;
-                }
-
-                SetUnsupported("streaming_response");
-                return;
-            }
-
-            if (!IsJsonContentType(response.ContentType))
+            if (!IsInspectableContentType(response.ContentType))
             {
                 SetUnsupported("unsupported_content_type");
                 return;
             }
 
-            if (contentLength is null)
-            {
-                SetUnsupported("unknown_size");
-                return;
-            }
-
+            var contentLength = response.ContentLength;
             if (contentLength > maxBodyBytes)
             {
                 ObservedBytes = contentLength.Value;
@@ -1460,13 +1607,11 @@ public sealed class ResponseInspectionMiddleware(
             _mode = blockUnsupported ? CaptureMode.Discard : CaptureMode.PassThrough;
         }
 
-        private static bool IsStreamingContentType(string? contentType) =>
-            SanitizeMediaType(contentType).Equals("text/event-stream", StringComparison.OrdinalIgnoreCase);
-
-        private static bool IsJsonContentType(string? contentType)
+        private static bool IsInspectableContentType(string? contentType)
         {
             var mediaType = SanitizeMediaType(contentType);
             return mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase)
+                || mediaType.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase)
                 || mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase);
         }
 

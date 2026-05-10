@@ -18,29 +18,4 @@ observability:
     connectionStringEnv: APPLICATIONINSIGHTS_CONNECTION_STRING
   sampling:
     tracesRatio: 1.0
-servers:
-  sample:
-    route: /sample/mcp
-    upstream: http://localhost:8080/mcp
-    allowed: true
-    tools:
-      default: deny
-      allow: []
-      block: []
-    arguments:
-      paths:
-        allowedRoots:
-          - /workspace
-        blockTraversal: true
-      hosts:
-        allow: []
-        blockPrivateNetworks: true
-      commands:
-        blockShell: true
-        dangerous:
-          - rm
-          - curl
-          - wget
-          - nc
-          - powershell
-          - bash
+servers: {}

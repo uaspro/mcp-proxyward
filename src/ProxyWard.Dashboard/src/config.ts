@@ -1,9 +1,10 @@
 const defaultApiBaseUrl = 'http://localhost:8081'
+const defaultProxyBaseUrl = 'http://127.0.0.1:8080'
 
-function normalizeApiBaseUrl(value: string | undefined): string {
+function normalizeBaseUrl(value: string | undefined, fallback: string): string {
   const trimmed = value?.trim()
   if (!trimmed) {
-    return defaultApiBaseUrl
+    return fallback
   }
 
   return trimmed.replace(/\/+$/, '')
@@ -15,6 +16,7 @@ function normalizeOptional(value: string | undefined): string | null {
 }
 
 export const dashboardConfig = {
-  apiBaseUrl: normalizeApiBaseUrl(import.meta.env.VITE_PROXYWARD_API_BASE_URL),
+  apiBaseUrl: normalizeBaseUrl(import.meta.env.VITE_PROXYWARD_API_BASE_URL, defaultApiBaseUrl),
+  proxyBaseUrl: normalizeBaseUrl(import.meta.env.VITE_PROXYWARD_PROXY_BASE_URL, defaultProxyBaseUrl),
   adminToken: normalizeOptional(import.meta.env.VITE_PROXYWARD_ADMIN_TOKEN),
 } as const

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -37,6 +38,37 @@ public class RequestInspectionIntegrationTests
             using var payload = await JsonDocument.ParseAsync(stream);
 
             Assert.Equal("POST", payload.RootElement.GetProperty("method").GetString());
+            Assert.Equal(body, payload.RootElement.GetProperty("body").GetString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+    }
+
+    [Fact]
+    public async Task ChunkedJsonPostWithinMaxBodyBytesReachesUpstreamWithOriginalBody()
+    {
+        await using var upstream = await StartUpstreamAsync();
+        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", maxBodyBytes: 1024, upstream.BaseAddress));
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        var body = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":"streamed"}}""";
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+            using var content = new StreamContent(new NonSeekableMemoryStream(Encoding.UTF8.GetBytes(body)));
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+            using var response = await client.PostAsync("/github/mcp", content);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(1, upstream.RequestCount);
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+
             Assert.Equal(body, payload.RootElement.GetProperty("body").GetString());
         }
         finally
@@ -328,5 +360,21 @@ public class RequestInspectionIntegrationTests
         public void Dispose()
         {
         }
+    }
+
+    private sealed class NonSeekableMemoryStream(byte[] buffer) : MemoryStream(buffer)
+    {
+        public override bool CanSeek => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override long Seek(long offset, SeekOrigin loc) =>
+            throw new NotSupportedException();
     }
 }

@@ -6,7 +6,6 @@ services:
     environment:
       ASPNETCORE_URLS: http://+:8080
       PROXYWARD_DB_PATH: /app/data/proxyward.db
-      PROXYWARD_BOOTSTRAP_SAMPLE_UPSTREAM: http://sample-mcp:8080/mcp
       PROXYWARD_CONTROL_ENABLED: "true"
       PROXYWARD_ADMIN_TOKEN: proxyward-local-admin-token
     ports:
@@ -14,7 +13,6 @@ services:
     volumes:
       - proxyward-data:/app/data
     depends_on:
-      - sample-mcp
       - otel-collector
 
   management-api:
@@ -40,20 +38,12 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_PROXYWARD_API_BASE_URL: /
+        VITE_PROXYWARD_PROXY_BASE_URL: http://127.0.0.1:8080
         VITE_PROXYWARD_ADMIN_TOKEN: proxyward-local-admin-token
     ports:
       - "127.0.0.1:8082:80"
     depends_on:
       - management-api
-
-  sample-mcp:
-    build:
-      context: .
-      dockerfile: samples/SampleMcpServer/Dockerfile
-    environment:
-      ASPNETCORE_URLS: http://+:8080
-    expose:
-      - "8080"
 
   otel-collector:
     image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector:0.151.0

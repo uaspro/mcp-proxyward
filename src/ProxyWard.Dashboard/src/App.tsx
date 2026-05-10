@@ -77,7 +77,6 @@ import {
   BarChart,
   Button,
   Card,
-  DataTable,
   Dialog,
   Drawer,
   IconButton,
@@ -133,6 +132,8 @@ const routePathById: Record<RouteId, string> = {
   policy: '/policy',
   settings: '/settings',
 }
+
+const overviewPollingIntervalMs = 3000
 
 const routeIdByPath: Record<string, RouteId> = {
   '/': 'overview',
@@ -256,8 +257,16 @@ function App() {
     setRoute(nextRoute)
 
     const nextPath = routePathById[nextRoute]
-    if (window.location.pathname !== nextPath) {
+    if (currentRoutePath() !== nextPath) {
       window.history.pushState({ route: nextRoute }, '', nextPath)
+    }
+  }, [])
+  const navigateToAuditEvent = useCallback((eventId: number) => {
+    setRoute('audit')
+
+    const nextPath = buildAuditEventRoute(eventId)
+    if (currentRoutePath() !== nextPath) {
+      window.history.pushState({ route: 'audit', eventId }, '', nextPath)
     }
   }, [])
 
@@ -409,7 +418,9 @@ function App() {
         </header>
 
         <main className="content">
-          {route === 'overview' ? <Overview mode={mode} /> : null}
+          {route === 'overview' ? (
+            <Overview mode={mode} onOpenAuditEvent={navigateToAuditEvent} onOpenAuditLog={() => navigateToRoute('audit')} />
+          ) : null}
           {route === 'audit' ? <AuditLog /> : null}
           {route === 'drift' ? <SchemaDrift /> : null}
           {route === 'policy' ? <Policy mode={mode} onModeChanged={setMode} /> : null}
@@ -428,6 +439,43 @@ function App() {
       />
     </div>
   )
+}
+
+function currentRoutePath(): string {
+  return `${window.location.pathname}${window.location.search}`
+}
+
+function buildAuditEventRoute(eventId: number): string {
+  return `${routePathById.audit}?event=${encodeURIComponent(String(eventId))}`
+}
+
+function readAuditEventRouteId(): number | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  const raw = new URLSearchParams(window.location.search).get('event')
+  if (!raw) {
+    return null
+  }
+
+  const id = Number(raw)
+  return Number.isSafeInteger(id) && id > 0 ? id : null
+}
+
+function writeAuditEventRoute(eventId: number | null, mode: 'push' | 'replace' = 'push'): void {
+  const nextPath = eventId === null ? routePathById.audit : buildAuditEventRoute(eventId)
+  if (currentRoutePath() === nextPath) {
+    return
+  }
+
+  const state = eventId === null ? { route: 'audit' } : { route: 'audit', eventId }
+  if (mode === 'replace') {
+    window.history.replaceState(state, '', nextPath)
+    return
+  }
+
+  window.history.pushState(state, '', nextPath)
 }
 
 function ModeSwitchDialog({
@@ -797,7 +845,13 @@ function PolicyEnforceApplyDialog({
   )
 }
 
-function Overview({ mode }: { mode: Mode }) {
+type OverviewProps = {
+  mode: Mode
+  onOpenAuditEvent: (eventId: number) => void
+  onOpenAuditLog: () => void
+}
+
+function Overview({ mode, onOpenAuditEvent, onOpenAuditLog }: OverviewProps) {
   const {
     overview,
     status,
@@ -807,19 +861,8 @@ function Overview({ mode }: { mode: Mode }) {
     refresh,
   } = useOverviewData()
   const [streamPaused, setStreamPaused] = useState(false)
-  const [frozenStreamRows, setFrozenStreamRows] = useState<LiveRow[] | null>(null)
-  const liveRows = useMemo(() => (overview ? createLiveRows(overview) : []), [overview])
-  const streamRows = streamPaused ? (frozenStreamRows ?? liveRows) : liveRows
-  const toggleStream = () => {
-    if (streamPaused) {
-      setFrozenStreamRows(null)
-      setStreamPaused(false)
-      return
-    }
-
-    setFrozenStreamRows(liveRows)
-    setStreamPaused(true)
-  }
+  const latestAudit = useLatestAuditEvents(streamPaused)
+  const toggleStream = () => setStreamPaused((current) => !current)
 
   if (!overview && loading) {
     return (
@@ -888,23 +931,42 @@ function Overview({ mode }: { mode: Mode }) {
         </Card>
       </div>
       <Card
-        title="Live stream"
+        title="Latest audit events"
         action={
-          <Button icon={streamPaused ? Play : Pause} onClick={toggleStream}>
-            {streamPaused ? 'Resume' : 'Pause'}
-          </Button>
+          <div className="row-actions">
+            <Badge tone={streamPaused ? 'warn' : 'info'}>
+              {streamPaused ? 'paused' : `live ${formatAsOf(latestAudit.refreshedAt)}`}
+            </Badge>
+            <Button icon={streamPaused ? Play : Pause} onClick={toggleStream}>
+              {streamPaused ? 'Resume' : 'Pause'}
+            </Button>
+            <Button icon={List} variant="ghost" onClick={onOpenAuditLog}>
+              View all
+            </Button>
+          </div>
         }
       >
-        <DataTable
-          columns={['Time', 'Method', 'Decision', 'Count']}
-          rows={streamRows.map((row) => [
-            <span className="mono">{row.time}</span>,
-            row.method,
-            <DecisionBadge decision={row.decision} />,
-            <span className="mono">{row.count}</span>,
-          ])}
-        />
-        {streamRows.length === 0 ? <StatePanel state="empty" title="No live rows in window" /> : null}
+        {latestAudit.error ? (
+          <StatePanel
+            state="error"
+            title={latestAudit.events.length > 0 ? 'Live audit is stale' : 'Live audit unavailable'}
+            detail={latestAudit.error}
+            onRetry={latestAudit.refresh}
+          />
+        ) : null}
+        {!streamPaused && latestAudit.loading && latestAudit.events.length === 0 ? (
+          <StatePanel state="loading" title="Loading latest audit events" detail="management API" />
+        ) : null}
+        {latestAudit.events.length > 0 ? (
+          <LatestAuditEventsTable
+            events={latestAudit.events}
+            loading={latestAudit.loading && !streamPaused}
+            onOpen={(event) => onOpenAuditEvent(event.id)}
+          />
+        ) : null}
+        {!latestAudit.loading && latestAudit.events.length === 0 && !latestAudit.error ? (
+          <StatePanel state="empty" title="No audit events" detail="Audit events will appear here as the proxy writes them." />
+        ) : null}
       </Card>
     </section>
   )
@@ -937,26 +999,45 @@ function useOverviewData() {
   }, [])
 
   useEffect(() => {
-    const controller = new AbortController()
-    Promise.all([getOverview(controller.signal), getStatus(controller.signal)])
-      .then(([overviewResponse, statusResponse]) => {
-        setOverview(overviewResponse)
-        setStatus(statusResponse)
-        setError(null)
-        setRefreshedAt(new Date())
-      })
-      .catch((ex: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(ex instanceof Error ? ex.message : 'Overview request failed')
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setLoading(false)
-        }
-      })
+    let disposed = false
+    let activeController: AbortController | null = null
 
-    return () => controller.abort()
+    const loadSnapshot = () => {
+      activeController?.abort()
+      const controller = new AbortController()
+      activeController = controller
+
+      void Promise.all([getOverview(controller.signal), getStatus(controller.signal)])
+        .then(([overviewResponse, statusResponse]) => {
+          if (disposed || controller.signal.aborted) {
+            return
+          }
+
+          setOverview(overviewResponse)
+          setStatus(statusResponse)
+          setError(null)
+          setRefreshedAt(new Date())
+        })
+        .catch((ex: unknown) => {
+          if (!disposed && !controller.signal.aborted) {
+            setError(ex instanceof Error ? ex.message : 'Overview request failed')
+          }
+        })
+        .finally(() => {
+          if (!disposed && !controller.signal.aborted) {
+            setLoading(false)
+          }
+        })
+    }
+
+    loadSnapshot()
+    const timer = window.setInterval(loadSnapshot, overviewPollingIntervalMs)
+
+    return () => {
+      disposed = true
+      activeController?.abort()
+      window.clearInterval(timer)
+    }
   }, [])
 
   return {
@@ -969,39 +1050,143 @@ function useOverviewData() {
   }
 }
 
-type LiveRow = {
-  time: string
-  method: string
-  decision: string
-  count: string
+function useLatestAuditEvents(paused: boolean) {
+  const [events, setEvents] = useState<AuditEventItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
+
+  const refresh = useCallback(() => {
+    const controller = new AbortController()
+    setLoading(true)
+    void getAuditEvents({ offset: 0, pageSize: 8 }, controller.signal)
+      .then((response) => {
+        setEvents(response.items)
+        setError(null)
+        setRefreshedAt(new Date())
+      })
+      .catch((ex: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(ex instanceof Error ? ex.message : 'Latest audit events request failed')
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoading(false)
+        }
+      })
+  }, [])
+
+  useEffect(() => {
+    if (paused) {
+      return
+    }
+
+    let disposed = false
+    let activeController: AbortController | null = null
+
+    const load = (showLoading: boolean) => {
+      activeController?.abort()
+      const controller = new AbortController()
+      activeController = controller
+
+      if (showLoading) {
+        setLoading(true)
+      }
+
+      void getAuditEvents({ offset: 0, pageSize: 8 }, controller.signal)
+        .then((response) => {
+          if (disposed || controller.signal.aborted) {
+            return
+          }
+
+          setEvents(response.items)
+          setError(null)
+          setRefreshedAt(new Date())
+        })
+        .catch((ex: unknown) => {
+          if (!disposed && !controller.signal.aborted) {
+            setError(ex instanceof Error ? ex.message : 'Latest audit events request failed')
+          }
+        })
+        .finally(() => {
+          if (!disposed && !controller.signal.aborted) {
+            setLoading(false)
+          }
+        })
+    }
+
+    load(events.length === 0)
+    const timer = window.setInterval(() => load(false), overviewPollingIntervalMs)
+
+    return () => {
+      disposed = true
+      activeController?.abort()
+      window.clearInterval(timer)
+    }
+  }, [events.length, paused])
+
+  return {
+    events,
+    loading,
+    error,
+    refreshedAt,
+    refresh,
+  }
 }
 
-function createLiveRows(overview: OverviewResponse): LiveRow[] {
-  return overview.series
-    .filter((point) => point.total > 0)
-    .slice(-8)
-    .reverse()
-    .flatMap((point) => {
-      const time = new Date(point.bucketStartUtc).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-      const rows: LiveRow[] = []
-      if (point.block > 0) {
-        rows.push({ time, method: 'tools/call', decision: 'block', count: String(point.block) })
-      }
-      if (point.wouldBlock > 0) {
-        rows.push({ time, method: 'tools/call', decision: 'would_block', count: String(point.wouldBlock) })
-      }
-      if (point.warn > 0) {
-        rows.push({ time, method: 'tools/list', decision: 'warn', count: String(point.warn) })
-      }
-      if (point.allow > 0) {
-        rows.push({ time, method: 'tools/call', decision: 'allow', count: String(point.allow) })
-      }
-      return rows
-    })
-    .slice(0, 8)
+function LatestAuditEventsTable({
+  events,
+  loading,
+  onOpen,
+}: {
+  events: AuditEventItem[]
+  loading: boolean
+  onOpen: (event: AuditEventItem) => void
+}) {
+  return (
+    <div className={`audit-table-wrap ${loading ? 'loading' : ''}`}>
+      <table className="audit-table latest-audit-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Method</th>
+            <th>Tool</th>
+            <th>Server</th>
+            <th>Decision</th>
+            <th>Reasons</th>
+            <th>Latency</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((event) => (
+            <tr
+              key={event.id}
+              onClick={() => onOpen(event)}
+              onKeyDown={(keyboardEvent) => {
+                if (keyboardEvent.key === 'Enter') {
+                  onOpen(event)
+                }
+              }}
+              tabIndex={0}
+            >
+              <td className="mono">{formatAuditTime(event.timestampUtc)}</td>
+              <td className="mono">{event.method ?? '-'}</td>
+              <td className="mono strong">{event.toolName ?? '-'}</td>
+              <td className="mono">{event.serverId}</td>
+              <td>
+                <DecisionBadge decision={event.decision} />
+              </td>
+              <td>
+                <ReasonTags reasons={event.reasons} />
+              </td>
+              <td className="mono">{formatDuration(event.durationMs)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 function toCompactRows(rows: OverviewTopRow[]): [string, string, string][] {
@@ -1059,7 +1244,7 @@ function healthTone(status: string) {
 }
 
 type AuditDecisionFilter = 'all' | 'allow' | 'would_block' | 'warn' | 'block'
-type AuditTimeWindow = '15m' | '1h' | '24h' | '7d'
+type AuditTimeWindow = '15m' | '1h' | '24h' | '7d' | 'all'
 
 type AuditFilters = {
   search: string
@@ -1083,9 +1268,10 @@ const auditWindowOptions: Array<{ value: AuditTimeWindow; label: string }> = [
   { value: '1h', label: '1h' },
   { value: '24h', label: '24h' },
   { value: '7d', label: '7d' },
+  { value: 'all', label: 'All' },
 ]
 
-const auditWindowMs: Record<AuditTimeWindow, number> = {
+const auditWindowMs: Record<Exclude<AuditTimeWindow, 'all'>, number> = {
   '15m': 15 * 60 * 1000,
   '1h': 60 * 60 * 1000,
   '24h': 24 * 60 * 60 * 1000,
@@ -1096,7 +1282,7 @@ const initialAuditFilters: AuditFilters = {
   search: '',
   decision: 'all',
   serverId: '',
-  timeWindow: '1h',
+  timeWindow: 'all',
 }
 
 function AuditLog() {
@@ -1107,9 +1293,9 @@ function AuditLog() {
   const [listLoading, setListLoading] = useState(true)
   const [listError, setListError] = useState<string | null>(null)
   const [loadedAt, setLoadedAt] = useState<Date | null>(null)
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [selectedId, setSelectedId] = useState<number | null>(() => readAuditEventRouteId())
   const [selectedEvent, setSelectedEvent] = useState<AuditEventItem | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailLoading, setDetailLoading] = useState(() => readAuditEventRouteId() !== null)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [detailReloadKey, setDetailReloadKey] = useState(0)
   const listQuery = useMemo(
@@ -1140,6 +1326,19 @@ function AuditLog() {
 
     return () => controller.abort()
   }, [listQuery])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const routeId = readAuditEventRouteId()
+      setSelectedId(routeId)
+      setSelectedEvent(null)
+      setDetailError(null)
+      setDetailLoading(routeId !== null)
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
 
   useEffect(() => {
     if (selectedId === null) {
@@ -1183,6 +1382,7 @@ function AuditLog() {
     setSelectedEvent(event)
     setDetailError(null)
     setDetailLoading(true)
+    writeAuditEventRoute(event.id)
   }
 
   function retryDetail() {
@@ -1195,6 +1395,7 @@ function AuditLog() {
     setSelectedEvent(null)
     setDetailError(null)
     setDetailLoading(false)
+    writeAuditEventRoute(null, 'replace')
   }
 
   function goToPreviousPage() {
@@ -1523,8 +1724,10 @@ function AuditEventDrawer({
 }
 
 function createAuditQuery(filters: AuditFilters, offset: number, now: Date): AuditEventQuery {
-  const toUtc = now.toISOString()
-  const fromUtc = new Date(now.getTime() - auditWindowMs[filters.timeWindow]).toISOString()
+  const toUtc = filters.timeWindow === 'all' ? undefined : now.toISOString()
+  const fromUtc = filters.timeWindow === 'all'
+    ? undefined
+    : new Date(now.getTime() - auditWindowMs[filters.timeWindow]).toISOString()
 
   return {
     fromUtc,
@@ -2432,32 +2635,94 @@ function driftTone(status: string): 'neutral' | 'allow' | 'warn' | 'block' | 'in
   return 'neutral'
 }
 
-function createNextServerId(servers: Record<string, ServerPolicyModel>): string {
-  if (!servers.server) {
-    return 'server'
+function createNextServerId(
+  servers: Record<string, ServerPolicyModel>,
+  preferredId = 'server',
+): string {
+  const base = normalizeServerId(preferredId) || 'server'
+  if (!servers[base]) {
+    return base
   }
 
   for (let index = 2; ; index += 1) {
-    const candidate = `server-${index}`
+    const candidate = `${base}-${index}`
     if (!servers[candidate]) {
       return candidate
     }
   }
 }
 
-function createNewServerForm(serverId: string): NewServerPolicyForm {
+function createNewServerForm(): NewServerPolicyForm {
   return {
-    id: serverId,
-    route: `/${serverId}/mcp`,
-    upstream: 'http://localhost:8080/mcp',
+    id: '',
+    route: '',
+    upstream: '',
   }
 }
 
-function normalizeNewServerForm(form: NewServerPolicyForm): NewServerPolicyForm {
+function createGeneratedNewServerForm(
+  upstream: string,
+  servers: Record<string, ServerPolicyModel>,
+): NewServerPolicyForm {
+  const normalizedUpstream = upstream.trim()
+  const id = createServerIdFromUpstream(normalizedUpstream, servers)
+
   return {
-    id: form.id.trim(),
-    route: form.route.trim(),
-    upstream: form.upstream.trim(),
+    id,
+    route: id ? `/${id}/mcp` : '',
+    upstream: normalizedUpstream,
+  }
+}
+
+function createServerIdFromUpstream(
+  upstream: string,
+  servers: Record<string, ServerPolicyModel>,
+): string {
+  const preferredId = createPreferredServerId(upstream)
+  if (!preferredId) {
+    return ''
+  }
+
+  return createNextServerId(servers, preferredId)
+}
+
+function createPreferredServerId(upstream: string): string | null {
+  try {
+    const url = new URL(upstream)
+    const hostname = url.hostname.replace(/^www\./i, '')
+    const preferred = isLoopbackHost(hostname) && url.port
+      ? `${hostname}-${url.port}`
+      : hostname
+
+    return normalizeServerId(preferred)
+  } catch {
+    return null
+  }
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase()
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1'
+}
+
+function normalizeServerId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function normalizeNewServerForm(
+  form: NewServerPolicyForm,
+  existingServers: Record<string, ServerPolicyModel>,
+): NewServerPolicyForm {
+  const generated = createGeneratedNewServerForm(form.upstream, existingServers)
+
+  return {
+    id: generated.id.trim(),
+    route: generated.route.trim(),
+    upstream: generated.upstream,
   }
 }
 
@@ -2465,16 +2730,8 @@ function validateNewServerForm(
   form: NewServerPolicyForm,
   existingServers: Record<string, ServerPolicyModel>,
 ): string | null {
-  if (!form.id) {
-    return 'Server id is required.'
-  }
-
-  if (existingServers[form.id]) {
-    return `Server ${form.id} already exists.`
-  }
-
-  if (!form.route.startsWith('/')) {
-    return 'Route must start with /.'
+  if (!form.upstream) {
+    return 'Upstream MCP server URL is required.'
   }
 
   try {
@@ -2486,8 +2743,55 @@ function validateNewServerForm(
     return 'Upstream must be an absolute HTTP or HTTPS URL.'
   }
 
+  if (!form.id) {
+    return 'Server id could not be generated from the upstream URL.'
+  }
+
+  if (existingServers[form.id]) {
+    return `Server ${form.id} already exists.`
+  }
+
+  if (!form.route.startsWith('/')) {
+    return 'Route must start with /.'
+  }
+
   return null
 }
+
+function buildProxyMcpUrl(route: string): string {
+  const normalizedRoute = route.startsWith('/') ? route : `/${route}`
+  return `${dashboardConfig.proxyBaseUrl}${normalizedRoute}`
+}
+
+function createMcpJsonSnippet(server: ServerPolicyModel): string {
+  return JSON.stringify(
+    {
+      servers: {
+        [server.id]: {
+          type: 'http',
+          url: buildProxyMcpUrl(server.route),
+        },
+      },
+    },
+    null,
+    2,
+  )
+}
+
+const argumentPolicyPlaceholders = {
+  allowedRoots: ['Example only - not configured', '/workspace', '/repos/proxyward'].join('\n'),
+  hostsAllow: ['Example only - not configured', 'api.github.com', 'github.com'].join('\n'),
+  dangerousCommands: ['Example only - not configured', 'rm', 'curl | sh', 'powershell -EncodedCommand'].join('\n'),
+}
+
+const secretPatternPlaceholder = [
+  'Example only - not configured',
+  'ghp_',
+  'github_pat_',
+  'sk-',
+  '/github_pat_[A-Za-z0-9_]+/',
+  '/sk-[A-Za-z0-9]{20,}/',
+].join('\n')
 
 function createServerPolicyModel(form: NewServerPolicyForm): ServerPolicyModel {
   return {
@@ -2666,7 +2970,7 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
       return
     }
 
-    setNewServerForm(createNewServerForm(createNextServerId(draft.servers)))
+    setNewServerForm(createNewServerForm())
     setNewServerError(null)
   }
 
@@ -2680,7 +2984,7 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
       return
     }
 
-    const normalized = normalizeNewServerForm(newServerForm)
+    const normalized = normalizeNewServerForm(newServerForm, draft.servers)
     const formError = validateNewServerForm(normalized, draft.servers)
     if (formError) {
       setNewServerError(formError)
@@ -2890,6 +3194,8 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
     )
   }
 
+  const generatedNewServer = newServerForm ? createGeneratedNewServerForm(newServerForm.upstream, draft.servers) : null
+
   return (
     <section className="page">
       <PageHeader
@@ -2962,6 +3268,7 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
             <GlobalPolicyEditor draft={draft} onChange={updateDraft} />
           ) : selectedServer ? (
             <ServerPolicyEditor
+              key={selectedServer.id}
               server={selectedServer}
               baselineServer={selectedBaselineServer}
               toolInventory={selectedServerInventory}
@@ -3023,27 +3330,24 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
         <div className="confirmation-stack">
           {newServerError ? <StatePanel state="error" title="Server policy invalid" detail={newServerError} /> : null}
           <div className="form-grid">
-            <PolicyField label="id">
-              <input
-                className="form-input"
-                value={newServerForm?.id ?? ''}
-                onChange={(event) => updateNewServerForm({ id: event.target.value })}
-              />
-            </PolicyField>
-            <PolicyField label="route">
-              <input
-                className="form-input"
-                value={newServerForm?.route ?? ''}
-                onChange={(event) => updateNewServerForm({ route: event.target.value })}
-              />
-            </PolicyField>
             <PolicyField label="upstream">
               <input
                 className="form-input"
                 value={newServerForm?.upstream ?? ''}
+                placeholder="http://github-mcp:8080/mcp"
                 onChange={(event) => updateNewServerForm({ upstream: event.target.value })}
               />
             </PolicyField>
+          </div>
+          <div className="kv-grid generated-policy-preview">
+            <span>id</span>
+            <strong className="mono truncate">{generatedNewServer?.id || '-'}</strong>
+            <span>route</span>
+            <strong className="mono truncate">{generatedNewServer?.route || '-'}</strong>
+            <span>mcp.json url</span>
+            <strong className="mono truncate">
+              {generatedNewServer?.route ? buildProxyMcpUrl(generatedNewServer.route) : '-'}
+            </strong>
           </div>
         </div>
       </Dialog>
@@ -3093,7 +3397,7 @@ function GlobalPolicyEditor({
               }
             />
           </PolicyField>
-          <PolicyField label="unsupportedStreaming">
+          <PolicyField label="unsupportedInspection">
             <SegmentedControl
               value={draft.inspection.unsupportedStreaming}
               onChange={(value) =>
@@ -3113,28 +3417,10 @@ function GlobalPolicyEditor({
             <strong className="mono">{draft.inspection.batchToolCalls}</strong>
           </PolicyField>
           <PolicyField label="audit.sink">
-            <input
-              className="form-input"
-              value={draft.audit.sink}
-              onChange={(event) =>
-                onChange((current) => ({
-                  ...current,
-                  audit: { ...current.audit, sink: event.target.value },
-                }))
-              }
-            />
+            <strong className="mono">{draft.audit.sink}</strong>
           </PolicyField>
           <PolicyField label="audit.sqlitePath">
-            <input
-              className="form-input"
-              value={draft.audit.sqlitePath ?? ''}
-              onChange={(event) =>
-                onChange((current) => ({
-                  ...current,
-                  audit: { ...current.audit, sqlitePath: event.target.value || null },
-                }))
-              }
-            />
+            <strong className="mono truncate">{draft.audit.sqlitePath ?? '-'}</strong>
           </PolicyField>
         </div>
       </Card>
@@ -3282,6 +3568,9 @@ function ServerPolicyEditor({
           </PolicyField>
         </div>
       </Card>
+      <Card title="mcp.json">
+        <pre className="code-block compact">{createMcpJsonSnippet(server)}</pre>
+      </Card>
       <Card
         title="Tools"
         action={
@@ -3327,6 +3616,8 @@ function ServerPolicyEditor({
           <TextListEditor
             label="paths.allowedRoots"
             values={server.arguments.paths.allowedRoots}
+            placeholder={argumentPolicyPlaceholders.allowedRoots}
+            description="One filesystem root per line. Path arguments outside these roots are treated as policy violations."
             onChange={(values) =>
               onChange((current) => ({
                 ...current,
@@ -3337,7 +3628,10 @@ function ServerPolicyEditor({
               }))
             }
           />
-          <PolicyField label="paths.blockTraversal">
+          <PolicyField
+            label="paths.blockTraversal"
+            description="Rejects path arguments that contain traversal segments such as ../."
+          >
             <Toggle
               checked={server.arguments.paths.blockTraversal}
               label="Block traversal"
@@ -3355,6 +3649,8 @@ function ServerPolicyEditor({
           <TextListEditor
             label="hosts.allow"
             values={server.arguments.hosts.allow}
+            placeholder={argumentPolicyPlaceholders.hostsAllow}
+            description="One hostname per line. Leave empty when the server should not enforce a host allow list."
             onChange={(values) =>
               onChange((current) => ({
                 ...current,
@@ -3365,7 +3661,10 @@ function ServerPolicyEditor({
               }))
             }
           />
-          <PolicyField label="hosts.blockPrivateNetworks">
+          <PolicyField
+            label="hosts.blockPrivateNetworks"
+            description="Blocks private, loopback, and link-local network targets in URL and host arguments."
+          >
             <Toggle
               checked={server.arguments.hosts.blockPrivateNetworks}
               label="Block private"
@@ -3383,6 +3682,8 @@ function ServerPolicyEditor({
           <TextListEditor
             label="commands.dangerous"
             values={server.arguments.commands.dangerous}
+            placeholder={argumentPolicyPlaceholders.dangerousCommands}
+            description="One command name or risky command fragment per line."
             onChange={(values) =>
               onChange((current) => ({
                 ...current,
@@ -3393,7 +3694,10 @@ function ServerPolicyEditor({
               }))
             }
           />
-          <PolicyField label="commands.blockShell">
+          <PolicyField
+            label="commands.blockShell"
+            description="Blocks shell interpreter usage instead of allowing raw shell execution."
+          >
             <Toggle
               checked={server.arguments.commands.blockShell}
               label="Block shell"
@@ -3412,7 +3716,10 @@ function ServerPolicyEditor({
       </Card>
       <Card title="Secrets">
         <div className="form-grid">
-          <PolicyField label="redactInLogs">
+          <PolicyField
+            label="redactInLogs"
+            description="Redacts matching values before audit events are stored or displayed."
+          >
             <Toggle
               checked={secrets.redactInLogs}
               label="Redact"
@@ -3424,7 +3731,10 @@ function ServerPolicyEditor({
               }
             />
           </PolicyField>
-          <PolicyField label="blockReturn">
+          <PolicyField
+            label="blockReturn"
+            description="Blocks tool responses that contain a configured secret pattern while in enforce mode."
+          >
             <Toggle
               checked={secrets.blockReturn}
               label="Block return"
@@ -3439,6 +3749,8 @@ function ServerPolicyEditor({
           <TextListEditor
             label="patterns"
             values={secrets.patterns}
+            placeholder={secretPatternPlaceholder}
+            description="One literal or /regex/ pattern per line. Matches are redacted and can be blocked on return."
             onChange={(values) =>
               onChange((current) => ({
                 ...current,
@@ -3528,11 +3840,22 @@ function ToolPolicySelector({
   )
 }
 
-function PolicyField({ label, children }: { label: string; children: ReactNode }) {
+function PolicyField({
+  label,
+  children,
+  description,
+}: {
+  label: string
+  children: ReactNode
+  description?: string
+}) {
   return (
     <label className="policy-field">
       <span>{label}</span>
-      <div>{children}</div>
+      <div className="policy-field-control">
+        {children}
+        {description ? <small className="policy-field-description">{description}</small> : null}
+      </div>
     </label>
   )
 }
@@ -3541,19 +3864,40 @@ function TextListEditor({
   label,
   values,
   onChange,
+  placeholder,
+  description,
 }: {
   label: string
   values: string[]
   onChange: (values: string[]) => void
+  placeholder?: string
+  description?: string
 }) {
+  const [text, setText] = useState(() => formatLines(values))
+  const configuredCount = values.length
+  const overrideStatus = configuredCount === 0
+    ? 'No configured overrides. Placeholder examples are not active.'
+    : `${configuredCount} configured override${configuredCount === 1 ? '' : 's'}.`
+
   return (
     <label className="policy-field vertical">
       <span>{label}</span>
-      <textarea
-        className="form-textarea"
-        value={formatLines(values)}
-        onChange={(event) => onChange(parseLines(event.target.value))}
-      />
+      <div className="policy-field-control">
+        <div className={`policy-override-status ${configuredCount > 0 ? 'active' : ''}`}>
+          {overrideStatus}
+        </div>
+        <textarea
+          className="form-textarea"
+          value={text}
+          placeholder={placeholder}
+          onChange={(event) => {
+            const nextText = event.target.value
+            setText(nextText)
+            onChange(parseLines(nextText))
+          }}
+        />
+        {description ? <small className="policy-field-description">{description}</small> : null}
+      </div>
     </label>
   )
 }
@@ -3622,14 +3966,6 @@ function formatLines(values: string[]): string {
 
 function findClientPolicyIssues(model: PolicyModel): PolicyValidationIssue[] {
   const issues: PolicyValidationIssue[] = []
-  if (Object.keys(model.servers).length === 0) {
-    issues.push({
-      field: 'servers',
-      code: 'policy_validation_error',
-      message: 'servers must contain at least one server',
-    })
-  }
-
   for (const server of Object.values(model.servers)) {
     if (server.upstream?.includes('***@') || server.upstream?.includes('[masked]')) {
       issues.push({
@@ -3773,7 +4109,7 @@ function SettingsPanel() {
           <div className="kv-grid">
             <span>maxBodyBytes</span>
             <strong className="mono">{formatBytes(settings.inspection.maxBodyBytes)}</strong>
-            <span>unsupportedStreaming</span>
+            <span>unsupportedInspection</span>
             <strong className="mono">{settings.inspection.unsupportedStreaming}</strong>
             <span>batchToolCalls</span>
             <strong className="mono">{settings.inspection.batchToolCalls}</strong>

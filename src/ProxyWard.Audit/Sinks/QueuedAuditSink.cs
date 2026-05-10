@@ -9,11 +9,13 @@ public sealed class QueuedAuditSink : IAuditSink, IAsyncDisposable, IDisposable
     private readonly Channel<AuditEvent> _queue;
     private readonly Task _worker;
     private readonly Action<AuditEvent, Exception>? _onFailure;
+    private readonly int _batchSize;
     private int _disposed;
 
     public QueuedAuditSink(
         IAuditSink inner,
         int capacity = 8192,
+        int batchSize = 128,
         Action<AuditEvent, Exception>? onFailure = null)
     {
         ArgumentNullException.ThrowIfNull(inner);
@@ -22,8 +24,14 @@ public sealed class QueuedAuditSink : IAuditSink, IAsyncDisposable, IDisposable
             throw new ArgumentOutOfRangeException(nameof(capacity), "Audit queue capacity must be greater than zero.");
         }
 
+        if (batchSize <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(batchSize), "Audit queue batch size must be greater than zero.");
+        }
+
         _inner = inner;
         _onFailure = onFailure;
+        _batchSize = batchSize;
         _queue = Channel.CreateBounded<AuditEvent>(new BoundedChannelOptions(capacity)
         {
             SingleReader = true,
@@ -82,7 +90,41 @@ public sealed class QueuedAuditSink : IAuditSink, IAsyncDisposable, IDisposable
 
     private async Task DrainAsync()
     {
+        var batch = new List<AuditEvent>(_batchSize);
         await foreach (var auditEvent in _queue.Reader.ReadAllAsync().ConfigureAwait(false))
+        {
+            batch.Add(auditEvent);
+            while (batch.Count < _batchSize && _queue.Reader.TryRead(out var next))
+            {
+                batch.Add(next);
+            }
+
+            await WriteBatchOrReportAsync(batch).ConfigureAwait(false);
+            batch.Clear();
+        }
+    }
+
+    private async Task WriteBatchOrReportAsync(IReadOnlyList<AuditEvent> batch)
+    {
+        if (_inner is IBatchedAuditSink batched)
+        {
+            try
+            {
+                await batched.WriteBatchAsync(batch, CancellationToken.None).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex)
+            {
+                foreach (var auditEvent in batch)
+                {
+                    ReportFailure(auditEvent, ex);
+                }
+
+                return;
+            }
+        }
+
+        foreach (var auditEvent in batch)
         {
             try
             {

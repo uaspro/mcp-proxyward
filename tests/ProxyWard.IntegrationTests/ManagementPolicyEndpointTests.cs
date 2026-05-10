@@ -145,7 +145,7 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
 
         await using var stream = await response.Content.ReadAsStreamAsync();
         using var payload = await JsonDocument.ParseAsync(stream);
-        Assert.True(payload.RootElement.GetProperty("model").GetProperty("servers").TryGetProperty("sample", out _));
+        Assert.Empty(payload.RootElement.GetProperty("model").GetProperty("servers").EnumerateObject());
     }
 
     private async Task SeedPolicyAsync(string yaml)

@@ -22,13 +22,10 @@ var builder = WebApplication.CreateBuilder(args);
 var databasePath = Environment.GetEnvironmentVariable("PROXYWARD_DB_PATH")
     ?? builder.Configuration["ProxyWard:DatabasePath"]
     ?? "./data/proxyward.db";
-var bootstrapSampleUpstream = Environment.GetEnvironmentVariable("PROXYWARD_BOOTSTRAP_SAMPLE_UPSTREAM")
-    ?? builder.Configuration["ProxyWard:BootstrapSampleUpstream"]
-    ?? ProxyWardDefaultPolicy.DefaultSampleUpstream;
 
 var policyStore = new SqlitePolicyStore(databasePath);
 var snapshot = await policyStore.InitializeAndReadCurrentAsync(
-    ProxyWardDefaultPolicy.CreateYaml(databasePath, bootstrapSampleUpstream),
+    ProxyWardDefaultPolicy.CreateYaml(databasePath),
     CancellationToken.None);
 var policy = snapshot.Policy;
 var controlOptions = ProxyWardControlOptions.Load(builder.Configuration);

@@ -6,7 +6,7 @@ using ProxyWard.Audit.Events;
 
 namespace ProxyWard.Audit.Sinks;
 
-public sealed class SqliteAuditSink : IAuditSink, IDisposable
+public sealed class SqliteAuditSink : IAuditSink, IBatchedAuditSink, IDisposable
 {
     private static readonly JsonSerializerOptions PayloadJsonOptions = new()
     {
@@ -50,59 +50,49 @@ public sealed class SqliteAuditSink : IAuditSink, IDisposable
 
         ArgumentNullException.ThrowIfNull(auditEvent);
 
+        await WriteBatchCoreAsync([auditEvent], cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask WriteBatchAsync(
+        IReadOnlyList<AuditEvent> auditEvents,
+        CancellationToken cancellationToken)
+    {
+        if (_disposed)
+        {
+            throw new ObjectDisposedException(nameof(SqliteAuditSink));
+        }
+
+        ArgumentNullException.ThrowIfNull(auditEvents);
+        if (auditEvents.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var auditEvent in auditEvents)
+        {
+            ArgumentNullException.ThrowIfNull(auditEvent);
+        }
+
+        await WriteBatchCoreAsync(auditEvents, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask WriteBatchCoreAsync(
+        IReadOnlyList<AuditEvent> auditEvents,
+        CancellationToken cancellationToken)
+    {
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var connection = await EnsureConnectionAsync(cancellationToken).ConfigureAwait(false);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
-            await using var insert = connection.CreateCommand();
-            insert.CommandText = """
-                INSERT INTO audit_events (
-                    timestamp_utc,
-                    event_type,
-                    mode,
-                    decision,
-                    server_id,
-                    method,
-                    tool_name,
-                    reasons,
-                    policy_version,
-                    correlation_id,
-                    request_bytes,
-                    duration_ms,
-                    payload_json
-                ) VALUES (
-                    $timestamp_utc,
-                    $event_type,
-                    $mode,
-                    $decision,
-                    $server_id,
-                    $method,
-                    $tool_name,
-                    $reasons,
-                    $policy_version,
-                    $correlation_id,
-                    $request_bytes,
-                    $duration_ms,
-                    $payload_json
-                );
-                """;
+            foreach (var auditEvent in auditEvents)
+            {
+                await using var insert = CreateInsertCommand(connection, transaction, auditEvent);
+                await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
 
-            insert.Parameters.AddWithValue("$timestamp_utc", auditEvent.Timestamp.UtcDateTime.ToString("o", CultureInfo.InvariantCulture));
-            insert.Parameters.AddWithValue("$event_type", auditEvent.EventType);
-            insert.Parameters.AddWithValue("$mode", auditEvent.Mode);
-            insert.Parameters.AddWithValue("$decision", FormatDecision(auditEvent.Decision));
-            insert.Parameters.AddWithValue("$server_id", auditEvent.ServerId);
-            insert.Parameters.AddWithValue("$method", (object?)auditEvent.Method ?? DBNull.Value);
-            insert.Parameters.AddWithValue("$tool_name", (object?)auditEvent.ToolName ?? DBNull.Value);
-            insert.Parameters.AddWithValue("$reasons", string.Join(',', auditEvent.Reasons));
-            insert.Parameters.AddWithValue("$policy_version", auditEvent.PolicyVersion);
-            insert.Parameters.AddWithValue("$correlation_id", auditEvent.CorrelationId);
-            insert.Parameters.AddWithValue("$request_bytes", auditEvent.RequestBytes);
-            insert.Parameters.AddWithValue("$duration_ms", auditEvent.DurationMs);
-            insert.Parameters.AddWithValue("$payload_json", SerializePayload(auditEvent));
-
-            await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -181,6 +171,61 @@ public sealed class SqliteAuditSink : IAuditSink, IDisposable
             """;
 
         await schema.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static SqliteCommand CreateInsertCommand(
+        SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction,
+        AuditEvent auditEvent)
+    {
+        var insert = connection.CreateCommand();
+        insert.Transaction = (SqliteTransaction)transaction;
+        insert.CommandText = """
+            INSERT INTO audit_events (
+                timestamp_utc,
+                event_type,
+                mode,
+                decision,
+                server_id,
+                method,
+                tool_name,
+                reasons,
+                policy_version,
+                correlation_id,
+                request_bytes,
+                duration_ms,
+                payload_json
+            ) VALUES (
+                $timestamp_utc,
+                $event_type,
+                $mode,
+                $decision,
+                $server_id,
+                $method,
+                $tool_name,
+                $reasons,
+                $policy_version,
+                $correlation_id,
+                $request_bytes,
+                $duration_ms,
+                $payload_json
+            );
+            """;
+
+        insert.Parameters.AddWithValue("$timestamp_utc", auditEvent.Timestamp.UtcDateTime.ToString("o", CultureInfo.InvariantCulture));
+        insert.Parameters.AddWithValue("$event_type", auditEvent.EventType);
+        insert.Parameters.AddWithValue("$mode", auditEvent.Mode);
+        insert.Parameters.AddWithValue("$decision", FormatDecision(auditEvent.Decision));
+        insert.Parameters.AddWithValue("$server_id", auditEvent.ServerId);
+        insert.Parameters.AddWithValue("$method", (object?)auditEvent.Method ?? DBNull.Value);
+        insert.Parameters.AddWithValue("$tool_name", (object?)auditEvent.ToolName ?? DBNull.Value);
+        insert.Parameters.AddWithValue("$reasons", string.Join(',', auditEvent.Reasons));
+        insert.Parameters.AddWithValue("$policy_version", auditEvent.PolicyVersion);
+        insert.Parameters.AddWithValue("$correlation_id", auditEvent.CorrelationId);
+        insert.Parameters.AddWithValue("$request_bytes", auditEvent.RequestBytes);
+        insert.Parameters.AddWithValue("$duration_ms", auditEvent.DurationMs);
+        insert.Parameters.AddWithValue("$payload_json", SerializePayload(auditEvent));
+        return insert;
     }
 
     private static string SerializePayload(AuditEvent auditEvent)

@@ -12,7 +12,4 @@
     <Project Path="tests/ProxyWard.PerformanceTests/ProxyWard.PerformanceTests.csproj" />
     <Project Path="tests/ProxyWard.UnitTests/ProxyWard.UnitTests.csproj" />
   </Folder>
-  <Folder Name="/samples/">
-    <Project Path="samples/SampleMcpServer/SampleMcpServer.csproj" />
-  </Folder>
 </Solution>

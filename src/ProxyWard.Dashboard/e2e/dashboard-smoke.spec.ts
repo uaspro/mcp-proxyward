@@ -8,8 +8,8 @@ test('dashboard smoke covers overview, audit, drift, policy, and settings', asyn
   await page.goto('/')
 
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
-  await expect(page.getByText('path_traversal')).toBeVisible()
-  await expect(page.getByText('fs.read')).toBeVisible()
+  await expect(page.getByText('path_traversal').first()).toBeVisible()
+  await expect(page.getByText('fs.read').first()).toBeVisible()
 
   await page.getByRole('button', { name: /Audit log/i }).click()
   await expect(page).toHaveURL(/\/audit$/)
@@ -29,23 +29,34 @@ test('dashboard smoke covers overview, audit, drift, policy, and settings', asyn
   await expect(page).toHaveURL(/\/policy$/)
   await expect(page.getByRole('heading', { name: 'Policy', exact: true })).toBeVisible()
   await expect(page.getByText('sha256:e2e')).toBeVisible()
+  await expect(page.getByText('unsupportedInspection')).toBeVisible()
+  await expect(page.getByText('unsupportedStreaming')).toHaveCount(0)
+  await expect(page.locator('.policy-field', { hasText: 'audit.sink' }).locator('input')).toHaveCount(0)
+  await expect(page.locator('.policy-field', { hasText: 'audit.sqlitePath' }).locator('input')).toHaveCount(0)
 
   await page.getByRole('button', { name: /^Add server$/i }).click()
   const addServerDialog = page.getByRole('dialog', { name: /Add server policy/i })
   await expect(addServerDialog).toBeVisible()
-  await addServerDialog.getByLabel('id').fill('replacement')
-  await addServerDialog.getByLabel('route').fill('/replacement/mcp')
   await addServerDialog.getByLabel('upstream').fill('http://replacement:8080/mcp')
+  await expect(addServerDialog.getByText('/replacement/mcp', { exact: true })).toBeVisible()
+  await expect(addServerDialog.getByText('http://127.0.0.1:8080/replacement/mcp')).toBeVisible()
   await addServerDialog.getByRole('button', { name: /Add server/i }).click()
   await expect(page.getByRole('button', { name: /replacement/i })).toBeVisible()
-  await expect(page.getByText('2 servers', { exact: true })).toBeVisible()
-
-  await page.getByRole('button', { name: /sample/i }).click()
-  await expect(page.getByRole('button', { name: /^Delete$/i })).toBeVisible()
-  await page.getByRole('button', { name: /^Delete$/i }).click()
-  await expect(page.getByRole('dialog', { name: /Delete sample/i })).toBeVisible()
-  await page.getByRole('button', { name: /Delete server/i }).click()
-  await expect(page.getByRole('button', { name: /sample/i })).toHaveCount(0)
+  await expect(page.getByText('1 server', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'mcp.json' })).toBeVisible()
+  await expect(page.getByText('"url": "http://127.0.0.1:8080/replacement/mcp"')).toBeVisible()
+  await expect(page.locator('textarea[placeholder*="/repos/proxyward"]')).toBeVisible()
+  await expect(page.locator('textarea[placeholder*="github_pat_"]')).toBeVisible()
+  await expect(page.locator('textarea[placeholder*="Example only - not configured"]')).toHaveCount(4)
+  await expect(page.getByText('No configured overrides. Placeholder examples are not active.')).toHaveCount(4)
+  await expect(page.getByText('One filesystem root per line. Path arguments outside these roots are treated as policy violations.')).toBeVisible()
+  await expect(page.getByText('One literal or /regex/ pattern per line. Matches are redacted and can be blocked on return.')).toBeVisible()
+  const rootsEditor = page.locator('textarea[placeholder*="/repos/proxyward"]')
+  await rootsEditor.fill('/workspace')
+  await rootsEditor.press('Enter')
+  await rootsEditor.type('/repos/proxyward')
+  await expect(rootsEditor).toHaveValue('/workspace\n/repos/proxyward')
+  await expect(page.getByText('2 configured overrides.')).toBeVisible()
 
   await page.getByRole('button', { name: /replacement/i }).click()
   await page.getByRole('button', { name: /^Delete$/i }).click()
@@ -54,13 +65,14 @@ test('dashboard smoke covers overview, audit, drift, policy, and settings', asyn
   await expect(page.getByText('No server policies')).toBeVisible()
   await expect(page.getByText('dirty')).toBeVisible()
   await page.getByRole('button', { name: /^Validate$/i }).click()
-  await expect(page.getByText('servers must contain at least one server')).toBeVisible()
+  await expect(page.getByText('Policy valid')).toBeVisible()
 
   await page.getByRole('button', { name: /^Settings$/i }).click()
   await expect(page).toHaveURL(/\/settings$/)
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
   await expect(page.getByText('mcp-proxyward')).toBeVisible()
   await expect(page.getByText('/app/data/proxyward.db', { exact: true })).toBeVisible()
+  await expect(page.getByText('unsupportedInspection')).toBeVisible()
 
   await page.reload()
   await expect(page).toHaveURL(/\/settings$/)
@@ -74,6 +86,25 @@ test('dashboard can load directly into a routed screen', async ({ page }) => {
   await page.reload()
   await expect(page).toHaveURL(/\/policy$/)
   await expect(page.getByRole('heading', { name: 'Policy', exact: true })).toBeVisible()
+})
+
+test('overview latest audit events drill down to full audit history', async ({ page }) => {
+  await page.goto('/')
+
+  await expect(page.getByRole('heading', { name: 'Latest audit events' })).toBeVisible()
+  await expect(page.getByRole('table')).toContainText('fs.read')
+  await page.getByRole('row', { name: /fs\.read/ }).click()
+
+  await expect(page).toHaveURL(/\/audit\?event=101$/)
+  await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible()
+  await expect(page.getByLabel('fs.read')).toContainText('e2e-correlation')
+
+  await page.reload()
+  await expect(page).toHaveURL(/\/audit\?event=101$/)
+  await expect(page.getByLabel('fs.read')).toContainText('e2e-correlation')
+
+  await page.getByRole('button', { name: /Close drawer/i }).click()
+  await expect(page).toHaveURL(/\/audit$/)
 })
 
 test('audit to enforce mode switch shows confirmation and updates topbar mode', async ({ page }) => {

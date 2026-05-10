@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using ProxyWard.Api.Hosts;
 using ProxyWard.Api.Middleware;
 using ProxyWard.Api.Observability;
+using ProxyWard.Api.Runtime;
 using ProxyWard.Api.Yarp;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Redaction;
@@ -352,6 +353,7 @@ internal static class PerfHosts
 
         builder.AddProxyWardObservability(policy);
         builder.Services.AddSingleton(policy);
+        builder.Services.AddSingleton<IProxyWardPolicyProvider>(new InMemoryProxyWardPolicyProvider(policy));
         builder.Services.AddSingleton(ToolSchemaDiffMetadataOptions.Default);
         builder.Services.AddSingleton<IMcpMessageParser, McpMessageParser>();
         builder.Services.AddSingleton<IMcpMethodClassifier, McpMethodClassifier>();

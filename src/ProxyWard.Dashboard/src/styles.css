@@ -662,6 +662,10 @@ kbd {
   border-collapse: collapse;
 }
 
+.audit-table.latest-audit-table {
+  min-width: 860px;
+}
+
 .audit-table th,
 .audit-table td {
   min-width: 0;
@@ -685,6 +689,10 @@ kbd {
 
 .audit-table td:nth-child(6) {
   min-width: 210px;
+}
+
+.latest-audit-table td:nth-child(6) {
+  min-width: 160px;
 }
 
 .audit-table tr:last-child td {
@@ -1041,9 +1049,38 @@ kbd {
   font-size: 12px;
 }
 
-.policy-field > div,
+.policy-field-control,
 .policy-field textarea {
   min-width: 0;
+}
+
+.policy-field-control {
+  display: grid;
+  gap: 6px;
+}
+
+.policy-field-description {
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.policy-override-status {
+  justify-self: start;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.policy-override-status.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent-fg);
 }
 
 .form-input,
@@ -1069,6 +1106,12 @@ kbd {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
+}
+
+.form-input::placeholder,
+.form-textarea::placeholder {
+  color: var(--fg-subtle);
+  font-style: italic;
 }
 
 .tool-policy-panel {
@@ -1361,6 +1404,13 @@ kbd {
   font-size: 13px;
 }
 
+.generated-policy-preview {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  padding: 12px;
+}
+
 .truncate {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1379,6 +1429,11 @@ kbd {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
+}
+
+.code-block.compact {
+  min-height: 0;
+  max-height: 220px;
 }
 
 .dialog-backdrop,

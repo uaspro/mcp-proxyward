@@ -43,26 +43,3 @@ servers:
       block: []
       default: allow
     upstream: https://api.githubcopilot.com/mcp/
-  sample:
-    allowed: true
-    arguments:
-      commands:
-        blockShell: false
-        dangerous: []
-      hosts:
-        allow: []
-        blockPrivateNetworks: false
-      overrides: {}
-      paths:
-        allowedRoots: []
-        blockTraversal: false
-    route: /sample/mcp
-    secrets:
-      blockReturn: false
-      patterns: []
-      redactInLogs: true
-    tools:
-      allow: []
-      block: []
-      default: allow
-    upstream: http://sample-mcp:8080/mcp

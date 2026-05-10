@@ -68,7 +68,14 @@ public class PolicyConfigurationTests
         Assert.Contains("inspection section is required", ex.Message);
         Assert.Contains("audit section is required", ex.Message);
         Assert.Contains("observability section is required", ex.Message);
-        Assert.Contains("servers must contain at least one server", ex.Message);
+    }
+
+    [Fact]
+    public void LoadEmptyServersReturnsPolicy()
+    {
+        var policy = ProxyWardPolicyLoader.Load(EmptyServersYaml);
+
+        Assert.Empty(policy.Servers);
     }
 
     [Fact]
@@ -380,5 +387,28 @@ public class PolicyConfigurationTests
                   - nc
                   - powershell
                   - bash
+        """;
+
+    private const string EmptyServersYaml = """
+        mode: audit
+        inspection:
+          maxBodyBytes: 1048576
+          unsupportedStreaming: warn
+        audit:
+          sink: sqlite
+          sqlitePath: ./data/proxyward.db
+        observability:
+          serviceName: mcp-proxyward
+          console:
+            enabled: true
+          otlp:
+            enabled: false
+            endpoint: http://otel-collector:4317
+          applicationInsights:
+            enabled: false
+            connectionStringEnv: APPLICATIONINSIGHTS_CONNECTION_STRING
+          sampling:
+            tracesRatio: 1.0
+        servers: {}
         """;
 }

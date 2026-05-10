@@ -131,11 +131,7 @@ public static class ProxyWardPolicyLoader
             }
         }
 
-        if (raw.Servers is null || raw.Servers.Count == 0)
-        {
-            errors.Add("servers must contain at least one server");
-        }
-        else
+        if (raw.Servers is not null)
         {
             foreach (var (serverId, server) in raw.Servers)
             {
@@ -297,7 +293,7 @@ public static class ProxyWardPolicyLoader
     {
         var servers = new SortedDictionary<string, ServerPolicy>(StringComparer.Ordinal);
 
-        foreach (var (id, server) in raw.Servers!)
+        foreach (var (id, server) in raw.Servers ?? new Dictionary<string, ServerPolicyYaml?>())
         {
             if (server is null)
             {

@@ -64,39 +64,7 @@ const policyModel = {
     },
     sampling: { tracesRatio: 1 },
   },
-  servers: {
-    sample: {
-      id: 'sample',
-      route: '/sample/mcp',
-      upstream: 'http://sample-mcp:8080/mcp',
-      allowed: true,
-      secrets: {
-        redactInLogs: true,
-        blockReturn: false,
-        patterns: ['ghp_'],
-      },
-      tools: {
-        default: 'allow',
-        allow: ['fs.read'],
-        block: ['shell.exec'],
-      },
-      arguments: {
-        paths: {
-          allowedRoots: ['/workspace'],
-          blockTraversal: true,
-        },
-        hosts: {
-          allow: ['api.github.com'],
-          blockPrivateNetworks: true,
-        },
-        commands: {
-          blockShell: true,
-          dangerous: ['rm'],
-        },
-        overrides: {},
-      },
-    },
-  },
+  servers: {},
 }
 
 const responses = {
@@ -111,7 +79,7 @@ const responses = {
         details: {
           mode: 'audit',
           policyVersion: 'sha256:e2e',
-          serverCount: 1,
+          serverCount: 0,
           routeVersion: 1,
         },
       },
@@ -194,7 +162,7 @@ const responses = {
     },
   },
   '/api/policy': {
-    yaml: 'mode: audit\nservers:\n  sample:\n    route: /sample/mcp\n',
+    yaml: 'mode: audit\nservers: {}\n',
     policyHash: 'sha256:e2e',
     source: {
       path: 'sqlite:/app/data/proxyward.db#policy_snapshots',
@@ -207,7 +175,7 @@ const responses = {
     readOnly: {
       policyHash: 'sha256:e2e',
       sourcePath: 'sqlite:/app/data/proxyward.db#policy_snapshots',
-      serverCount: 1,
+      serverCount: 0,
       loadedAtUtc: now,
     },
   },
@@ -233,7 +201,7 @@ const responses = {
     service: {
       policyHash: 'sha256:e2e',
       sourcePath: 'sqlite:/app/data/proxyward.db#policy_snapshots',
-      serverCount: 1,
+      serverCount: 0,
       loadedAtUtc: now,
       sourceLastModifiedUtc: now,
       sourceSizeBytes: 1024,
@@ -244,39 +212,7 @@ const responses = {
     },
   },
   '/api/tools': {
-    servers: [
-      {
-        serverId: 'sample',
-        latestVersion: 2,
-        driftStatus: 'clean',
-        tools: [
-          {
-            name: 'fs.read',
-            title: 'Read file',
-            description: 'Read a file from the workspace',
-            latestVersion: 2,
-            driftStatus: 'clean',
-            nameHash: 'sha256:fs-read-name',
-            titleHash: 'sha256:fs-read-title',
-            descriptionHash: 'sha256:fs-read-description',
-            inputSchemaHash: 'sha256:fs-read-input',
-            outputSchemaHash: null,
-          },
-          {
-            name: 'shell.exec',
-            title: 'Execute command',
-            description: 'Run a shell command',
-            latestVersion: 2,
-            driftStatus: 'clean',
-            nameHash: 'sha256:shell-exec-name',
-            titleHash: 'sha256:shell-exec-title',
-            descriptionHash: 'sha256:shell-exec-description',
-            inputSchemaHash: 'sha256:shell-exec-input',
-            outputSchemaHash: null,
-          },
-        ],
-      },
-    ],
+    servers: [],
   },
 }
 
@@ -315,7 +251,7 @@ function createStatusResponse() {
 function createPolicyResponse() {
   return {
     ...responses['/api/policy'],
-    yaml: `mode: ${runtimeMode}\nservers:\n  sample:\n    route: /sample/mcp\n`,
+    yaml: `mode: ${runtimeMode}\nservers: {}\n`,
     model: {
       ...policyModel,
       mode: runtimeMode,
@@ -433,14 +369,14 @@ const server = http.createServer((request, response) => {
 
   if (request.method === 'POST' && url.pathname === '/api/tools/discover') {
     readJsonRequest(request, (body) => {
-      const serverId = body.serverId ?? 'sample'
+      const serverId = body.serverId ?? 'server'
       writeJson(response, 200, {
         serverId,
-        upstream: body.upstream ?? 'http://sample-mcp:8080/mcp',
+        upstream: body.upstream ?? 'http://localhost:9000/mcp',
         latestVersion: 3,
         snapshotHash: 'sha256:discovered-tools',
         wasNewVersion: true,
-        tools: responses['/api/tools'].servers[0].tools,
+        tools: [],
       })
     })
     return
@@ -480,7 +416,7 @@ const server = http.createServer((request, response) => {
         previousMode,
         policyHash: 'sha256:e2e',
         previousPolicyHash: 'sha256:e2e',
-        serverCount: 1,
+        serverCount: Object.keys(policyModel.servers).length,
         routeVersion: 1,
         impact,
       })

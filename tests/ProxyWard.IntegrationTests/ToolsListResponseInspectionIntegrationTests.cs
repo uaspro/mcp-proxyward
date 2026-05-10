@@ -110,7 +110,7 @@ public class ToolsListResponseInspectionIntegrationTests
     }
 
     [Fact]
-    public async Task OversizedEventStreamToolsListResponseBlocksWhenUnsupportedStreamingBlockInEnforceMode()
+    public async Task OversizedEventStreamToolsListResponseBlocksWhenMaxBodyBytesExceeded()
     {
         var responseBody = "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\""
             + new string('x', 2048)

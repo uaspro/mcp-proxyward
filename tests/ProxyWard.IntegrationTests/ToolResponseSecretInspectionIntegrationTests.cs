@@ -172,9 +172,11 @@ public class ToolResponseSecretInspectionIntegrationTests
     }
 
     [Fact]
-    public async Task StreamingToolCallResponseFollowsUnsupportedInspectionBlockPolicy()
+    public async Task StreamingToolCallResponseWithinMaxBodyBytesIsInspectedForSecrets()
     {
-        const string streamBody = "data: {\"jsonrpc\":\"2.0\"}\n\n";
+        const string secret = "ghp_stream_secret";
+        var streamBody = "event: message\n"
+            + $"data: {CreateToolResponse(11, secret)}\n\n";
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, streamBody, "text/event-stream", setLength: false));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 4096, upstream.BaseAddress, dbPath, blockReturn: true, patterns: ["ghp_"]));
@@ -189,10 +191,12 @@ public class ToolResponseSecretInspectionIntegrationTests
                 "/github/mcp",
                 new StringContent(CreateToolCallRequest(11), Encoding.UTF8, "application/json"));
 
-            Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadAsStringAsync();
-            Assert.Contains("inspection_unsupported", body, StringComparison.Ordinal);
+            Assert.Contains("secret_return_blocked", body, StringComparison.Ordinal);
+            Assert.NotEqual(streamBody, body);
             Assert.DoesNotContain(streamBody, body, StringComparison.Ordinal);
+            Assert.DoesNotContain(secret, body, StringComparison.Ordinal);
         }
         finally
         {
@@ -201,7 +205,9 @@ public class ToolResponseSecretInspectionIntegrationTests
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_response_secret_inspection");
         Assert.Equal("block", row.Decision);
-        Assert.Contains("inspection_unsupported", row.Reasons, StringComparison.Ordinal);
+        Assert.Contains("secret_return_blocked", row.Reasons, StringComparison.Ordinal);
+        Assert.DoesNotContain("inspection_unsupported", row.Reasons, StringComparison.Ordinal);
+        Assert.DoesNotContain(secret, row.PayloadJson, StringComparison.Ordinal);
 
         DeleteIfExists(dbPath);
     }

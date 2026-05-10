@@ -62,21 +62,6 @@ public sealed class RequestInspectionMiddleware(
         }
 
         var contentLength = context.Request.ContentLength;
-
-        if (contentLength is null)
-        {
-            await HandleUnsupportedAsync(
-                context,
-                policy,
-                server,
-                stopwatch,
-                activity,
-                unsupportedKind: "unknown_size",
-                blockStatusCode: StatusCodes.Status413PayloadTooLarge,
-                requestBytes: 0);
-            return;
-        }
-
         if (contentLength > policy.Inspection.MaxBodyBytes)
         {
             await HandleUnsupportedAsync(
@@ -101,15 +86,33 @@ public sealed class RequestInspectionMiddleware(
                 activity,
                 unsupportedKind: "unsupported_content_type",
                 blockStatusCode: StatusCodes.Status415UnsupportedMediaType,
-                requestBytes: contentLength.Value);
+                requestBytes: contentLength ?? 0);
             return;
         }
 
-        context.Request.EnableBuffering(bufferLimit: policy.Inspection.MaxBodyBytes);
+        context.Request.EnableBuffering(bufferThreshold: Math.Min(policy.Inspection.MaxBodyBytes, 64 * 1024));
 
-        using var inspectedBody = new MemoryStream(capacity: (int)contentLength.Value);
-        await context.Request.Body.CopyToAsync(inspectedBody, context.RequestAborted);
+        using var inspectedBody = new MemoryStream(capacity: CreateInspectionBufferCapacity(contentLength, policy.Inspection.MaxBodyBytes));
+        var readResult = await CopyRequestBodyWithinLimitAsync(
+            context.Request.Body,
+            inspectedBody,
+            policy.Inspection.MaxBodyBytes,
+            context.RequestAborted);
         context.Request.Body.Position = 0;
+
+        if (!readResult.WithinLimit)
+        {
+            await HandleUnsupportedAsync(
+                context,
+                policy,
+                server,
+                stopwatch,
+                activity,
+                unsupportedKind: "body_too_large",
+                blockStatusCode: StatusCodes.Status413PayloadTooLarge,
+                requestBytes: readResult.BytesRead);
+            return;
+        }
 
         var inspectedBytes = inspectedBody.Length;
         var result = parser.Parse(GetWrittenMemory(inspectedBody), context.Request.ContentType);
@@ -385,6 +388,43 @@ public sealed class RequestInspectionMiddleware(
             ? buffer.AsMemory(0, (int)stream.Length)
             : stream.ToArray();
 
+    private static int CreateInspectionBufferCapacity(long? contentLength, int maxBodyBytes)
+    {
+        if (contentLength is > 0 and <= int.MaxValue)
+        {
+            return (int)Math.Min(contentLength.Value, maxBodyBytes);
+        }
+
+        return Math.Min(maxBodyBytes, 64 * 1024);
+    }
+
+    private static async Task<BoundedBodyReadResult> CopyRequestBodyWithinLimitAsync(
+        Stream source,
+        MemoryStream destination,
+        int maxBodyBytes,
+        CancellationToken cancellationToken)
+    {
+        var buffer = new byte[Math.Min(maxBodyBytes, 81920)];
+        long bytesRead = 0;
+
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer, cancellationToken);
+            if (read == 0)
+            {
+                return new BoundedBodyReadResult(bytesRead, WithinLimit: true);
+            }
+
+            bytesRead += read;
+            if (bytesRead > maxBodyBytes)
+            {
+                return new BoundedBodyReadResult(bytesRead, WithinLimit: false);
+            }
+
+            await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+    }
+
     private static string FormatDecision(UnsupportedInspectionDecision decision) =>
         decision switch
         {
@@ -443,4 +483,6 @@ public sealed class RequestInspectionMiddleware(
         WouldBlock,
         Block
     }
+
+    private sealed record BoundedBodyReadResult(long BytesRead, bool WithinLimit);
 }
