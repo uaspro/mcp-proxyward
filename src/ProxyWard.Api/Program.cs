@@ -62,28 +62,14 @@ builder.Services.AddSingleton<CommandArgumentRuleEvaluator>();
 builder.Services.AddSingleton<ArgumentPolicyOverrideResolver>();
 builder.Services.AddSingleton<IAuditSink>(services =>
     CreateAuditSink(policy, services.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddScoped<ProxyWardControlAuthorizationService>();
 builder.Services.AddHttpClient();
+builder.Services.AddControllers();
 builder.Services.AddReverseProxy();
 
 var app = builder.Build();
 
-app.MapGet("/", () => Results.Redirect("/health"));
-
-app.MapGet("/health", (IProxyWardPolicyProvider policyProvider) =>
-{
-    var loadedPolicy = policyProvider.Current;
-    return Results.Ok(new
-    {
-        status = "healthy",
-        service = "MCP ProxyWard",
-        mode = loadedPolicy.Mode.ToString().ToLowerInvariant(),
-        policyVersion = loadedPolicy.VersionHash,
-        serverCount = loadedPolicy.Servers.Count
-    });
-});
-
-app.MapProxyWardControlEndpoints();
-app.MapProxyWardOAuthMetadataEndpoints();
+app.MapControllers();
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<ServerAllowlistMiddleware>();
@@ -93,11 +79,6 @@ app.UseMiddleware<ToolPolicyMiddleware>();
 app.UseMiddleware<ResponseInspectionMiddleware>();
 
 app.MapReverseProxy();
-
-app.MapFallback(() => Results.NotFound(new
-{
-    error = "No MCP proxy route configured for this request."
-}));
 
 app.Run();
 

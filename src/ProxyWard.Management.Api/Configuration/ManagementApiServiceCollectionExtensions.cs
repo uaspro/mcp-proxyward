@@ -28,6 +28,8 @@ internal static class ManagementApiServiceCollectionExtensions
         ManagementApiOptions options,
         ManagementAuditReadOptions auditReadOptions)
     {
+        services.AddControllers();
+
         services.AddCors(cors =>
         {
             cors.AddPolicy(CorsPolicyName, policy =>

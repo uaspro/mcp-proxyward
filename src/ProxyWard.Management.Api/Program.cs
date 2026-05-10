@@ -1,5 +1,4 @@
 using ProxyWard.Management.Api.Configuration;
-using ProxyWard.Management.Api.Endpoints;
 
 namespace ProxyWard.Management.Api;
 
@@ -19,7 +18,7 @@ public partial class Program
         var app = builder.Build();
 
         app.UseCors(ManagementApiServiceCollectionExtensions.CorsPolicyName);
-        app.MapProxyWardManagementApi();
+        app.MapControllers();
 
         return app;
     }
