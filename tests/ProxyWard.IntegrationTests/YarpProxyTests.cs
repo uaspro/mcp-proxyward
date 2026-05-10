@@ -92,6 +92,65 @@ public class YarpProxyTests
     }
 
     [Fact]
+    public async Task ProtectedResourceMetadataPublishesProxyRouteAsResource()
+    {
+        await using var upstream = await StartUpstreamAsync();
+        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.GetAsync("/.well-known/oauth-protected-resource/github/mcp");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+
+            Assert.Equal("http://localhost/github/mcp", payload.RootElement.GetProperty("resource").GetString());
+            Assert.Equal(
+                "https://github.com/login/oauth",
+                payload.RootElement.GetProperty("authorization_servers")[0].GetString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+    }
+
+    [Fact]
+    public async Task AuthChallengePublishesProxyMetadataUrl()
+    {
+        await using var upstream = await StartUpstreamAsync();
+        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.GetAsync("/github/mcp/auth-required");
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+
+            var challenge = Assert.Single(response.Headers.WwwAuthenticate).ToString();
+            Assert.Contains(
+                "resource_metadata=\"http://localhost/.well-known/oauth-protected-resource/github/mcp\"",
+                challenge,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain(upstream.BaseAddress, challenge, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+    }
+
+    [Fact]
     public async Task UnknownRouteReturnsClearNotFoundError()
     {
         await using var upstream = await StartUpstreamAsync();
@@ -124,15 +183,32 @@ public class YarpProxyTests
         builder.WebHost.UseUrls(baseAddress);
 
         var app = builder.Build();
-        app.Map("/{**path}", (HttpRequest request) => Results.Json(new
+        app.Map("/{**path}", (HttpRequest request) =>
         {
-            method = request.Method,
-            path = request.Path.Value,
-            query = request.QueryString.Value
-        }));
+            if (request.Path.StartsWithSegments("/mcp/auth-required"))
+            {
+                request.HttpContext.Response.Headers.WWWAuthenticate =
+                    $"Bearer error=\"invalid_request\", resource_metadata=\"{CreateUpstreamProtectedResourceMetadataUri()}\"";
+                return Results.Text(
+                    "missing required Authorization header",
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            return Results.Json(new
+            {
+                method = request.Method,
+                path = request.Path.Value,
+                query = request.QueryString.Value,
+                resource = $"{baseAddress}/mcp",
+                authorization_servers = new[] { "https://github.com/login/oauth" }
+            });
+        });
 
         await app.StartAsync();
         return new UpstreamApp(baseAddress, app);
+
+        string CreateUpstreamProtectedResourceMetadataUri() =>
+            $"{baseAddress}/.well-known/oauth-protected-resource/mcp";
     }
 
     private static int GetFreePort()

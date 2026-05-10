@@ -1,6 +1,7 @@
 using ProxyWard.Api.Hosts;
 using ProxyWard.Api.Control;
 using ProxyWard.Api.Middleware;
+using ProxyWard.Api.OAuth;
 using ProxyWard.Api.Observability;
 using ProxyWard.Api.Runtime;
 using ProxyWard.Api.Yarp;
@@ -64,6 +65,7 @@ builder.Services.AddSingleton<CommandArgumentRuleEvaluator>();
 builder.Services.AddSingleton<ArgumentPolicyOverrideResolver>();
 builder.Services.AddSingleton<IAuditSink>(services =>
     CreateAuditSink(policy, services.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddHttpClient();
 builder.Services.AddReverseProxy();
 
 var app = builder.Build();
@@ -84,9 +86,11 @@ app.MapGet("/health", (IProxyWardPolicyProvider policyProvider) =>
 });
 
 app.MapProxyWardControlEndpoints();
+app.MapProxyWardOAuthMetadataEndpoints();
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<ServerAllowlistMiddleware>();
+app.UseProxyWardOAuthChallengeMetadataRewrite();
 app.UseMiddleware<RequestInspectionMiddleware>();
 app.UseMiddleware<ToolPolicyMiddleware>();
 app.UseMiddleware<ResponseInspectionMiddleware>();
