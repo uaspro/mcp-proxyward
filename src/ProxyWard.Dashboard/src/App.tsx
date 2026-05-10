@@ -356,7 +356,7 @@ function App() {
             <div className="brand-name">ProxyWard</div>
             <div className="brand-meta">operator console</div>
           </div>
-          <div className="brand-version">v0.4.2</div>
+          <div className="brand-version">v0.0.1</div>
         </div>
 
         <nav className="nav">
