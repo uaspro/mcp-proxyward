@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using ProxyWard.Management.Api.Security;
-using ProxyWard.Management.Application;
 using ProxyWard.Management.Application.Tools;
 
 namespace ProxyWard.Management.Api.Controllers;
@@ -12,22 +11,16 @@ public sealed class ManagementToolsController : ControllerBase
 {
     private readonly IManagementToolDiscoveryService _discoveryService;
     private readonly IManagementToolInventoryRepository _inventoryRepository;
-    private readonly ManagementApiOptions _managementOptions;
-    private readonly ManagementSecurityAuditService _securityAuditService;
-    private readonly ILogger<ManagementToolsController> _logger;
+    private readonly ManagementWriteAuthorization _writeAuthorization;
 
     public ManagementToolsController(
         IManagementToolDiscoveryService discoveryService,
         IManagementToolInventoryRepository inventoryRepository,
-        ManagementApiOptions managementOptions,
-        ManagementSecurityAuditService securityAuditService,
-        ILogger<ManagementToolsController> logger)
+        ManagementWriteAuthorization writeAuthorization)
     {
         _discoveryService = discoveryService ?? throw new ArgumentNullException(nameof(discoveryService));
         _inventoryRepository = inventoryRepository ?? throw new ArgumentNullException(nameof(inventoryRepository));
-        _managementOptions = managementOptions ?? throw new ArgumentNullException(nameof(managementOptions));
-        _securityAuditService = securityAuditService ?? throw new ArgumentNullException(nameof(securityAuditService));
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _writeAuthorization = writeAuthorization ?? throw new ArgumentNullException(nameof(writeAuthorization));
     }
 
     [HttpGet]
@@ -40,12 +33,7 @@ public sealed class ManagementToolsController : ControllerBase
     [HttpPost("discover")]
     public async Task<IActionResult> Discover(CancellationToken cancellationToken)
     {
-        if (!await ManagementWriteAuthorization.IsAuthorizedAsync(
-                HttpContext,
-                _managementOptions,
-                _securityAuditService,
-                _logger,
-                cancellationToken).ConfigureAwait(false))
+        if (!await _writeAuthorization.IsAuthorizedAsync(HttpContext, cancellationToken).ConfigureAwait(false))
         {
             return Unauthorized();
         }

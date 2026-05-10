@@ -25,30 +25,15 @@ public sealed class ManagementSettingsController : ControllerBase
         }
         catch (FileNotFoundException ex)
         {
-            return NotFound(new { error = "policy_not_found", path = ex.FileName });
+            return this.PolicyNotFound(ex);
         }
         catch (PolicyValidationException ex)
         {
-            return Problem(
-                title: "Invalid ProxyWard policy",
-                detail: string.Join("; ", ex.Errors),
-                statusCode: StatusCodes.Status500InternalServerError,
-                extensions: new Dictionary<string, object?>
-                {
-                    ["error"] = "policy_invalid",
-                    ["errors"] = ex.Errors
-                });
+            return this.InvalidPolicy(ex);
         }
         catch (IOException ex)
         {
-            return Problem(
-                title: "Policy database could not be read",
-                detail: ex.Message,
-                statusCode: StatusCodes.Status500InternalServerError,
-                extensions: new Dictionary<string, object?>
-                {
-                    ["error"] = "policy_read_failed"
-                });
+            return this.PolicyReadFailed(ex);
         }
     }
 }

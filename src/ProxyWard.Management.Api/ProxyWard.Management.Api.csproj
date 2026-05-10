@@ -7,7 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\ProxyWard.Audit\ProxyWard.Audit.csproj" />
     <ProjectReference Include="..\ProxyWard.Management.Application\ProxyWard.Management.Application.csproj" />
     <ProjectReference Include="..\ProxyWard.Management.Infrastructure\ProxyWard.Management.Infrastructure.csproj" />
   </ItemGroup>

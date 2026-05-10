@@ -1,50 +1,61 @@
 using System.Security.Cryptography;
 using System.Text;
 using ProxyWard.Management.Application;
+using ProxyWard.Management.Application.Security;
 
 namespace ProxyWard.Management.Api.Security;
 
-internal static class ManagementWriteAuthorization
+public sealed class ManagementWriteAuthorization
 {
-    public static async Task<bool> IsAuthorizedAsync(
-        HttpContext context,
+    private readonly IManagementSecurityAuditWriter _auditWriter;
+    private readonly ILogger<ManagementWriteAuthorization> _logger;
+    private readonly ManagementApiOptions _options;
+
+    public ManagementWriteAuthorization(
         ManagementApiOptions options,
-        ManagementSecurityAuditService securityAuditService,
-        ILogger logger,
+        IManagementSecurityAuditWriter auditWriter,
+        ILogger<ManagementWriteAuthorization> logger)
+    {
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _auditWriter = auditWriter ?? throw new ArgumentNullException(nameof(auditWriter));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+
+    public async Task<bool> IsAuthorizedAsync(
+        HttpContext context,
         CancellationToken cancellationToken)
     {
-        if (TryAuthorize(context, options, out var failureReason))
+        if (TryAuthorize(context, out var failureReason))
         {
             return true;
         }
 
-        logger.LogWarning(
+        _logger.LogWarning(
             "Management write authorization failed for {Method} {Path} from {RemoteIp}. Reason: {Reason}.",
             context.Request.Method,
             context.Request.Path,
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             failureReason);
 
-        await securityAuditService
-            .RecordAuthorizationFailureAsync(context, failureReason, cancellationToken)
+        await _auditWriter
+            .WriteAuthorizationFailureAsync(CreateFailure(context, failureReason), cancellationToken)
             .ConfigureAwait(false);
 
         return false;
     }
 
-    private static bool TryAuthorize(
+    private bool TryAuthorize(
         HttpContext context,
-        ManagementApiOptions options,
         out string failureReason)
     {
         failureReason = string.Empty;
 
-        if (options.LocalDevelopmentMode)
+        if (_options.LocalDevelopmentMode)
         {
             return true;
         }
 
-        if (string.IsNullOrWhiteSpace(options.AdminToken))
+        if (string.IsNullOrWhiteSpace(_options.AdminToken))
         {
             failureReason = "admin_token_not_configured";
             return false;
@@ -65,7 +76,7 @@ internal static class ManagementWriteAuthorization
             return false;
         }
 
-        var expectedBytes = Encoding.UTF8.GetBytes(options.AdminToken);
+        var expectedBytes = Encoding.UTF8.GetBytes(_options.AdminToken);
         var suppliedBytes = Encoding.UTF8.GetBytes(suppliedToken);
         if (expectedBytes.Length == suppliedBytes.Length
             && CryptographicOperations.FixedTimeEquals(expectedBytes, suppliedBytes))
@@ -76,4 +87,14 @@ internal static class ManagementWriteAuthorization
         failureReason = "bearer_token_invalid";
         return false;
     }
+
+    private static ManagementAuthorizationFailure CreateFailure(HttpContext context, string reason) =>
+        new(
+            TimestampUtc: DateTimeOffset.UtcNow,
+            Method: context.Request.Method,
+            Path: context.Request.Path.Value ?? string.Empty,
+            RemoteIp: context.Connection.RemoteIpAddress?.ToString(),
+            Reason: reason,
+            CorrelationId: context.TraceIdentifier,
+            RequestBytes: context.Request.ContentLength ?? 0);
 }

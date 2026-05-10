@@ -1,48 +1,47 @@
 using System.Text.Json.Nodes;
-using ProxyWard.Management.Application;
+using Microsoft.Extensions.Logging;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Sinks;
+using ProxyWard.Management.Application;
+using ProxyWard.Management.Application.Security;
 
-namespace ProxyWard.Management.Api.Security;
+namespace ProxyWard.Management.Infrastructure.Security;
 
-public sealed class ManagementSecurityAuditService
+public sealed class SqliteManagementSecurityAuditWriter : IManagementSecurityAuditWriter
 {
     private readonly ManagementApiOptions _options;
-    private readonly ILogger<ManagementSecurityAuditService> _logger;
+    private readonly ILogger<SqliteManagementSecurityAuditWriter> _logger;
 
-    public ManagementSecurityAuditService(
+    public SqliteManagementSecurityAuditWriter(
         ManagementApiOptions options,
-        ILogger<ManagementSecurityAuditService> logger)
+        ILogger<SqliteManagementSecurityAuditWriter> logger)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public async Task RecordAuthorizationFailureAsync(
-        HttpContext context,
-        string reason,
+    public async Task WriteAuthorizationFailureAsync(
+        ManagementAuthorizationFailure failure,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(context);
-
         try
         {
             using var sink = new SqliteAuditSink(_options.AuditDatabasePath);
             await sink.WriteAsync(
                 new AuditEvent(
-                    Timestamp: DateTimeOffset.UtcNow,
+                    Timestamp: failure.TimestampUtc,
                     EventType: "management_auth_failure",
                     Mode: "management",
                     Decision: AuditDecision.Block,
                     ServerId: "management",
-                    Method: $"{context.Request.Method} {context.Request.Path}",
+                    Method: $"{failure.Method} {failure.Path}",
                     ToolName: null,
-                    Reasons: [reason],
+                    Reasons: [failure.Reason],
                     PolicyVersion: "management",
-                    CorrelationId: context.TraceIdentifier,
-                    RequestBytes: context.Request.ContentLength ?? 0,
+                    CorrelationId: failure.CorrelationId,
+                    RequestBytes: failure.RequestBytes,
                     DurationMs: 0,
-                    ArgumentSummary: CreatePayload(context, reason),
+                    ArgumentSummary: CreatePayload(failure),
                     BatchSize: 1),
                 cancellationToken).ConfigureAwait(false);
         }
@@ -51,17 +50,17 @@ public sealed class ManagementSecurityAuditService
             _logger.LogWarning(
                 ex,
                 "Management auth failure audit write failed for {Method} {Path}.",
-                context.Request.Method,
-                context.Request.Path);
+                failure.Method,
+                failure.Path);
         }
     }
 
-    private static JsonNode CreatePayload(HttpContext context, string reason) =>
+    private static JsonNode CreatePayload(ManagementAuthorizationFailure failure) =>
         new JsonObject
         {
-            ["reason"] = reason,
-            ["method"] = context.Request.Method,
-            ["path"] = context.Request.Path.Value,
-            ["remoteIp"] = context.Connection.RemoteIpAddress?.ToString()
+            ["reason"] = failure.Reason,
+            ["method"] = failure.Method,
+            ["path"] = failure.Path,
+            ["remoteIp"] = failure.RemoteIp
         };
 }

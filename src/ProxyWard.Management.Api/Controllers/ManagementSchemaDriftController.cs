@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using ProxyWard.Management.Api.Security;
-using ProxyWard.Management.Application;
 using ProxyWard.Management.Application.Drift;
 
 namespace ProxyWard.Management.Api.Controllers;
@@ -11,23 +10,17 @@ namespace ProxyWard.Management.Api.Controllers;
 public sealed class ManagementSchemaDriftController : ControllerBase
 {
     private readonly IManagementSchemaDriftActionService _actionService;
-    private readonly ManagementApiOptions _managementOptions;
     private readonly IManagementSchemaDriftRepository _repository;
-    private readonly ManagementSecurityAuditService _securityAuditService;
-    private readonly ILogger<ManagementSchemaDriftController> _logger;
+    private readonly ManagementWriteAuthorization _writeAuthorization;
 
     public ManagementSchemaDriftController(
         IManagementSchemaDriftActionService actionService,
-        ManagementApiOptions managementOptions,
         IManagementSchemaDriftRepository repository,
-        ManagementSecurityAuditService securityAuditService,
-        ILogger<ManagementSchemaDriftController> logger)
+        ManagementWriteAuthorization writeAuthorization)
     {
         _actionService = actionService ?? throw new ArgumentNullException(nameof(actionService));
-        _managementOptions = managementOptions ?? throw new ArgumentNullException(nameof(managementOptions));
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
-        _securityAuditService = securityAuditService ?? throw new ArgumentNullException(nameof(securityAuditService));
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _writeAuthorization = writeAuthorization ?? throw new ArgumentNullException(nameof(writeAuthorization));
     }
 
     [HttpGet]
@@ -96,12 +89,7 @@ public sealed class ManagementSchemaDriftController : ControllerBase
         string action,
         CancellationToken cancellationToken)
     {
-        if (!await ManagementWriteAuthorization.IsAuthorizedAsync(
-                HttpContext,
-                _managementOptions,
-                _securityAuditService,
-                _logger,
-                cancellationToken).ConfigureAwait(false))
+        if (!await _writeAuthorization.IsAuthorizedAsync(HttpContext, cancellationToken).ConfigureAwait(false))
         {
             return Unauthorized();
         }

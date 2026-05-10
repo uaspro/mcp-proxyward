@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using ProxyWard.Management.Api.Security;
-using ProxyWard.Management.Application;
 using ProxyWard.Management.Application.Policy;
 using ProxyWard.Management.Application.Status;
 using ProxyWard.Policy.Configuration;
@@ -12,30 +11,24 @@ namespace ProxyWard.Management.Api.Controllers;
 [Route("api/policy")]
 public sealed class ManagementPolicyController : ControllerBase
 {
-    private readonly ManagementApiOptions _managementOptions;
     private readonly ManagementPolicyApplyService _applyService;
     private readonly ManagementPolicyModeService _modeService;
     private readonly ManagementPolicyReader _policyReader;
     private readonly ManagementPolicyValidationService _validationService;
-    private readonly ManagementSecurityAuditService _securityAuditService;
-    private readonly ILogger<ManagementPolicyController> _logger;
+    private readonly ManagementWriteAuthorization _writeAuthorization;
 
     public ManagementPolicyController(
-        ManagementApiOptions managementOptions,
         ManagementPolicyApplyService applyService,
         ManagementPolicyModeService modeService,
         ManagementPolicyReader policyReader,
         ManagementPolicyValidationService validationService,
-        ManagementSecurityAuditService securityAuditService,
-        ILogger<ManagementPolicyController> logger)
+        ManagementWriteAuthorization writeAuthorization)
     {
-        _managementOptions = managementOptions ?? throw new ArgumentNullException(nameof(managementOptions));
         _applyService = applyService ?? throw new ArgumentNullException(nameof(applyService));
         _modeService = modeService ?? throw new ArgumentNullException(nameof(modeService));
         _policyReader = policyReader ?? throw new ArgumentNullException(nameof(policyReader));
         _validationService = validationService ?? throw new ArgumentNullException(nameof(validationService));
-        _securityAuditService = securityAuditService ?? throw new ArgumentNullException(nameof(securityAuditService));
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _writeAuthorization = writeAuthorization ?? throw new ArgumentNullException(nameof(writeAuthorization));
     }
 
     [HttpGet]
@@ -48,30 +41,15 @@ public sealed class ManagementPolicyController : ControllerBase
         }
         catch (FileNotFoundException ex)
         {
-            return NotFound(new { error = "policy_not_found", path = ex.FileName });
+            return this.PolicyNotFound(ex);
         }
         catch (PolicyValidationException ex)
         {
-            return Problem(
-                title: "Invalid ProxyWard policy",
-                detail: string.Join("; ", ex.Errors),
-                statusCode: StatusCodes.Status500InternalServerError,
-                extensions: new Dictionary<string, object?>
-                {
-                    ["error"] = "policy_invalid",
-                    ["errors"] = ex.Errors
-                });
+            return this.InvalidPolicy(ex);
         }
         catch (IOException ex)
         {
-            return Problem(
-                title: "Policy database could not be read",
-                detail: ex.Message,
-                statusCode: StatusCodes.Status500InternalServerError,
-                extensions: new Dictionary<string, object?>
-                {
-                    ["error"] = "policy_read_failed"
-                });
+            return this.PolicyReadFailed(ex);
         }
     }
 
@@ -164,15 +142,7 @@ public sealed class ManagementPolicyController : ControllerBase
         }
         catch (ProxyControlClientException ex)
         {
-            return Problem(
-                title: "Proxy control request failed",
-                detail: ex.Message,
-                statusCode: StatusCodes.Status502BadGateway,
-                extensions: new Dictionary<string, object?>
-                {
-                    ["error"] = ex.Error,
-                    ["proxyStatusCode"] = ex.StatusCode
-                });
+            return this.ProxyControlFailed(ex);
         }
     }
 
@@ -217,25 +187,12 @@ public sealed class ManagementPolicyController : ControllerBase
         }
         catch (ProxyControlClientException ex)
         {
-            return Problem(
-                title: "Proxy control request failed",
-                detail: ex.Message,
-                statusCode: StatusCodes.Status502BadGateway,
-                extensions: new Dictionary<string, object?>
-                {
-                    ["error"] = ex.Error,
-                    ["proxyStatusCode"] = ex.StatusCode
-                });
+            return this.ProxyControlFailed(ex);
         }
     }
 
     private Task<bool> IsAuthorizedAsync(CancellationToken cancellationToken) =>
-        ManagementWriteAuthorization.IsAuthorizedAsync(
-            HttpContext,
-            _managementOptions,
-            _securityAuditService,
-            _logger,
-            cancellationToken);
+        _writeAuthorization.IsAuthorizedAsync(HttpContext, cancellationToken);
 
     private ManagementPolicyValidationRequest CreatePolicyValidationRequest() =>
         new(Request.Body, Request.ContentType);

@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using ProxyWard.Audit;
 using ProxyWard.Core.Policies;
 using ProxyWard.Management.Application;
@@ -47,6 +48,32 @@ public class ArchitectureBoundaryTests
         Assert.DoesNotContain("YamlDotNet", references);
         Assert.DoesNotContain("ProxyWard.Management.Api", references);
         Assert.DoesNotContain("ProxyWard.Management.Infrastructure", references);
+    }
+
+    [Fact]
+    public void ManagementApiDoesNotReferenceAuditStorageDirectly()
+    {
+        var projectReferences = XDocument
+            .Load(RepoPath("src/ProxyWard.Management.Api/ProxyWard.Management.Api.csproj"))
+            .Descendants("ProjectReference")
+            .Select(reference => reference.Attribute("Include")?.Value)
+            .Where(include => include is not null)
+            .Select(include => include!)
+            .ToArray();
+
+        var sourceOffenders = Directory
+            .EnumerateFiles(
+                RepoPath("src/ProxyWard.Management.Api"),
+                "*.cs",
+                SearchOption.AllDirectories)
+            .Where(file => File.ReadAllText(file).Contains("ProxyWard.Audit", StringComparison.Ordinal))
+            .Select(file => Path.GetRelativePath(RepoRoot.Value, file))
+            .ToArray();
+
+        Assert.DoesNotContain(
+            projectReferences,
+            include => include.Contains("ProxyWard.Audit", StringComparison.OrdinalIgnoreCase));
+        Assert.Empty(sourceOffenders);
     }
 
     [Fact]
