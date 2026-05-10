@@ -65,6 +65,14 @@ import {
 import { getSettings, type SettingsResponse } from './api/settings'
 import { getStatus, type ComponentReport, type StatusResponse } from './api/status'
 import {
+  discoverTools,
+  getToolInventory,
+  type ToolDiscoveryResponse,
+  type ToolInventoryResponse,
+  type ToolInventoryServer,
+  type ToolInventoryTool,
+} from './api/tools'
+import {
   Badge,
   BarChart,
   Button,
@@ -90,6 +98,18 @@ type NewServerPolicyForm = {
   id: string
   route: string
   upstream: string
+}
+
+type ToolDisposition = 'default' | 'allow' | 'block'
+
+type ToolPolicyRow = {
+  name: string
+  title: string | null
+  description: string | null
+  driftStatus: string
+  discovered: boolean
+  disposition: ToolDisposition
+  policyDirty: boolean
 }
 
 type NavItem = {
@@ -2283,7 +2303,8 @@ function formatApiFailure(ex: unknown, fallback: string): string {
   }
 
   if (ex instanceof ApiError && ex.status) {
-    return `${fallback} (${ex.status})`
+    const detail = ex.message && !ex.message.endsWith('failed') ? `: ${ex.message}` : ''
+    return `${fallback}${detail} (${ex.status})`
   }
 
   return ex instanceof Error ? ex.message : fallback
@@ -2291,6 +2312,124 @@ function formatApiFailure(ex: unknown, fallback: string): string {
 
 function formatServerCount(count: number): string {
   return `${count.toLocaleString()} ${count === 1 ? 'server' : 'servers'}`
+}
+
+function createToolInventoryServer(response: ToolDiscoveryResponse): ToolInventoryServer {
+  return {
+    serverId: response.serverId,
+    latestVersion: response.latestVersion,
+    driftStatus: 'clean',
+    tools: response.tools,
+  }
+}
+
+function upsertToolInventoryServer(
+  inventory: ToolInventoryResponse | null,
+  server: ToolInventoryServer,
+): ToolInventoryResponse {
+  return {
+    servers: [
+      ...(inventory?.servers ?? []).filter((item) => item.serverId !== server.serverId),
+      server,
+    ].sort((left, right) => left.serverId.localeCompare(right.serverId)),
+  }
+}
+
+function omitRecordKey<TValue>(record: Record<string, TValue>, key: string): Record<string, TValue> {
+  const next = { ...record }
+  delete next[key]
+  return next
+}
+
+function createToolPolicyRows(
+  server: ServerPolicyModel,
+  inventory: ToolInventoryServer | null,
+  baselineServer: ServerPolicyModel | null,
+): ToolPolicyRow[] {
+  const discovered = new Map<string, ToolInventoryTool>()
+  for (const tool of inventory?.tools ?? []) {
+    discovered.set(tool.name, tool)
+  }
+
+  const toolNames = new Set<string>([
+    ...discovered.keys(),
+    ...server.tools.allow,
+    ...server.tools.block,
+  ])
+
+  return [...toolNames]
+    .sort((left, right) => left.localeCompare(right))
+    .map((name) => {
+      const tool = discovered.get(name) ?? null
+      const disposition = getToolDisposition(server, name)
+      return {
+        name,
+        title: tool?.title ?? null,
+        description: tool?.description ?? null,
+        driftStatus: tool?.driftStatus ?? 'unknown',
+        discovered: tool !== null,
+        disposition,
+        policyDirty: disposition !== getToolDispositionOrDefault(baselineServer, name),
+      }
+    })
+}
+
+function getToolDispositionOrDefault(server: ServerPolicyModel | null, toolName: string): ToolDisposition {
+  return server ? getToolDisposition(server, toolName) : 'default'
+}
+
+function getToolDisposition(server: ServerPolicyModel, toolName: string): ToolDisposition {
+  if (server.tools.block.includes(toolName)) {
+    return 'block'
+  }
+
+  if (server.tools.allow.includes(toolName)) {
+    return 'allow'
+  }
+
+  return 'default'
+}
+
+function updateToolDisposition(
+  server: ServerPolicyModel,
+  toolName: string,
+  disposition: ToolDisposition,
+): ServerPolicyModel {
+  const allow = new Set(server.tools.allow.filter((name) => name !== toolName))
+  const block = new Set(server.tools.block.filter((name) => name !== toolName))
+
+  if (disposition === 'allow') {
+    allow.add(toolName)
+  }
+
+  if (disposition === 'block') {
+    block.add(toolName)
+  }
+
+  return {
+    ...server,
+    tools: {
+      ...server.tools,
+      allow: [...allow].sort((left, right) => left.localeCompare(right)),
+      block: [...block].sort((left, right) => left.localeCompare(right)),
+    },
+  }
+}
+
+function driftTone(status: string): 'neutral' | 'allow' | 'warn' | 'block' | 'info' {
+  if (status === 'pending' || status === 'rejected') {
+    return 'warn'
+  }
+
+  if (status === 'blocked') {
+    return 'block'
+  }
+
+  if (status === 'approved' || status === 'clean') {
+    return 'allow'
+  }
+
+  return 'neutral'
 }
 
 function createNextServerId(servers: Record<string, ServerPolicyModel>): string {
@@ -2387,9 +2526,12 @@ function createServerPolicyModel(form: NewServerPolicyForm): ServerPolicyModel {
 function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mode) => void }) {
   const [policy, setPolicy] = useState<PolicyResponse | null>(null)
   const [draft, setDraft] = useState<PolicyModel | null>(null)
+  const [toolInventory, setToolInventory] = useState<ToolInventoryResponse | null>(null)
   const [selectedKey, setSelectedKey] = useState<string>('global')
   const [loading, setLoading] = useState(true)
+  const [toolInventoryLoading, setToolInventoryLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [toolInventoryError, setToolInventoryError] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [validation, setValidation] = useState<PolicyValidationResponse | null>(null)
   const [validationLoading, setValidationLoading] = useState(false)
@@ -2398,11 +2540,41 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
   const [applyResult, setApplyResult] = useState<PolicyApplyResponse | null>(null)
   const [newServerForm, setNewServerForm] = useState<NewServerPolicyForm | null>(null)
   const [newServerError, setNewServerError] = useState<string | null>(null)
+  const [toolDiscoveryErrors, setToolDiscoveryErrors] = useState<Record<string, string>>({})
+  const [discoveringServerId, setDiscoveringServerId] = useState<string | null>(null)
   const [pendingDeleteServer, setPendingDeleteServer] = useState<ServerPolicyModel | null>(null)
   const [pendingEnforceApply, setPendingEnforceApply] = useState<PolicyModel | null>(null)
 
   const serverEntries = useMemo(() => Object.entries(draft?.servers ?? {}), [draft])
+  const toolInventoryByServer = useMemo(
+    () => new Map((toolInventory?.servers ?? []).map((server) => [server.serverId, server])),
+    [toolInventory],
+  )
   const selectedServer = draft && selectedKey !== 'global' ? draft.servers[selectedKey] ?? null : null
+  const selectedBaselineServer = policy && selectedKey !== 'global' ? policy.model.servers[selectedKey] ?? null : null
+  const selectedServerInventory = selectedServer ? toolInventoryByServer.get(selectedServer.id) ?? null : null
+
+  const loadToolInventory = useCallback(() => {
+    const controller = new AbortController()
+    setToolInventoryLoading(true)
+    getToolInventory(controller.signal)
+      .then((response) => {
+        setToolInventory(response)
+        setToolInventoryError(null)
+      })
+      .catch((ex: unknown) => {
+        if (!controller.signal.aborted) {
+          setToolInventoryError(formatApiFailure(ex, 'Tool inventory request failed'))
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setToolInventoryLoading(false)
+        }
+      })
+
+    return () => controller.abort()
+  }, [])
 
   const applyLoadedPolicy = useCallback((response: PolicyResponse) => {
     const nextDraft = clonePolicyModel(response.model)
@@ -2458,6 +2630,8 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
 
     return () => controller.abort()
   }, [applyLoadedPolicy])
+
+  useEffect(() => loadToolInventory(), [loadToolInventory])
 
   function markDirty() {
     setDirty(true)
@@ -2523,6 +2697,7 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
     }))
     setSelectedKey(normalized.id)
     setNewServerForm(null)
+    void discoverServerTools(normalized.id, normalized.upstream)
   }
 
   function confirmDeleteServer() {
@@ -2646,6 +2821,33 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
           }
         : current,
     )
+    void getToolInventory()
+      .then((response) => {
+        setToolInventory(response)
+        setToolInventoryError(null)
+      })
+      .catch((ex: unknown) => {
+        setToolInventoryError(formatApiFailure(ex, 'Tool inventory request failed'))
+      })
+  }
+
+  async function discoverServerTools(serverId: string, upstream?: string | null) {
+    setDiscoveringServerId(serverId)
+    setToolDiscoveryErrors((current) => omitRecordKey(current, serverId))
+    try {
+      const response = await discoverTools({
+        serverId,
+        upstream: upstream || undefined,
+      })
+      setToolInventory((current) => upsertToolInventoryServer(current, createToolInventoryServer(response)))
+    } catch (ex) {
+      setToolDiscoveryErrors((current) => ({
+        ...current,
+        [serverId]: formatApiFailure(ex, 'Tool discovery failed'),
+      }))
+    } finally {
+      setDiscoveringServerId((current) => (current === serverId ? null : current))
+    }
   }
 
   async function confirmEnforceApply() {
@@ -2761,6 +2963,12 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
           ) : selectedServer ? (
             <ServerPolicyEditor
               server={selectedServer}
+              baselineServer={selectedBaselineServer}
+              toolInventory={selectedServerInventory}
+              toolsLoading={toolInventoryLoading}
+              toolsError={toolDiscoveryErrors[selectedServer.id] ?? (selectedServerInventory ? null : toolInventoryError)}
+              discovering={discoveringServerId === selectedServer.id}
+              onDiscover={() => discoverServerTools(selectedServer.id, selectedServer.upstream)}
               onChange={(updater) => updateServer(selectedServer.id, updater)}
               onDelete={() => setPendingDeleteServer(selectedServer)}
             />
@@ -3016,10 +3224,22 @@ function GlobalPolicyEditor({
 
 function ServerPolicyEditor({
   server,
+  baselineServer,
+  toolInventory,
+  toolsLoading,
+  toolsError,
+  discovering,
+  onDiscover,
   onChange,
   onDelete,
 }: {
   server: ServerPolicyModel
+  baselineServer: ServerPolicyModel | null
+  toolInventory: ToolInventoryServer | null
+  toolsLoading: boolean
+  toolsError: string | null
+  discovering: boolean
+  onDiscover: () => void
   onChange: (updater: (server: ServerPolicyModel) => ServerPolicyModel) => void
   onDelete: () => void
 }) {
@@ -3062,7 +3282,20 @@ function ServerPolicyEditor({
           </PolicyField>
         </div>
       </Card>
-      <Card title="Tools">
+      <Card
+        title="Tools"
+        action={
+          <Button
+            icon={RefreshCw}
+            size="sm"
+            variant="ghost"
+            disabled={discovering || !server.upstream}
+            onClick={onDiscover}
+          >
+            {discovering ? 'Discovering' : 'Discover'}
+          </Button>
+        }
+      >
         <div className="form-grid">
           <PolicyField label="default">
             <SegmentedControl
@@ -3079,25 +3312,13 @@ function ServerPolicyEditor({
               ]}
             />
           </PolicyField>
-          <TextListEditor
-            label="allow"
-            values={server.tools.allow}
-            onChange={(values) =>
-              onChange((current) => ({
-                ...current,
-                tools: { ...current.tools, allow: values },
-              }))
-            }
-          />
-          <TextListEditor
-            label="block"
-            values={server.tools.block}
-            onChange={(values) =>
-              onChange((current) => ({
-                ...current,
-                tools: { ...current.tools, block: values },
-              }))
-            }
+          <ToolPolicySelector
+            server={server}
+            inventory={toolInventory}
+            baselineServer={baselineServer}
+            loading={toolsLoading || discovering}
+            error={toolsError}
+            onChange={onChange}
           />
         </div>
       </Card>
@@ -3235,6 +3456,75 @@ function ServerPolicyEditor({
         />
       </Card>
     </>
+  )
+}
+
+function ToolPolicySelector({
+  server,
+  inventory,
+  baselineServer,
+  loading,
+  error,
+  onChange,
+}: {
+  server: ServerPolicyModel
+  inventory: ToolInventoryServer | null
+  baselineServer: ServerPolicyModel | null
+  loading: boolean
+  error: string | null
+  onChange: (updater: (server: ServerPolicyModel) => ServerPolicyModel) => void
+}) {
+  const rows = useMemo(
+    () => createToolPolicyRows(server, inventory, baselineServer),
+    [server, inventory, baselineServer],
+  )
+
+  return (
+    <div className="tool-policy-panel">
+      {loading && rows.length === 0 ? <StatePanel state="loading" title="Discovering tools" detail="tools/list" /> : null}
+      {error ? <StatePanel state="error" title="Tool discovery unavailable" detail={error} /> : null}
+      {rows.length === 0 && !loading ? (
+        <StatePanel
+          state="empty"
+          title="No discovered tools"
+          detail="Run discovery or call tools/list through the proxy to populate this list."
+        />
+      ) : null}
+      {rows.length > 0 ? (
+        <div className={`tool-policy-list ${loading ? 'loading' : ''}`}>
+          {rows.map((row) => (
+            <div className="tool-policy-row" key={row.name}>
+              <div className="tool-policy-main">
+                <div className="tool-policy-title">
+                  <strong className="mono truncate">{row.name}</strong>
+                  <Badge tone={row.policyDirty ? 'warn' : 'allow'}>{row.policyDirty ? 'dirty' : 'clean'}</Badge>
+                  {!row.discovered || row.driftStatus !== 'clean' ? (
+                    <Badge tone={row.discovered ? driftTone(row.driftStatus) : 'neutral'}>
+                      {row.discovered ? row.driftStatus : 'configured'}
+                    </Badge>
+                  ) : null}
+                </div>
+                <div className="tool-policy-description">
+                  {row.title ? <span>{row.title}</span> : null}
+                  {row.description ? <span>{row.description}</span> : null}
+                </div>
+              </div>
+              <SegmentedControl<ToolDisposition>
+                value={row.disposition}
+                options={[
+                  { value: 'default', label: 'Default' },
+                  { value: 'allow', label: 'Allow' },
+                  { value: 'block', label: 'Block' },
+                ]}
+                onChange={(value) =>
+                  onChange((current) => updateToolDisposition(current, row.name, value))
+                }
+              />
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
   )
 }
 

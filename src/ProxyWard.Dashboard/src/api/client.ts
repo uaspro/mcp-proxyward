@@ -27,7 +27,7 @@ export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T>
   })
 
   if (!response.ok) {
-    throw new ApiError(`GET ${path} failed`, response.status)
+    throw new ApiError(await readErrorMessage(response, `GET ${path} failed`), response.status)
   }
 
   return (await response.json()) as T
@@ -68,8 +68,29 @@ async function sendJson<T>(
   })
 
   if (!response.ok) {
-    throw new ApiError(`${method} ${path} failed`, response.status)
+    throw new ApiError(await readErrorMessage(response, `${method} ${path} failed`), response.status)
   }
 
   return (await response.json()) as T
+}
+
+async function readErrorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const payload = await response.clone().json()
+    if (payload && typeof payload.message === 'string' && payload.message.trim()) {
+      return payload.message
+    }
+
+    if (payload && typeof payload.detail === 'string' && payload.detail.trim()) {
+      return payload.detail
+    }
+
+    if (payload && typeof payload.error === 'string' && payload.error.trim()) {
+      return payload.error
+    }
+  } catch {
+    // Keep the original request-oriented fallback for non-JSON error bodies.
+  }
+
+  return fallback
 }

@@ -1,5 +1,9 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Sinks;
@@ -13,6 +17,7 @@ namespace ProxyWard.IntegrationTests;
 public class ManagementToolInventoryEndpointTests : IAsyncLifetime
 {
     private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string AdminTokenEnv = "PROXYWARD_MANAGEMENT_ADMIN_TOKEN";
 
     private readonly string _databasePath = Path.Combine(
         Path.GetTempPath(),
@@ -23,6 +28,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
     public Task DisposeAsync()
     {
         Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        Environment.SetEnvironmentVariable(AdminTokenEnv, null);
         DeleteFiles(_databasePath);
 
         return Task.CompletedTask;
@@ -103,6 +109,47 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
 
         using var payload = await ReadJsonAsync(response);
         Assert.Empty(payload.RootElement.GetProperty("servers").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task DiscoverEndpointCallsToolsListAndPersistsInventory()
+    {
+        await using var upstream = await StartToolListUpstreamAsync();
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
+
+        await using var factory = new WebApplicationFactory<ManagementProgram>();
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/tools/discover")
+        {
+            Content = JsonContent.Create(new
+            {
+                serverId = "gamma",
+                upstream = $"{upstream.BaseAddress}/mcp"
+            })
+        };
+        request.Headers.Authorization = new("Bearer", "test-admin-token");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var discoveryPayload = await ReadJsonAsync(response);
+        Assert.Equal("gamma", discoveryPayload.RootElement.GetProperty("serverId").GetString());
+        Assert.Equal(2, discoveryPayload.RootElement.GetProperty("tools").GetArrayLength());
+        Assert.Equal("repos.search", discoveryPayload.RootElement.GetProperty("tools")[1].GetProperty("name").GetString());
+
+        using var inventoryResponse = await client.GetAsync("/api/tools");
+        Assert.Equal(HttpStatusCode.OK, inventoryResponse.StatusCode);
+
+        using var inventoryPayload = await ReadJsonAsync(inventoryResponse);
+        var gamma = Assert.Single(
+            inventoryPayload.RootElement.GetProperty("servers").EnumerateArray(),
+            server => server.GetProperty("serverId").GetString() == "gamma");
+        Assert.Equal(1, gamma.GetProperty("latestVersion").GetInt32());
+        Assert.Equal(["issues.list", "repos.search"], gamma.GetProperty("tools").EnumerateArray()
+            .Select(tool => tool.GetProperty("name").GetString()!)
+            .ToArray());
     }
 
     private async Task SeedSchemaHistoryAsync()
@@ -198,6 +245,51 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
         return await JsonDocument.ParseAsync(stream);
     }
 
+    private static async Task<UpstreamApp> StartToolListUpstreamAsync()
+    {
+        var port = GetFreePort();
+        var baseAddress = $"http://127.0.0.1:{port}";
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls(baseAddress);
+
+        var app = builder.Build();
+        app.MapPost("/mcp", () => Results.Json(new
+        {
+            jsonrpc = "2.0",
+            id = "proxyward-dashboard-tools-discovery",
+            result = new
+            {
+                tools = new object[]
+                {
+                    new
+                    {
+                        name = "repos.search",
+                        title = "Search repositories",
+                        description = "Find repositories",
+                        inputSchema = new { type = "object" }
+                    },
+                    new
+                    {
+                        name = "issues.list",
+                        title = "List issues",
+                        description = "List issues",
+                        inputSchema = new { type = "object" }
+                    }
+                }
+            }
+        }));
+
+        await app.StartAsync();
+        return new UpstreamApp(baseAddress, app);
+    }
+
+    private static int GetFreePort()
+    {
+        using var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        return ((IPEndPoint)listener.LocalEndpoint).Port;
+    }
+
     private static void DeleteFiles(string databasePath)
     {
         foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
@@ -270,4 +362,15 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
                 blockShell: false
                 dangerous: []
         """;
+
+    private sealed class UpstreamApp(string baseAddress, WebApplication app) : IAsyncDisposable
+    {
+        public string BaseAddress { get; } = baseAddress;
+
+        public async ValueTask DisposeAsync()
+        {
+            await app.StopAsync();
+            await app.DisposeAsync();
+        }
+    }
 }

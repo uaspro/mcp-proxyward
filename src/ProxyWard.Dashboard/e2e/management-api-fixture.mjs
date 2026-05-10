@@ -247,16 +247,32 @@ const responses = {
     servers: [
       {
         serverId: 'sample',
-        route: '/sample/mcp',
-        upstream: 'http://sample-mcp:8080/mcp',
+        latestVersion: 2,
+        driftStatus: 'clean',
         tools: [
           {
             name: 'fs.read',
             title: 'Read file',
             description: 'Read a file from the workspace',
-            version: 2,
-            lastSeenUtc: now,
-            status: 'approved',
+            latestVersion: 2,
+            driftStatus: 'clean',
+            nameHash: 'sha256:fs-read-name',
+            titleHash: 'sha256:fs-read-title',
+            descriptionHash: 'sha256:fs-read-description',
+            inputSchemaHash: 'sha256:fs-read-input',
+            outputSchemaHash: null,
+          },
+          {
+            name: 'shell.exec',
+            title: 'Execute command',
+            description: 'Run a shell command',
+            latestVersion: 2,
+            driftStatus: 'clean',
+            nameHash: 'sha256:shell-exec-name',
+            titleHash: 'sha256:shell-exec-title',
+            descriptionHash: 'sha256:shell-exec-description',
+            inputSchemaHash: 'sha256:shell-exec-input',
+            outputSchemaHash: null,
           },
         ],
       },
@@ -410,6 +426,21 @@ const server = http.createServer((request, response) => {
         warnings: [],
         policyHash: 'sha256:e2e',
         normalizedModel,
+      })
+    })
+    return
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/tools/discover') {
+    readJsonRequest(request, (body) => {
+      const serverId = body.serverId ?? 'sample'
+      writeJson(response, 200, {
+        serverId,
+        upstream: body.upstream ?? 'http://sample-mcp:8080/mcp',
+        latestVersion: 3,
+        snapshotHash: 'sha256:discovered-tools',
+        wasNewVersion: true,
+        tools: responses['/api/tools'].servers[0].tools,
       })
     })
     return

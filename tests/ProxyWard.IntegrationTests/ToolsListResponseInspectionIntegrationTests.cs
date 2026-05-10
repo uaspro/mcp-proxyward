@@ -65,12 +65,16 @@ public class ToolsListResponseInspectionIntegrationTests
     }
 
     [Fact]
-    public async Task StreamingToolsListResponseWarnsAndPassesThroughWhenUnsupportedStreamingWarn()
+    public async Task EventStreamToolsListResponseIsInspectedAndAudited()
     {
-        const string responseBody = "data: {\"jsonrpc\":\"2.0\"}\n\n";
+        const string responseBody = """
+            event: message
+            data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}}]}}
+
+            """;
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
         var dbPath = NewTempSqlitePath();
-        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
+        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 4096, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
@@ -91,19 +95,29 @@ public class ToolsListResponseInspectionIntegrationTests
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
-        Assert.Equal("warn", row.Decision);
-        Assert.Contains("inspection_unsupported", row.Reasons, StringComparison.Ordinal);
+        Assert.Equal("allow", row.Decision);
+        Assert.Equal(string.Empty, row.Reasons);
+
+        using var payload = JsonDocument.Parse(row.PayloadJson);
+        var summary = payload.RootElement.GetProperty("argumentSummary");
+        Assert.Equal(2, summary.GetProperty("toolCount").GetInt32());
+        Assert.Equal(["issues.list", "repos.search"], summary.GetProperty("toolNames")
+            .EnumerateArray()
+            .Select(name => name.GetString()!)
+            .ToArray());
 
         DeleteIfExists(dbPath);
     }
 
     [Fact]
-    public async Task StreamingToolsListResponseBlocksWhenUnsupportedStreamingBlockInEnforceMode()
+    public async Task OversizedEventStreamToolsListResponseBlocksWhenUnsupportedStreamingBlockInEnforceMode()
     {
-        const string responseBody = "data: upstream-stream\n\n";
+        var responseBody = "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\""
+            + new string('x', 2048)
+            + "\"}]}}\n\n";
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
         var dbPath = NewTempSqlitePath();
-        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 4096, upstream.BaseAddress, dbPath));
+        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 512, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try

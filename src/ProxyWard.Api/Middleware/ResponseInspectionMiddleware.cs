@@ -71,7 +71,8 @@ public sealed class ResponseInspectionMiddleware(
             originalBody,
             context.Response,
             policy.Inspection.MaxBodyBytes,
-            ShouldBlockUnsupported(policy));
+            ShouldBlockUnsupported(policy),
+            captureStreamingResponses: target.Kind == ResponseInspectionKind.ToolsList);
 
         context.Response.Body = capture;
         var stopwatch = Stopwatch.StartNew();
@@ -123,7 +124,7 @@ public sealed class ResponseInspectionMiddleware(
             return;
         }
 
-        var result = extractor.Extract(body);
+        var result = ExtractToolsListResponse(body, context.Response.ContentType);
         if (!result.Success)
         {
             await EmitAuditAsync(
@@ -363,6 +364,96 @@ public sealed class ResponseInspectionMiddleware(
         }
 
         return ResponseInspectionTarget.None;
+    }
+
+    private ToolListExtractionResult ExtractToolsListResponse(byte[] body, string? contentType)
+    {
+        if (!IsStreamingContentType(contentType))
+        {
+            return extractor.Extract(body);
+        }
+
+        var payloads = ExtractServerSentEventDataPayloads(body);
+        if (payloads.Count == 0)
+        {
+            return ToolListExtractionResult.Failed(PolicyReasonCodes.JsonMalformed);
+        }
+
+        var jsonMessages = new JsonArray();
+        foreach (var payload in payloads)
+        {
+            var trimmed = payload.Trim();
+            if (trimmed.Length == 0 || string.Equals(trimmed, "[DONE]", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            JsonNode? message;
+            try
+            {
+                message = JsonNode.Parse(trimmed);
+            }
+            catch (JsonException)
+            {
+                return ToolListExtractionResult.Failed(PolicyReasonCodes.JsonMalformed);
+            }
+
+            if (message is not null)
+            {
+                jsonMessages.Add(message);
+            }
+        }
+
+        if (jsonMessages.Count == 0)
+        {
+            return ToolListExtractionResult.Failed(PolicyReasonCodes.JsonMalformed);
+        }
+
+        var extractableBody = Encoding.UTF8.GetBytes(
+            jsonMessages.Count == 1
+                ? jsonMessages[0]!.ToJsonString()
+                : jsonMessages.ToJsonString());
+
+        return extractor.Extract(extractableBody);
+    }
+
+    private static IReadOnlyList<string> ExtractServerSentEventDataPayloads(byte[] body)
+    {
+        var text = Encoding.UTF8.GetString(body);
+        var payloads = new List<string>();
+        var currentDataLines = new List<string>();
+
+        foreach (var rawLine in text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
+        {
+            var line = rawLine.EndsWith('\r') ? rawLine[..^1] : rawLine;
+            if (line.Length == 0)
+            {
+                FlushEventData(currentDataLines, payloads);
+                continue;
+            }
+
+            if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var data = line[5..];
+            currentDataLines.Add(data.StartsWith(' ') ? data[1..] : data);
+        }
+
+        FlushEventData(currentDataLines, payloads);
+        return payloads;
+    }
+
+    private static void FlushEventData(List<string> currentDataLines, List<string> payloads)
+    {
+        if (currentDataLines.Count == 0)
+        {
+            return;
+        }
+
+        payloads.Add(string.Join('\n', currentDataLines));
+        currentDataLines.Clear();
     }
 
     private async Task HandleToolCallSecretResponseAsync(
@@ -1149,6 +1240,9 @@ public sealed class ResponseInspectionMiddleware(
         return mediaType.Trim();
     }
 
+    private static bool IsStreamingContentType(string? contentType) =>
+        SanitizeMediaType(contentType).Equals("text/event-stream", StringComparison.OrdinalIgnoreCase);
+
     private static string FormatMode(ProxyWardMode mode) =>
         mode == ProxyWardMode.Enforce ? "enforce" : "audit";
 
@@ -1226,7 +1320,8 @@ public sealed class ResponseInspectionMiddleware(
         Stream passthrough,
         HttpResponse response,
         int maxBodyBytes,
-        bool blockUnsupported) : Stream
+        bool blockUnsupported,
+        bool captureStreamingResponses) : Stream
     {
         private readonly MemoryStream _buffer = new(capacity: Math.Min(maxBodyBytes, 64 * 1024));
         private CaptureMode _mode = CaptureMode.Undecided;
@@ -1327,6 +1422,12 @@ public sealed class ResponseInspectionMiddleware(
             var contentLength = response.ContentLength;
             if (IsStreamingContentType(response.ContentType))
             {
+                if (captureStreamingResponses)
+                {
+                    _mode = CaptureMode.Buffer;
+                    return;
+                }
+
                 SetUnsupported("streaming_response");
                 return;
             }

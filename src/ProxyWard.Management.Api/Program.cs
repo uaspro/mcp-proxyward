@@ -80,6 +80,13 @@ public partial class Program
             services.GetRequiredService<ManagementApiOptions>().AuditDatabasePath,
             services.GetRequiredService<ManagementAuditReadOptions>()));
         builder.Services.AddScoped<ManagementToolInventoryRepository>();
+        builder.Services.AddHttpClient<ManagementToolDiscoveryService>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            AllowAutoRedirect = false
+        });
         builder.Services.AddSingleton(_ => new SqlitePolicyStore(options.AuditDatabasePath));
         builder.Services.AddScoped<ManagementPolicyReader>();
         builder.Services.AddScoped<ManagementPolicyValidationService>();
@@ -527,6 +534,68 @@ public partial class Program
         {
             var response = await repository.GetAsync(cancellationToken).ConfigureAwait(false);
             return Results.Ok(response);
+        });
+
+        app.MapPost("/api/tools/discover", async Task<IResult> (
+            HttpContext context,
+            ManagementApiOptions managementOptions,
+            ManagementSecurityAuditService securityAuditService,
+            ILogger<Program> logger,
+            ManagementToolDiscoveryService discoveryService,
+            CancellationToken cancellationToken) =>
+        {
+            if (!await IsAuthorizedManagementWriteAsync(
+                    context,
+                    managementOptions,
+                    securityAuditService,
+                    logger,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                return Results.Unauthorized();
+            }
+
+            ManagementToolDiscoveryRequest? request;
+            try
+            {
+                request = await context.Request
+                    .ReadFromJsonAsync<ManagementToolDiscoveryRequest>(cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (JsonException ex)
+            {
+                return Results.BadRequest(new
+                {
+                    error = "tool_discovery_request_invalid",
+                    message = ex.Message
+                });
+            }
+
+            try
+            {
+                var response = await discoveryService
+                    .DiscoverAsync(request, cancellationToken)
+                    .ConfigureAwait(false);
+                return Results.Ok(response);
+            }
+            catch (ManagementToolDiscoveryRequestException ex)
+            {
+                return Results.BadRequest(new
+                {
+                    error = ex.Error,
+                    message = ex.Message
+                });
+            }
+            catch (ManagementToolDiscoveryException ex)
+            {
+                return Results.Json(
+                    new
+                    {
+                        error = ex.Error,
+                        message = ex.Message,
+                        upstreamStatusCode = ex.UpstreamStatusCode
+                    },
+                    statusCode: StatusCodes.Status502BadGateway);
+            }
         });
 
         app.MapPost("/api/schema/drifts/{id:long}/approve", async (

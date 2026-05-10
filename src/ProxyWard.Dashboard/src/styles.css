@@ -1071,6 +1071,68 @@ kbd {
   line-height: 1.55;
 }
 
+.tool-policy-panel {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.tool-policy-list {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  transition: opacity 120ms ease;
+}
+
+.tool-policy-list.loading {
+  opacity: 0.65;
+}
+
+.tool-policy-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  padding: 10px;
+}
+
+.tool-policy-main {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.tool-policy-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-policy-title strong {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.tool-policy-description {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  color: var(--fg-subtle);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.tool-policy-description span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .validation-list {
   display: grid;
   gap: 8px;

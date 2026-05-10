@@ -6,6 +6,7 @@ WORKDIR /src
 COPY src/ProxyWard.Management.Api/ProxyWard.Management.Api.csproj src/ProxyWard.Management.Api/
 COPY src/ProxyWard.Audit/ProxyWard.Audit.csproj src/ProxyWard.Audit/
 COPY src/ProxyWard.Core/ProxyWard.Core.csproj src/ProxyWard.Core/
+COPY src/ProxyWard.Locking/ProxyWard.Locking.csproj src/ProxyWard.Locking/
 COPY src/ProxyWard.Policy/ProxyWard.Policy.csproj src/ProxyWard.Policy/
 RUN dotnet restore src/ProxyWard.Management.Api/ProxyWard.Management.Api.csproj
 
