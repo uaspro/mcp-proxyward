@@ -1,10 +1,6 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Sockets;
 using System.Text;
-using System.Text.Json;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -18,63 +14,49 @@ public class RequestInspectionIntegrationTests
     public async Task InspectableJsonPostReachesUpstreamWithOriginalBody()
     {
         await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", maxBodyBytes: 1024, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        using var environment = TestEnvironment
+            .Create()
+            .Set("PROXYWARD_DB_PATH", TestFiles.SavePolicy(CreatePolicy("enforce", "warn", maxBodyBytes: 1024, upstream.BaseAddress)));
         var body = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":"abc"}}""";
 
-        try
-        {
-            await using var factory = new WebApplicationFactory<Program>();
-            using var client = factory.CreateClient();
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
 
-            using var response = await client.PostAsync(
-                "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+        using var response = await client.PostAsync(
+            "/github/mcp",
+            new StringContent(body, Encoding.UTF8, "application/json"));
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(1, upstream.RequestCount);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, upstream.RequestCount);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
+        using var payload = await TestJson.ReadAsync(response);
 
-            Assert.Equal("POST", payload.RootElement.GetProperty("method").GetString());
-            Assert.Equal(body, payload.RootElement.GetProperty("body").GetString());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
-        }
+        Assert.Equal("POST", payload.RootElement.GetProperty("method").GetString());
+        Assert.Equal(body, payload.RootElement.GetProperty("body").GetString());
     }
 
     [Fact]
     public async Task ChunkedJsonPostWithinMaxBodyBytesReachesUpstreamWithOriginalBody()
     {
         await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", maxBodyBytes: 1024, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        using var environment = TestEnvironment
+            .Create()
+            .Set("PROXYWARD_DB_PATH", TestFiles.SavePolicy(CreatePolicy("enforce", "block", maxBodyBytes: 1024, upstream.BaseAddress)));
         var body = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":"streamed"}}""";
 
-        try
-        {
-            await using var factory = new WebApplicationFactory<Program>();
-            using var client = factory.CreateClient();
-            using var content = new StreamContent(new NonSeekableMemoryStream(Encoding.UTF8.GetBytes(body)));
-            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
+        using var content = new StreamContent(new NonSeekableMemoryStream(Encoding.UTF8.GetBytes(body)));
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-            using var response = await client.PostAsync("/github/mcp", content);
+        using var response = await client.PostAsync("/github/mcp", content);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(1, upstream.RequestCount);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, upstream.RequestCount);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
+        using var payload = await TestJson.ReadAsync(response);
 
-            Assert.Equal(body, payload.RootElement.GetProperty("body").GetString());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
-        }
+        Assert.Equal(body, payload.RootElement.GetProperty("body").GetString());
     }
 
     [Fact]
@@ -82,146 +64,99 @@ public class RequestInspectionIntegrationTests
     {
         await using var upstream = await StartUpstreamAsync();
         var logs = new CapturingLoggerProvider();
-        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", maxBodyBytes: 1024, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        using var environment = TestEnvironment
+            .Create()
+            .Set("PROXYWARD_DB_PATH", TestFiles.SavePolicy(CreatePolicy("enforce", "warn", maxBodyBytes: 1024, upstream.BaseAddress)));
         var body = "not-json-but-should-pass";
 
-        try
-        {
-            await using var factory = new WebApplicationFactory<Program>()
-                .WithWebHostBuilder(builder => builder.ConfigureLogging(logging =>
-                {
-                    logging.ClearProviders();
-                    logging.AddProvider(logs);
-                }));
-            using var client = factory.CreateClient();
+        await using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder => builder.ConfigureLogging(logging =>
+            {
+                logging.ClearProviders();
+                logging.AddProvider(logs);
+            }));
+        using var client = factory.CreateClient();
 
-            using var response = await client.PostAsync(
-                "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "text/plain"));
+        using var response = await client.PostAsync(
+            "/github/mcp",
+            new StringContent(body, Encoding.UTF8, "text/plain"));
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(1, upstream.RequestCount);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, upstream.RequestCount);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
+        using var payload = await TestJson.ReadAsync(response);
 
-            Assert.Equal(body, payload.RootElement.GetProperty("body").GetString());
-            Assert.Contains(logs.Entries, entry =>
-                entry.State.TryGetValue("EventType", out var eventType)
-                && eventType == "request_inspection"
-                && entry.State.TryGetValue("Decision", out var decision)
-                && decision == "warn"
-                && entry.State.TryGetValue("Reasons", out var reasons)
-                && reasons.Contains("inspection_unsupported", StringComparison.Ordinal));
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
-        }
+        Assert.Equal(body, payload.RootElement.GetProperty("body").GetString());
+        Assert.Contains(logs.Entries, entry =>
+            entry.State.TryGetValue("EventType", out var eventType)
+            && eventType == "request_inspection"
+            && entry.State.TryGetValue("Decision", out var decision)
+            && decision == "warn"
+            && entry.State.TryGetValue("Reasons", out var reasons)
+            && reasons.Contains("inspection_unsupported", StringComparison.Ordinal));
     }
 
     [Fact]
     public async Task OversizedBodyWithBlockBehaviorIsBlockedBeforeUpstream()
     {
         await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", maxBodyBytes: 10, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        using var environment = TestEnvironment
+            .Create()
+            .Set("PROXYWARD_DB_PATH", TestFiles.SavePolicy(CreatePolicy("enforce", "block", maxBodyBytes: 10, upstream.BaseAddress)));
         var body = """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""";
 
-        try
-        {
-            await using var factory = new WebApplicationFactory<Program>();
-            using var client = factory.CreateClient();
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
 
-            using var response = await client.PostAsync(
-                "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+        using var response = await client.PostAsync(
+            "/github/mcp",
+            new StringContent(body, Encoding.UTF8, "application/json"));
 
-            Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
-            Assert.Equal(0, upstream.RequestCount);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        Assert.Equal(0, upstream.RequestCount);
 
-            var responseBody = await response.Content.ReadAsStringAsync();
-            Assert.Contains("inspection_unsupported", responseBody, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
-        }
+        var responseBody = await response.Content.ReadAsStringAsync();
+        Assert.Contains("inspection_unsupported", responseBody, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task UnknownRouteWithOversizedBodyUsesFallbackInsteadOfInspectionBlock()
     {
         await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", maxBodyBytes: 10, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        using var environment = TestEnvironment
+            .Create()
+            .Set("PROXYWARD_DB_PATH", TestFiles.SavePolicy(CreatePolicy("enforce", "block", maxBodyBytes: 10, upstream.BaseAddress)));
         var body = """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""";
 
-        try
-        {
-            await using var factory = new WebApplicationFactory<Program>();
-            using var client = factory.CreateClient();
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
 
-            using var response = await client.PostAsync(
-                "/unknown/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+        using var response = await client.PostAsync(
+            "/unknown/mcp",
+            new StringContent(body, Encoding.UTF8, "application/json"));
 
-            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-            Assert.Equal(0, upstream.RequestCount);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(0, upstream.RequestCount);
 
-            var responseBody = await response.Content.ReadAsStringAsync();
-            Assert.Contains("No MCP proxy route configured for this request.", responseBody, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
-        }
+        var responseBody = await response.Content.ReadAsStringAsync();
+        Assert.Contains("No MCP proxy route configured for this request.", responseBody, StringComparison.Ordinal);
     }
 
-    private static async Task<UpstreamApp> StartUpstreamAsync()
-    {
-        var port = GetFreePort();
-        var baseAddress = $"http://127.0.0.1:{port}";
-        var counter = new RequestCounter();
-        var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseUrls(baseAddress);
-
-        var app = builder.Build();
-        app.Map("/{**path}", async (HttpRequest request) =>
+    private static Task<TestUpstream> StartUpstreamAsync() =>
+        TestUpstream.StartAsync(async context =>
         {
-            counter.Increment();
+            using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
+            var body = await reader.ReadToEndAsync(context.RequestAborted).ConfigureAwait(false);
 
-            using var reader = new StreamReader(request.Body, Encoding.UTF8);
-            var body = await reader.ReadToEndAsync();
-
-            return Results.Json(new
+            await Results.Json(new
             {
-                method = request.Method,
-                path = request.Path.Value,
-                query = request.QueryString.Value,
-                contentType = request.ContentType,
+                method = context.Request.Method,
+                path = context.Request.Path.Value,
+                query = context.Request.QueryString.Value,
+                contentType = context.Request.ContentType,
                 body
-            });
+            }).ExecuteAsync(context).ConfigureAwait(false);
         });
-
-        await app.StartAsync();
-        return new UpstreamApp(baseAddress, app, counter);
-    }
-
-    private static int GetFreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
-
-    private static string WriteTempPolicy(string yaml)
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
-        return path;
-    }
 
     private static string CreatePolicy(
         string mode,
@@ -270,98 +205,6 @@ public class RequestInspectionIntegrationTests
                 dangerous:
                   - rm
         """;
-
-    private sealed class RequestCounter
-    {
-        private int _count;
-
-        public int Count => Volatile.Read(ref _count);
-
-        public void Increment() => Interlocked.Increment(ref _count);
-    }
-
-    private sealed class UpstreamApp(
-        string baseAddress,
-        WebApplication app,
-        RequestCounter counter) : IAsyncDisposable
-    {
-        public string BaseAddress { get; } = baseAddress;
-
-        public int RequestCount => counter.Count;
-
-        public async ValueTask DisposeAsync()
-        {
-            await app.StopAsync();
-            await app.DisposeAsync();
-        }
-    }
-
-    private sealed record CapturedLog(
-        string Category,
-        LogLevel Level,
-        EventId EventId,
-        string Message,
-        IReadOnlyDictionary<string, string> State);
-
-    private sealed class CapturingLoggerProvider : ILoggerProvider
-    {
-        private readonly ConcurrentQueue<CapturedLog> _entries = new();
-
-        public IReadOnlyCollection<CapturedLog> Entries => _entries.ToArray();
-
-        public ILogger CreateLogger(string categoryName) =>
-            new CapturingLogger(categoryName, _entries);
-
-        public void Dispose()
-        {
-        }
-    }
-
-    private sealed class CapturingLogger(
-        string categoryName,
-        ConcurrentQueue<CapturedLog> entries) : ILogger
-    {
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull =>
-            NullScope.Instance;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(
-            LogLevel logLevel,
-            EventId eventId,
-            TState state,
-            Exception? exception,
-            Func<TState, Exception?, string> formatter)
-        {
-            var structuredState = new Dictionary<string, string>(StringComparer.Ordinal);
-
-            if (state is IEnumerable<KeyValuePair<string, object?>> pairs)
-            {
-                foreach (var pair in pairs)
-                {
-                    structuredState[pair.Key] = pair.Value?.ToString() ?? string.Empty;
-                }
-            }
-
-            entries.Enqueue(new CapturedLog(
-                categoryName,
-                logLevel,
-                eventId,
-                formatter(state, exception),
-                structuredState));
-        }
-    }
-
-    private sealed class NullScope : IDisposable
-    {
-        public static readonly NullScope Instance = new();
-
-        public void Dispose()
-        {
-        }
-    }
-
     private sealed class NonSeekableMemoryStream(byte[] buffer) : MemoryStream(buffer)
     {
         public override bool CanSeek => false;

@@ -1,7 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -33,7 +31,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
     {
         Environment.SetEnvironmentVariable(AuditDbEnv, null);
         Environment.SetEnvironmentVariable(AdminTokenEnv, null);
-        DeleteDbFiles(_databasePath);
+        TestFiles.DeleteSqlite(_databasePath);
         return Task.CompletedTask;
     }
 
@@ -56,7 +54,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
 
         Assert.Equal("audit", root.GetProperty("currentMode").GetString());
@@ -98,7 +96,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
 
         using var response = await client.PatchAsync(
             "/api/policy/mode",
-            JsonBody("""{"mode":"enforce"}"""));
+            TestJson.Content("""{"mode":"enforce"}"""));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Empty(stub.AppliedModes);
@@ -121,7 +119,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
 
         using var response = await client.PatchAsync(
             "/api/policy/mode",
-            JsonBody($$"""
+            TestJson.Content($$"""
             {
               "mode": "enforce",
               "confirmationToken": "wrong-token",
@@ -133,7 +131,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Empty(stub.AppliedModes);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         Assert.Equal("mode_confirmation_invalid", payload.RootElement.GetProperty("error").GetString());
     }
 
@@ -158,7 +156,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
 
         using var response = await client.PatchAsync(
             "/api/policy/mode",
-            JsonBody($$"""
+            TestJson.Content($$"""
             {
               "mode": "enforce",
               "confirmationToken": "{{token}}",
@@ -172,7 +170,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(["enforce"], stub.AppliedModes);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
         Assert.Equal("audit", root.GetProperty("previousMode").GetString());
         Assert.Equal("enforce", root.GetProperty("mode").GetString());
@@ -224,7 +222,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
 
         using var response = await client.PatchAsync(
             "/api/policy/mode",
-            JsonBody($$"""
+            TestJson.Content($$"""
             {
               "mode": "enforce",
               "confirmationToken": "{{token}}",
@@ -248,7 +246,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
             $"/api/policy/impact?mode=enforce&fromUtc={Uri.EscapeDataString(WindowFrom.UtcDateTime.ToString("o"))}&toUtc={Uri.EscapeDataString(WindowTo.UtcDateTime.ToString("o"))}");
         Assert.Equal(HttpStatusCode.OK, impactResponse.StatusCode);
 
-        using var payload = await ReadJsonAsync(impactResponse);
+        using var payload = await TestJson.ReadAsync(impactResponse);
         return payload.RootElement.GetProperty("confirmationToken").GetString()!;
     }
 
@@ -383,15 +381,6 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
         return rows;
     }
 
-    private static StringContent JsonBody(string json) =>
-        new(json, Encoding.UTF8, "application/json");
-
-    private static async Task<JsonDocument> ReadJsonAsync(HttpResponseMessage response)
-    {
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        return await JsonDocument.ParseAsync(stream);
-    }
-
     private static WebApplicationFactory<ManagementProgram> CreateFactory(IProxyControlClient stub) =>
         new WebApplicationFactory<ManagementProgram>().WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services =>
@@ -408,18 +397,6 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
             Mode = SqliteOpenMode.ReadWriteCreate
         }.ToString());
         await connection.OpenAsync();
-    }
-
-    private static void DeleteDbFiles(string databasePath)
-    {
-        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
-        {
-            if (File.Exists(path))
-            {
-                try { File.Delete(path); }
-                catch { /* best-effort cleanup */ }
-            }
-        }
     }
 
     private sealed class StubProxyControlClient : IProxyControlClient

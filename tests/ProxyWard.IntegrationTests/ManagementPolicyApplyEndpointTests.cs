@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -27,7 +26,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     {
         Environment.SetEnvironmentVariable(AuditDbEnv, null);
         Environment.SetEnvironmentVariable(AdminTokenEnv, null);
-        DeleteDbFiles(_databasePath);
+        TestFiles.DeleteSqlite(_databasePath);
 
         return Task.CompletedTask;
     }
@@ -44,7 +43,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 
         using var response = await client.PutAsync(
             "/api/policy",
-            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
+            TestJson.Content($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Empty(stub.YarpConfigs);
@@ -70,7 +69,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 
         using var response = await client.PutAsync(
             "/api/policy",
-            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}},"requestedBy":"alice","note":"rollout"}"""));
+            TestJson.Content($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}},"requestedBy":"alice","note":"rollout"}"""));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(["yarp", "policy"], stub.CallOrder);
@@ -86,7 +85,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
                 && route.Match.Path == "/.well-known/oauth-protected-resource/github/mcp");
         Assert.Contains(yarp.Clusters, cluster => cluster.ClusterId == "filesystem");
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
         Assert.Equal("audit", root.GetProperty("previousMode").GetString());
         Assert.Equal("enforce", root.GetProperty("mode").GetString());
@@ -127,7 +126,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 
         using var response = await client.PutAsync(
             "/api/policy",
-            JsonBody(StructuredModelApplyRequestJson()));
+            TestJson.Content(StructuredModelApplyRequestJson()));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(["yarp", "policy"], stub.CallOrder);
@@ -153,14 +152,14 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 
         using var applyResponse = await client.PutAsync(
             "/api/policy",
-            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
+            TestJson.Content($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
 
         Assert.Equal(HttpStatusCode.OK, applyResponse.StatusCode);
 
         using var readResponse = await client.GetAsync("/api/policy");
 
         Assert.Equal(HttpStatusCode.OK, readResponse.StatusCode);
-        using var payload = await ReadJsonAsync(readResponse);
+        using var payload = await TestJson.ReadAsync(readResponse);
         var servers = payload.RootElement.GetProperty("model").GetProperty("servers");
         Assert.True(servers.TryGetProperty("filesystem", out _));
         Assert.False(servers.TryGetProperty("current", out _));
@@ -179,13 +178,13 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 
         using var response = await client.PutAsync(
             "/api/policy",
-            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(InvalidPolicyYaml())}}}"""));
+            TestJson.Content($$"""{"yaml":{{JsonSerializer.Serialize(InvalidPolicyYaml())}}}"""));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Empty(stub.YarpConfigs);
         Assert.Empty(stub.PolicySnapshots);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
         Assert.Equal("policy_validation_failed", root.GetProperty("error").GetString());
         Assert.False(root.GetProperty("validation").GetProperty("valid").GetBoolean());
@@ -210,14 +209,14 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 
         using var response = await client.PutAsync(
             "/api/policy",
-            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
+            TestJson.Content($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
 
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
         Assert.Equal(["yarp"], stub.CallOrder);
         Assert.Single(stub.YarpConfigs);
         Assert.Empty(stub.PolicySnapshots);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
         Assert.Equal("policy_apply_failed", root.GetProperty("error").GetString());
         Assert.Equal("yarp_config", root.GetProperty("phase").GetString());
@@ -244,14 +243,14 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 
         using var response = await client.PutAsync(
             "/api/policy",
-            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
+            TestJson.Content($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
 
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
         Assert.Equal(["yarp", "policy", "yarp"], stub.CallOrder);
         Assert.Equal(2, stub.YarpConfigs.Count);
         Assert.Single(stub.PolicySnapshots);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
         Assert.Equal("policy_apply_failed", root.GetProperty("error").GetString());
         Assert.Equal("policy_snapshot", root.GetProperty("phase").GetString());
@@ -303,29 +302,8 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
                 services.AddSingleton<IProxyControlClient>(stub);
             }));
 
-    private static StringContent JsonBody(string json) =>
-        new(json, Encoding.UTF8, "application/json");
-
     private async Task SeedPolicyAsync(string yaml) =>
         await new SqlitePolicyStore(_databasePath).SaveAsync(yaml);
-
-    private static async Task<JsonDocument> ReadJsonAsync(HttpResponseMessage response)
-    {
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        return await JsonDocument.ParseAsync(stream);
-    }
-
-    private static void DeleteDbFiles(string databasePath)
-    {
-        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
-        {
-            if (File.Exists(path))
-            {
-                try { File.Delete(path); }
-                catch { /* best-effort cleanup */ }
-            }
-        }
-    }
 
     private sealed class StubProxyControlClient : IProxyControlClient
     {

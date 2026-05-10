@@ -1,11 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 
@@ -16,7 +12,7 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlStatusIsNotAvailableWhenRuntimeControlIsDisabled()
     {
-        var policyPath = WriteTempPolicy(ValidYaml);
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", null);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", null);
@@ -39,7 +35,7 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlStatusRequiresBearerTokenWhenRuntimeControlIsEnabled()
     {
-        var policyPath = WriteTempPolicy(ValidYaml);
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -62,7 +58,7 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlStatusRejectsInvalidBearerTokenWhenRuntimeControlIsEnabled()
     {
-        var policyPath = WriteTempPolicy(ValidYaml);
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -89,9 +85,9 @@ public class ProxyControlEndpointTests
         const string expectedToken = "test-control-token";
         const string suppliedToken = "wrong-token";
         var databasePath = Path.Combine(Path.GetTempPath(), $"proxyward-control-auth-{Guid.NewGuid():N}.db");
-        var policyPath = WriteTempPolicy(ValidYaml.Replace(
+        var policyPath = TestFiles.SavePolicy(ValidYaml.Replace(
             "sqlitePath: ./data/proxyward.db",
-            $"sqlitePath: {databasePath.Replace('\\', '/')}",
+            $"sqlitePath: {TestFiles.YamlPath(databasePath)}",
             StringComparison.Ordinal));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
@@ -117,14 +113,14 @@ public class ProxyControlEndpointTests
         finally
         {
             ClearProxyWardEnvironment();
-            DeleteDbFiles(databasePath);
+            TestFiles.DeleteSqlite(databasePath);
         }
     }
 
     [Fact]
     public async Task ControlStatusReturnsRuntimeMetadataWithValidBearerToken()
     {
-        var policyPath = WriteTempPolicy(ValidYaml);
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -158,7 +154,7 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlPolicySnapshotAppliesValidSnapshotForNewStatusReads()
     {
-        var policyPath = WriteTempPolicy(ValidYaml);
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -170,7 +166,7 @@ public class ProxyControlEndpointTests
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-control-token");
 
             using var beforeResponse = await client.GetAsync("/control/status");
-            using var before = await ReadJsonAsync(beforeResponse);
+            using var before = await TestJson.ReadOkAsync(beforeResponse);
             var beforePolicyVersion = before.RootElement.GetProperty("policyVersion").GetString();
 
             using var applyResponse = await client.PutAsync(
@@ -187,7 +183,7 @@ public class ProxyControlEndpointTests
             Assert.NotEqual(beforePolicyVersion, applyPayload.RootElement.GetProperty("policyVersion").GetString());
 
             using var afterResponse = await client.GetAsync("/control/status");
-            using var after = await ReadJsonAsync(afterResponse);
+            using var after = await TestJson.ReadOkAsync(afterResponse);
 
             Assert.Equal("enforce", after.RootElement.GetProperty("mode").GetString());
             Assert.Equal(applyPayload.RootElement.GetProperty("policyVersion").GetString(), after.RootElement.GetProperty("policyVersion").GetString());
@@ -201,7 +197,7 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlPolicySnapshotRejectsInvalidYamlAndPreservesActiveSnapshot()
     {
-        var policyPath = WriteTempPolicy(ValidYaml);
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -213,7 +209,7 @@ public class ProxyControlEndpointTests
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-control-token");
 
             using var beforeResponse = await client.GetAsync("/control/status");
-            using var before = await ReadJsonAsync(beforeResponse);
+            using var before = await TestJson.ReadOkAsync(beforeResponse);
             var beforePolicyVersion = before.RootElement.GetProperty("policyVersion").GetString();
 
             using var applyResponse = await client.PutAsync(
@@ -227,7 +223,7 @@ public class ProxyControlEndpointTests
             Assert.Equal("policy_validation_failed", errorPayload.RootElement.GetProperty("error").GetString());
 
             using var afterResponse = await client.GetAsync("/control/status");
-            using var after = await ReadJsonAsync(afterResponse);
+            using var after = await TestJson.ReadOkAsync(afterResponse);
 
             Assert.Equal("audit", after.RootElement.GetProperty("mode").GetString());
             Assert.Equal(beforePolicyVersion, after.RootElement.GetProperty("policyVersion").GetString());
@@ -241,7 +237,7 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlPolicySnapshotMakesNewRequestsUseAppliedServerAllowlist()
     {
-        var policyPath = WriteTempPolicy(ValidYaml);
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -281,7 +277,7 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlModeAppliesModeOnlySnapshotAndComputesPolicyHash()
     {
-        var policyPath = WriteTempPolicy(ValidYaml);
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -293,7 +289,7 @@ public class ProxyControlEndpointTests
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-control-token");
 
             using var beforeResponse = await client.GetAsync("/control/status");
-            using var before = await ReadJsonAsync(beforeResponse);
+            using var before = await TestJson.ReadOkAsync(beforeResponse);
             var beforePolicyVersion = before.RootElement.GetProperty("policyVersion").GetString();
 
             using var applyResponse = await client.PatchAsync(
@@ -311,7 +307,7 @@ public class ProxyControlEndpointTests
             Assert.NotEqual(beforePolicyVersion, applyPayload.RootElement.GetProperty("policyVersion").GetString());
 
             using var afterResponse = await client.GetAsync("/control/status");
-            using var after = await ReadJsonAsync(afterResponse);
+            using var after = await TestJson.ReadOkAsync(afterResponse);
             Assert.Equal("enforce", after.RootElement.GetProperty("mode").GetString());
             Assert.Equal(applyPayload.RootElement.GetProperty("policyVersion").GetString(), after.RootElement.GetProperty("policyVersion").GetString());
         }
@@ -324,7 +320,7 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlModeRejectsInvalidModeAndPreservesActiveSnapshot()
     {
-        var policyPath = WriteTempPolicy(ValidYaml);
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -336,7 +332,7 @@ public class ProxyControlEndpointTests
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-control-token");
 
             using var beforeResponse = await client.GetAsync("/control/status");
-            using var before = await ReadJsonAsync(beforeResponse);
+            using var before = await TestJson.ReadOkAsync(beforeResponse);
             var beforePolicyVersion = before.RootElement.GetProperty("policyVersion").GetString();
 
             using var applyResponse = await client.PatchAsync(
@@ -350,7 +346,7 @@ public class ProxyControlEndpointTests
             Assert.Equal("mode_validation_failed", errorPayload.RootElement.GetProperty("error").GetString());
 
             using var afterResponse = await client.GetAsync("/control/status");
-            using var after = await ReadJsonAsync(afterResponse);
+            using var after = await TestJson.ReadOkAsync(afterResponse);
             Assert.Equal("audit", after.RootElement.GetProperty("mode").GetString());
             Assert.Equal(beforePolicyVersion, after.RootElement.GetProperty("policyVersion").GetString());
         }
@@ -363,8 +359,8 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlYarpConfigAppliesAddedRouteForNewRequests()
     {
-        await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(ValidYaml);
+        await using var upstream = await TestUpstream.StartEchoAsync();
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -408,8 +404,8 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlYarpConfigRemovalStopsForwardingRemovedRoute()
     {
-        await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
+        await using var upstream = await TestUpstream.StartEchoAsync();
+        var policyPath = TestFiles.SavePolicy(CreatePolicy(upstream.BaseAddress));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -442,8 +438,8 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlYarpConfigRejectsInvalidConfigAndPreservesActiveConfig()
     {
-        await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
+        await using var upstream = await TestUpstream.StartEchoAsync();
+        var policyPath = TestFiles.SavePolicy(CreatePolicy(upstream.BaseAddress));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -492,8 +488,8 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ControlYarpConfigRejectsUnsupportedTransformsBeforeReplacingConfig()
     {
-        await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
+        await using var upstream = await TestUpstream.StartEchoAsync();
+        var policyPath = TestFiles.SavePolicy(CreatePolicy(upstream.BaseAddress));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -546,7 +542,7 @@ public class ProxyControlEndpointTests
     [Fact]
     public async Task ProxyDataPlaneDoesNotServeDashboardAuditApi()
     {
-        var policyPath = WriteTempPolicy(ValidYaml);
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
@@ -564,46 +560,6 @@ public class ProxyControlEndpointTests
         {
             ClearProxyWardEnvironment();
         }
-    }
-
-    private static string WriteTempPolicy(string yaml)
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
-        return path;
-    }
-
-    private static async Task<JsonDocument> ReadJsonAsync(HttpResponseMessage response)
-    {
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        return await JsonDocument.ParseAsync(stream);
-    }
-
-    private static async Task<UpstreamApp> StartUpstreamAsync()
-    {
-        var port = GetFreePort();
-        var baseAddress = $"http://127.0.0.1:{port}";
-        var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseUrls(baseAddress);
-
-        var app = builder.Build();
-        app.Map("/{**path}", (HttpRequest request) => Results.Json(new
-        {
-            method = request.Method,
-            path = request.Path.Value,
-            query = request.QueryString.Value
-        }));
-
-        await app.StartAsync();
-        return new UpstreamApp(baseAddress, app);
-    }
-
-    private static int GetFreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     private static string CreateYarpConfigJson(string clusterId, string routePrefix, string upstream) =>
@@ -694,30 +650,7 @@ public class ProxyControlEndpointTests
         return rows;
     }
 
-    private static void DeleteDbFiles(string databasePath)
-    {
-        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
-        {
-            if (File.Exists(path))
-            {
-                try { File.Delete(path); }
-                catch { /* best-effort cleanup */ }
-            }
-        }
-    }
-
     private sealed record ControlAuthFailureAuditRow(string Reasons, string PayloadJson);
-
-    private sealed class UpstreamApp(string baseAddress, WebApplication app) : IAsyncDisposable
-    {
-        public string BaseAddress { get; } = baseAddress;
-
-        public async ValueTask DisposeAsync()
-        {
-            await app.StopAsync();
-            await app.DisposeAsync();
-        }
-    }
 
     private const string ValidYaml = """
         mode: audit

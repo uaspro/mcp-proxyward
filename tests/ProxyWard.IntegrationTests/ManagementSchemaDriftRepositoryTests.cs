@@ -15,7 +15,7 @@ public class ManagementSchemaDriftRepositoryTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        DeleteDbFiles(_databasePath);
+        TestFiles.DeleteSqlite(_databasePath);
         return Task.CompletedTask;
     }
 
@@ -225,15 +225,4 @@ public class ManagementSchemaDriftRepositoryTests : IAsyncLifetime
         await connection.OpenAsync();
     }
 
-    private static void DeleteDbFiles(string databasePath)
-    {
-        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
-        {
-            if (File.Exists(path))
-            {
-                try { File.Delete(path); }
-                catch { /* best-effort cleanup */ }
-            }
-        }
-    }
 }

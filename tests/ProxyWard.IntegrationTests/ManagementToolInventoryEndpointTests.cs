@@ -1,8 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using ProxyWard.Audit.Events;
@@ -29,7 +27,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
     {
         Environment.SetEnvironmentVariable(AuditDbEnv, null);
         Environment.SetEnvironmentVariable(AdminTokenEnv, null);
-        DeleteFiles(_databasePath);
+        TestFiles.DeleteSqlite(_databasePath);
 
         return Task.CompletedTask;
     }
@@ -48,7 +46,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var servers = payload.RootElement.GetProperty("servers").EnumerateArray().ToArray();
 
         var alpha = Assert.Single(servers, server => server.GetProperty("serverId").GetString() == "alpha");
@@ -85,7 +83,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var servers = payload.RootElement.GetProperty("servers").EnumerateArray().ToArray();
 
         var unobserved = Assert.Single(servers, server => server.GetProperty("serverId").GetString() == "unobserved");
@@ -107,7 +105,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         Assert.Empty(payload.RootElement.GetProperty("servers").EnumerateArray());
     }
 
@@ -134,7 +132,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var discoveryPayload = await ReadJsonAsync(response);
+        using var discoveryPayload = await TestJson.ReadAsync(response);
         Assert.Equal("gamma", discoveryPayload.RootElement.GetProperty("serverId").GetString());
         Assert.Equal(2, discoveryPayload.RootElement.GetProperty("tools").GetArrayLength());
         Assert.Equal("repos.search", discoveryPayload.RootElement.GetProperty("tools")[1].GetProperty("name").GetString());
@@ -142,7 +140,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
         using var inventoryResponse = await client.GetAsync("/api/tools");
         Assert.Equal(HttpStatusCode.OK, inventoryResponse.StatusCode);
 
-        using var inventoryPayload = await ReadJsonAsync(inventoryResponse);
+        using var inventoryPayload = await TestJson.ReadAsync(inventoryResponse);
         var gamma = Assert.Single(
             inventoryPayload.RootElement.GetProperty("servers").EnumerateArray(),
             server => server.GetProperty("serverId").GetString() == "gamma");
@@ -239,21 +237,8 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
             Title: title,
             Description: description);
 
-    private static async Task<JsonDocument> ReadJsonAsync(HttpResponseMessage response)
-    {
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        return await JsonDocument.ParseAsync(stream);
-    }
-
-    private static async Task<UpstreamApp> StartToolListUpstreamAsync()
-    {
-        var port = GetFreePort();
-        var baseAddress = $"http://127.0.0.1:{port}";
-        var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseUrls(baseAddress);
-
-        var app = builder.Build();
-        app.MapPost("/mcp", () => Results.Json(new
+    private static Task<TestUpstream> StartToolListUpstreamAsync() =>
+        TestUpstream.StartAsync(context => Results.Json(new
         {
             jsonrpc = "2.0",
             id = "proxyward-dashboard-tools-discovery",
@@ -277,30 +262,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
                     }
                 }
             }
-        }));
-
-        await app.StartAsync();
-        return new UpstreamApp(baseAddress, app);
-    }
-
-    private static int GetFreePort()
-    {
-        using var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
-
-    private static void DeleteFiles(string databasePath)
-    {
-        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
-        {
-            if (File.Exists(path))
-            {
-                try { File.Delete(path); }
-                catch { /* best-effort cleanup */ }
-            }
-        }
-    }
+        }).ExecuteAsync(context));
 
     private static string PolicyYamlWithUnobservedServer() =>
         """
@@ -362,15 +324,4 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
                 blockShell: false
                 dangerous: []
         """;
-
-    private sealed class UpstreamApp(string baseAddress, WebApplication app) : IAsyncDisposable
-    {
-        public string BaseAddress { get; } = baseAddress;
-
-        public async ValueTask DisposeAsync()
-        {
-            await app.StopAsync();
-            await app.DisposeAsync();
-        }
-    }
 }

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using ProxyWard.Policy.Configuration;
@@ -14,7 +13,7 @@ public class ApiHostTests
     [Fact]
     public async Task HealthEndpointIncludesLoadedPolicyMetadata()
     {
-        var databasePath = CreateTempDbPath();
+        var databasePath = TestFiles.NewSqlitePath();
         await new SqlitePolicyStore(databasePath).SaveAsync(ValidYaml);
         Environment.SetEnvironmentVariable(DbEnv, databasePath);
 
@@ -27,8 +26,7 @@ public class ApiHostTests
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
+            using var payload = await TestJson.ReadAsync(response);
 
             Assert.Equal("healthy", payload.RootElement.GetProperty("status").GetString());
             Assert.Equal("audit", payload.RootElement.GetProperty("mode").GetString());
@@ -38,14 +36,14 @@ public class ApiHostTests
         finally
         {
             Environment.SetEnvironmentVariable(DbEnv, null);
-            DeleteDbFiles(databasePath);
+            TestFiles.DeleteSqlite(databasePath);
         }
     }
 
     [Fact]
     public void InvalidPolicyPreventsHostStartup()
     {
-        var databasePath = CreateTempDbPath();
+        var databasePath = TestFiles.NewSqlitePath();
         InsertRawPolicy(databasePath, """
             mode: audit
             """);
@@ -61,14 +59,14 @@ public class ApiHostTests
         finally
         {
             Environment.SetEnvironmentVariable(DbEnv, null);
-            DeleteDbFiles(databasePath);
+            TestFiles.DeleteSqlite(databasePath);
         }
     }
 
     [Fact]
     public void RemovedLockfileKeyPreventsHostStartup()
     {
-        var databasePath = CreateTempDbPath();
+        var databasePath = TestFiles.NewSqlitePath();
         InsertRawPolicy(databasePath, ValidYaml.Replace(
             "servers:",
             "lockfile: ./proxyward.lock.yaml\nservers:",
@@ -85,12 +83,9 @@ public class ApiHostTests
         finally
         {
             Environment.SetEnvironmentVariable(DbEnv, null);
-            DeleteDbFiles(databasePath);
+            TestFiles.DeleteSqlite(databasePath);
         }
     }
-
-    private static string CreateTempDbPath() =>
-        Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.db");
 
     private static void InsertRawPolicy(string databasePath, string yaml)
     {
@@ -124,18 +119,6 @@ public class ApiHostTests
         command.Parameters.AddWithValue("$policy_hash", "sha256:invalid");
         command.Parameters.AddWithValue("$yaml", yaml);
         command.ExecuteNonQuery();
-    }
-
-    private static void DeleteDbFiles(string databasePath)
-    {
-        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
-        {
-            if (File.Exists(path))
-            {
-                try { File.Delete(path); }
-                catch { /* best-effort cleanup */ }
-            }
-        }
     }
 
     private const string ValidYaml = """

@@ -19,7 +19,7 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
     public Task DisposeAsync()
     {
         Environment.SetEnvironmentVariable(AuditDbEnv, null);
-        DeleteDbFiles(_databasePath);
+        TestFiles.DeleteSqlite(_databasePath);
 
         return Task.CompletedTask;
     }
@@ -37,8 +37,7 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        using var payload = await JsonDocument.ParseAsync(stream);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
 
         Assert.StartsWith("sha256:", root.GetProperty("policyHash").GetString(), StringComparison.Ordinal);
@@ -143,8 +142,7 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        using var payload = await JsonDocument.ParseAsync(stream);
+        using var payload = await TestJson.ReadAsync(response);
         Assert.Empty(payload.RootElement.GetProperty("model").GetProperty("servers").EnumerateObject());
     }
 
@@ -152,18 +150,6 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
     {
         var store = new SqlitePolicyStore(_databasePath);
         await store.SaveAsync(yaml);
-    }
-
-    private static void DeleteDbFiles(string databasePath)
-    {
-        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
-        {
-            if (File.Exists(path))
-            {
-                try { File.Delete(path); }
-                catch { /* best-effort cleanup */ }
-            }
-        }
     }
 
     private static string PolicyYaml() =>

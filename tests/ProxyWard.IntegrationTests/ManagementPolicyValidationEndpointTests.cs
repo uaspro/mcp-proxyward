@@ -20,7 +20,7 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
     public Task DisposeAsync()
     {
         Environment.SetEnvironmentVariable(AuditDbEnv, null);
-        DeleteDbFiles(_databasePath);
+        TestFiles.DeleteSqlite(_databasePath);
 
         return Task.CompletedTask;
     }
@@ -33,11 +33,11 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 
         using var response = await client.PostAsync(
             "/api/policy/validate",
-            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
+            TestJson.Content($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
 
         Assert.True(root.GetProperty("valid").GetBoolean());
@@ -68,7 +68,7 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         Assert.True(payload.RootElement.GetProperty("valid").GetBoolean());
         Assert.StartsWith("sha256:", payload.RootElement.GetProperty("policyHash").GetString(), StringComparison.Ordinal);
     }
@@ -81,11 +81,11 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 
         using var response = await client.PostAsync(
             "/api/policy/validate",
-            JsonBody(StructuredModelRequestJson()));
+            TestJson.Content(StructuredModelRequestJson()));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
 
         Assert.True(root.GetProperty("valid").GetBoolean());
@@ -109,11 +109,11 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 
         using var response = await client.PostAsync(
             "/api/policy/validate",
-            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(InvalidPolicyYaml())}}}"""));
+            TestJson.Content($$"""{"yaml":{{JsonSerializer.Serialize(InvalidPolicyYaml())}}}"""));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
 
         Assert.False(root.GetProperty("valid").GetBoolean());
@@ -138,11 +138,11 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 
         using var response = await client.PostAsync(
             "/api/policy/validate",
-            JsonBody(StructuredSecretModelRequestJson()));
+            TestJson.Content(StructuredSecretModelRequestJson()));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
 
         Assert.True(root.GetProperty("valid").GetBoolean());
@@ -166,11 +166,11 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 
         using var response = await client.PostAsync(
             "/api/policy/validate",
-            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(InvalidSecretRegexPolicyYaml())}}}"""));
+            TestJson.Content($$"""{"yaml":{{JsonSerializer.Serialize(InvalidSecretRegexPolicyYaml())}}}"""));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         var root = payload.RootElement;
 
         Assert.False(root.GetProperty("valid").GetBoolean());
@@ -189,11 +189,11 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 
         using var response = await client.PostAsync(
             "/api/policy/validate",
-            JsonBody("""{}"""));
+            TestJson.Content("""{}"""));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         Assert.Equal("policy_validation_request_invalid", payload.RootElement.GetProperty("error").GetString());
     }
 
@@ -209,37 +209,16 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 
         using var response = await client.PostAsync(
             "/api/policy/validate",
-            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(ValidEnforcePolicyYaml())}}}"""));
+            TestJson.Content($$"""{"yaml":{{JsonSerializer.Serialize(ValidEnforcePolicyYaml())}}}"""));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        using var payload = await ReadJsonAsync(response);
+        using var payload = await TestJson.ReadAsync(response);
         Assert.True(payload.RootElement.GetProperty("valid").GetBoolean());
         var snapshot = await new SqlitePolicyStore(_databasePath).ReadCurrentAsync();
         Assert.NotNull(snapshot);
         Assert.Contains("active:", snapshot.Yaml, StringComparison.Ordinal);
         Assert.DoesNotContain("github:", snapshot.Yaml, StringComparison.Ordinal);
-    }
-
-    private static void DeleteDbFiles(string databasePath)
-    {
-        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
-        {
-            if (File.Exists(path))
-            {
-                try { File.Delete(path); }
-                catch { /* best-effort cleanup */ }
-            }
-        }
-    }
-
-    private static StringContent JsonBody(string json) =>
-        new(json, Encoding.UTF8, "application/json");
-
-    private static async Task<JsonDocument> ReadJsonAsync(HttpResponseMessage response)
-    {
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        return await JsonDocument.ParseAsync(stream);
     }
 
     private static string ActivePolicyYaml() =>

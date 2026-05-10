@@ -1,8 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
-using System.Text.Json;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -14,39 +10,27 @@ public class YarpProxyTests
     public async Task ConfiguredRouteProxiesToUpstreamWithMappedPathAndQuery()
     {
         await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        using var environment = TestEnvironment
+            .Create()
+            .Set("PROXYWARD_DB_PATH", TestFiles.SavePolicy(CreatePolicy(upstream.BaseAddress)));
 
-        try
-        {
-            await using var factory = new WebApplicationFactory<Program>();
-            using var client = factory.CreateClient();
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
 
-            using var response = await client.GetAsync("/github/mcp/tools/list?cursor=abc");
+        using var response = await client.GetAsync("/github/mcp/tools/list?cursor=abc");
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await TestJson.ReadOkAsync(response);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
+        Assert.Equal("/mcp/tools/list", payload.RootElement.GetProperty("path").GetString());
+        Assert.Equal("?cursor=abc", payload.RootElement.GetProperty("query").GetString());
+        Assert.Equal("GET", payload.RootElement.GetProperty("method").GetString());
 
-            Assert.Equal("/mcp/tools/list", payload.RootElement.GetProperty("path").GetString());
-            Assert.Equal("?cursor=abc", payload.RootElement.GetProperty("query").GetString());
-            Assert.Equal("GET", payload.RootElement.GetProperty("method").GetString());
+        using var exactResponse = await client.GetAsync("/github/mcp?ping=1");
 
-            using var exactResponse = await client.GetAsync("/github/mcp?ping=1");
+        using var exactPayload = await TestJson.ReadOkAsync(exactResponse);
 
-            Assert.Equal(HttpStatusCode.OK, exactResponse.StatusCode);
-
-            await using var exactStream = await exactResponse.Content.ReadAsStreamAsync();
-            using var exactPayload = await JsonDocument.ParseAsync(exactStream);
-
-            Assert.Equal("/mcp", exactPayload.RootElement.GetProperty("path").GetString());
-            Assert.Equal("?ping=1", exactPayload.RootElement.GetProperty("query").GetString());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
-        }
+        Assert.Equal("/mcp", exactPayload.RootElement.GetProperty("path").GetString());
+        Assert.Equal("?ping=1", exactPayload.RootElement.GetProperty("query").GetString());
     }
 
     [Theory]
@@ -67,131 +51,95 @@ public class YarpProxyTests
         string expectedUpstreamPath)
     {
         await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        using var environment = TestEnvironment
+            .Create()
+            .Set("PROXYWARD_DB_PATH", TestFiles.SavePolicy(CreatePolicy(upstream.BaseAddress)));
 
-        try
-        {
-            await using var factory = new WebApplicationFactory<Program>();
-            using var client = factory.CreateClient();
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
 
-            using var response = await client.GetAsync(requestPath);
+        using var response = await client.GetAsync(requestPath);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await TestJson.ReadOkAsync(response);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
-
-            Assert.Equal(expectedUpstreamPath, payload.RootElement.GetProperty("path").GetString());
-            Assert.Equal("GET", payload.RootElement.GetProperty("method").GetString());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
-        }
+        Assert.Equal(expectedUpstreamPath, payload.RootElement.GetProperty("path").GetString());
+        Assert.Equal("GET", payload.RootElement.GetProperty("method").GetString());
     }
 
     [Fact]
     public async Task ProtectedResourceMetadataPublishesProxyRouteAsResource()
     {
         await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        using var environment = TestEnvironment
+            .Create()
+            .Set("PROXYWARD_DB_PATH", TestFiles.SavePolicy(CreatePolicy(upstream.BaseAddress)));
 
-        try
-        {
-            await using var factory = new WebApplicationFactory<Program>();
-            using var client = factory.CreateClient();
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
 
-            using var response = await client.GetAsync("/.well-known/oauth-protected-resource/github/mcp");
+        using var response = await client.GetAsync("/.well-known/oauth-protected-resource/github/mcp");
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var payload = await TestJson.ReadOkAsync(response);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
-
-            Assert.Equal("http://localhost/github/mcp", payload.RootElement.GetProperty("resource").GetString());
-            Assert.Equal(
-                "https://github.com/login/oauth",
-                payload.RootElement.GetProperty("authorization_servers")[0].GetString());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
-        }
+        Assert.Equal("http://localhost/github/mcp", payload.RootElement.GetProperty("resource").GetString());
+        Assert.Equal(
+            "https://github.com/login/oauth",
+            payload.RootElement.GetProperty("authorization_servers")[0].GetString());
     }
 
     [Fact]
     public async Task AuthChallengePublishesProxyMetadataUrl()
     {
         await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        using var environment = TestEnvironment
+            .Create()
+            .Set("PROXYWARD_DB_PATH", TestFiles.SavePolicy(CreatePolicy(upstream.BaseAddress)));
 
-        try
-        {
-            await using var factory = new WebApplicationFactory<Program>();
-            using var client = factory.CreateClient();
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
 
-            using var response = await client.GetAsync("/github/mcp/auth-required");
+        using var response = await client.GetAsync("/github/mcp/auth-required");
 
-            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
 
-            var challenge = Assert.Single(response.Headers.WwwAuthenticate).ToString();
-            Assert.Contains(
-                "resource_metadata=\"http://localhost/.well-known/oauth-protected-resource/github/mcp\"",
-                challenge,
-                StringComparison.Ordinal);
-            Assert.DoesNotContain(upstream.BaseAddress, challenge, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
-        }
+        var challenge = Assert.Single(response.Headers.WwwAuthenticate).ToString();
+        Assert.Contains(
+            "resource_metadata=\"http://localhost/.well-known/oauth-protected-resource/github/mcp\"",
+            challenge,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(upstream.BaseAddress, challenge, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task UnknownRouteReturnsClearNotFoundError()
     {
         await using var upstream = await StartUpstreamAsync();
-        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        using var environment = TestEnvironment
+            .Create()
+            .Set("PROXYWARD_DB_PATH", TestFiles.SavePolicy(CreatePolicy(upstream.BaseAddress)));
 
-        try
-        {
-            await using var factory = new WebApplicationFactory<Program>();
-            using var client = factory.CreateClient();
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
 
-            using var response = await client.GetAsync("/unknown/mcp");
+        using var response = await client.GetAsync("/unknown/mcp");
 
-            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
 
-            var body = await response.Content.ReadAsStringAsync();
-            Assert.Contains("No MCP proxy route configured for this request.", body, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
-        }
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("No MCP proxy route configured for this request.", body, StringComparison.Ordinal);
     }
 
-    private static async Task<UpstreamApp> StartUpstreamAsync()
-    {
-        var port = GetFreePort();
-        var baseAddress = $"http://127.0.0.1:{port}";
-        var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseUrls(baseAddress);
-
-        var app = builder.Build();
-        app.Map("/{**path}", (HttpRequest request) =>
+    private static Task<TestUpstream> StartUpstreamAsync() =>
+        TestUpstream.StartAsync((baseAddress, context) =>
         {
+            var request = context.Request;
             if (request.Path.StartsWithSegments("/mcp/auth-required"))
             {
-                request.HttpContext.Response.Headers.WWWAuthenticate =
+                context.Response.Headers.WWWAuthenticate =
                     $"Bearer error=\"invalid_request\", resource_metadata=\"{CreateUpstreamProtectedResourceMetadataUri()}\"";
                 return Results.Text(
                     "missing required Authorization header",
-                    statusCode: StatusCodes.Status401Unauthorized);
+                    statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
             }
 
             return Results.Json(new
@@ -201,29 +149,11 @@ public class YarpProxyTests
                 query = request.QueryString.Value,
                 resource = $"{baseAddress}/mcp",
                 authorization_servers = new[] { "https://github.com/login/oauth" }
-            });
+            }).ExecuteAsync(context);
+
+            string CreateUpstreamProtectedResourceMetadataUri() =>
+                $"{baseAddress}/.well-known/oauth-protected-resource/mcp";
         });
-
-        await app.StartAsync();
-        return new UpstreamApp(baseAddress, app);
-
-        string CreateUpstreamProtectedResourceMetadataUri() =>
-            $"{baseAddress}/.well-known/oauth-protected-resource/mcp";
-    }
-
-    private static int GetFreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
-
-    private static string WriteTempPolicy(string yaml)
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
-        return path;
-    }
 
     private static string CreatePolicy(string upstreamBaseAddress) =>
         $$"""
@@ -268,15 +198,4 @@ public class YarpProxyTests
                 dangerous:
                   - rm
         """;
-
-    private sealed class UpstreamApp(string baseAddress, WebApplication app) : IAsyncDisposable
-    {
-        public string BaseAddress { get; } = baseAddress;
-
-        public async ValueTask DisposeAsync()
-        {
-            await app.StopAsync();
-            await app.DisposeAsync();
-        }
-    }
 }

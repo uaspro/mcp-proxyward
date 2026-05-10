@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using ProxyWard.Locking.Persistence;
 using ManagementProgram = ProxyWard.Management.Api.Program;
@@ -20,7 +19,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        DeleteDbFiles(_databasePath);
+        TestFiles.DeleteSqlite(_databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, null);
         return Task.CompletedTask;
     }
@@ -41,8 +40,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
+            using var payload = await TestJson.ReadAsync(response);
             var root = payload.RootElement;
 
             Assert.Equal(0, root.GetProperty("totalCount").GetInt64());
@@ -82,8 +80,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
+            using var payload = await TestJson.ReadAsync(response);
             var root = payload.RootElement;
 
             Assert.Equal(2, root.GetProperty("totalCount").GetInt64());
@@ -120,8 +117,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
+            using var payload = await TestJson.ReadAsync(response);
             var root = payload.RootElement;
 
             Assert.Equal(review.Row.Id, root.GetProperty("id").GetInt64());
@@ -158,8 +154,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 
             Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
+            using var payload = await TestJson.ReadAsync(response);
             Assert.Equal("schema_drift_not_found", payload.RootElement.GetProperty("error").GetString());
         }
         finally
@@ -244,8 +239,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
+            using var payload = await TestJson.ReadAsync(response);
             var root = payload.RootElement;
 
             Assert.Equal(review.Row.Id, root.GetProperty("id").GetInt64());
@@ -445,18 +439,6 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
 
         return rows;
-    }
-
-    private static void DeleteDbFiles(string databasePath)
-    {
-        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
-        {
-            if (File.Exists(path))
-            {
-                try { File.Delete(path); }
-                catch { /* best-effort cleanup */ }
-            }
-        }
     }
 
     private sealed record ActionAuditRow(

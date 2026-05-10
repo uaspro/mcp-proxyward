@@ -1,7 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
@@ -32,7 +30,7 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
         Environment.SetEnvironmentVariable(SharedAdminTokenEnv, null);
         Environment.SetEnvironmentVariable(LocalDevEnv, null);
         Environment.SetEnvironmentVariable(CorsOriginsEnv, null);
-        DeleteDbFiles(_databasePath);
+        TestFiles.DeleteSqlite(_databasePath);
         return Task.CompletedTask;
     }
 
@@ -47,7 +45,7 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
 
         using var response = await client.PatchAsync(
             "/api/policy/mode",
-            JsonBody("""{"mode":"audit"}"""));
+            TestJson.Content("""{"mode":"audit"}"""));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Empty(stub.AppliedModes);
@@ -69,7 +67,7 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
 
         using var response = await client.PatchAsync(
             "/api/policy/mode",
-            JsonBody("""{"mode":"audit"}"""));
+            TestJson.Content("""{"mode":"audit"}"""));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(["audit"], stub.AppliedModes);
@@ -90,7 +88,7 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
 
         using var response = await client.PatchAsync(
             "/api/policy/mode",
-            JsonBody("""{"mode":"audit"}"""));
+            TestJson.Content("""{"mode":"audit"}"""));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Empty(stub.AppliedModes);
@@ -170,21 +168,6 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
                 services.AddSingleton(stub);
                 services.AddSingleton<IProxyControlClient>(stub);
             }));
-
-    private static StringContent JsonBody(string json) =>
-        new(json, Encoding.UTF8, "application/json");
-
-    private static void DeleteDbFiles(string databasePath)
-    {
-        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
-        {
-            if (File.Exists(path))
-            {
-                try { File.Delete(path); }
-                catch { /* best-effort cleanup */ }
-            }
-        }
-    }
 
     private sealed class StubProxyControlClient : IProxyControlClient
     {
