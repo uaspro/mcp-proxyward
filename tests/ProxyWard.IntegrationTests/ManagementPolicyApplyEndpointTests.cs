@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using ProxyWard.Management.Api.Status;
+using ProxyWard.Management.Application.Status;
 using ProxyWard.Policy.Persistence;
 using ManagementProgram = ProxyWard.Management.Api.Program;
 

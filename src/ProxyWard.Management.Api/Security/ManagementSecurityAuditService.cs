@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using ProxyWard.Management.Application;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Sinks;
 

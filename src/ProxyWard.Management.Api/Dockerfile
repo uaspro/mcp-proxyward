@@ -7,6 +7,8 @@ COPY src/ProxyWard.Management.Api/ProxyWard.Management.Api.csproj src/ProxyWard.
 COPY src/ProxyWard.Audit/ProxyWard.Audit.csproj src/ProxyWard.Audit/
 COPY src/ProxyWard.Core/ProxyWard.Core.csproj src/ProxyWard.Core/
 COPY src/ProxyWard.Locking/ProxyWard.Locking.csproj src/ProxyWard.Locking/
+COPY src/ProxyWard.Management.Application/ProxyWard.Management.Application.csproj src/ProxyWard.Management.Application/
+COPY src/ProxyWard.Management.Infrastructure/ProxyWard.Management.Infrastructure.csproj src/ProxyWard.Management.Infrastructure/
 COPY src/ProxyWard.Policy/ProxyWard.Policy.csproj src/ProxyWard.Policy/
 RUN dotnet restore src/ProxyWard.Management.Api/ProxyWard.Management.Api.csproj
 

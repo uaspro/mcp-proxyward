@@ -1,6 +1,7 @@
 using ProxyWard.Locking.Persistence;
-using ProxyWard.Management.Api.Audit;
-using ProxyWard.Management.Api.Drift;
+using ProxyWard.Management.Application.Audit;
+using ProxyWard.Management.Application.Drift;
+using ProxyWard.Management.Infrastructure.Drift;
 
 namespace ProxyWard.IntegrationTests;
 

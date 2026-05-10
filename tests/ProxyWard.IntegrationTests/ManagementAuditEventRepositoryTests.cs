@@ -1,7 +1,8 @@
 using System.Text.Json.Nodes;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Sinks;
-using ProxyWard.Management.Api.Audit;
+using ProxyWard.Management.Application.Audit;
+using ProxyWard.Management.Infrastructure.Audit;
 
 namespace ProxyWard.IntegrationTests;
 

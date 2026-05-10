@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Sinks;
 using ProxyWard.Locking.Persistence;
-using ProxyWard.Management.Api.Status;
+using ProxyWard.Management.Application.Status;
 using ManagementProgram = ProxyWard.Management.Api.Program;
 
 namespace ProxyWard.IntegrationTests;
