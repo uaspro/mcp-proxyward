@@ -2,11 +2,9 @@ import {
   Activity,
   AlertTriangle,
   Ban,
-  BookOpen,
   ChevronLeft,
   ChevronRight,
   Check,
-  Code2,
   Download,
   Eye,
   FileCode2,
@@ -25,7 +23,7 @@ import {
   XCircle,
   type LucideIcon,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   buildAuditExportUrl,
   getAuditEvent,
@@ -244,6 +242,8 @@ function App() {
   const [mode, setMode] = useState<Mode>('audit')
   const [modeRefreshing, setModeRefreshing] = useState(true)
   const [pendingMode, setPendingMode] = useState<Mode | null>(null)
+  const [topbarSearch, setTopbarSearch] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const navMetrics = useNavMetrics()
   const activeRoute = useMemo(
     () => navItems.find((item) => item.id === route) ?? navItems[0],
@@ -270,6 +270,12 @@ function App() {
     }
   }, [])
 
+  const submitTopbarSearch = useCallback(() => {
+    if (topbarSearch.trim() && route !== 'audit') {
+      navigateToRoute('audit')
+    }
+  }, [navigateToRoute, route, topbarSearch])
+
   useEffect(() => {
     const handlePopState = () => {
       setRoute(routeFromLocation())
@@ -277,6 +283,18 @@ function App() {
 
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  useEffect(() => {
+    const handleKeyboardShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        searchInputRef.current?.focus()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyboardShortcut)
+    return () => window.removeEventListener('keydown', handleKeyboardShortcut)
   }, [])
 
   useEffect(() => {
@@ -361,16 +379,6 @@ function App() {
               </button>
             )
           })}
-
-          <div className="nav-section resources">Resources</div>
-          <button type="button" className="nav-item">
-            <BookOpen size={16} />
-            <span>Docs</span>
-          </button>
-          <button type="button" className="nav-item">
-            <Code2 size={16} />
-            <span>API</span>
-          </button>
         </nav>
 
         <div className="sidebar-footer">
@@ -390,11 +398,25 @@ function App() {
 
           <div className="topbar-spacer" />
 
-          <button type="button" className="search-box">
+          <form
+            className="search-box"
+            role="search"
+            onSubmit={(event) => {
+              event.preventDefault()
+              submitTopbarSearch()
+            }}
+          >
             <Search size={14} />
-            <span>Search audit, tools, policy</span>
+            <input
+              ref={searchInputRef}
+              type="search"
+              aria-label="Search audit, tools, policy"
+              placeholder="Search audit, tools, policy"
+              value={topbarSearch}
+              onChange={(event) => setTopbarSearch(event.target.value)}
+            />
             <kbd>Ctrl K</kbd>
-          </button>
+          </form>
 
           <div className="topbar-actions">
             <button
@@ -421,9 +443,9 @@ function App() {
           {route === 'overview' ? (
             <Overview mode={mode} onOpenAuditEvent={navigateToAuditEvent} onOpenAuditLog={() => navigateToRoute('audit')} />
           ) : null}
-          {route === 'audit' ? <AuditLog /> : null}
+          {route === 'audit' ? <AuditLog key={topbarSearch} searchQuery={topbarSearch} /> : null}
           {route === 'drift' ? <SchemaDrift /> : null}
-          {route === 'policy' ? <Policy mode={mode} onModeChanged={setMode} /> : null}
+          {route === 'policy' ? <Policy mode={mode} onModeChanged={setMode} searchQuery={topbarSearch} /> : null}
           {route === 'settings' ? <SettingsPanel /> : null}
         </main>
       </div>
@@ -1285,8 +1307,11 @@ const initialAuditFilters: AuditFilters = {
   timeWindow: 'all',
 }
 
-function AuditLog() {
-  const [filters, setFilters] = useState<AuditFilters>(initialAuditFilters)
+function AuditLog({ searchQuery = '' }: { searchQuery?: string }) {
+  const [filters, setFilters] = useState<AuditFilters>(() => ({
+    ...initialAuditFilters,
+    search: searchQuery.trim(),
+  }))
   const [offset, setOffset] = useState(0)
   const [listQueryTime, setListQueryTime] = useState(() => Date.now())
   const [page, setPage] = useState<AuditEventPage | null>(null)
@@ -2577,6 +2602,40 @@ function createToolPolicyRows(
     })
 }
 
+function normalizeSearchQuery(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function includesSearch(value: string | null | undefined, searchQuery: string): boolean {
+  return value?.toLowerCase().includes(searchQuery) ?? false
+}
+
+function policyServerMatchesSearch(
+  serverId: string,
+  server: ServerPolicyModel,
+  searchQuery: string,
+): boolean {
+  if (!searchQuery) {
+    return true
+  }
+
+  return includesSearch(serverId, searchQuery)
+    || includesSearch(server.route, searchQuery)
+    || includesSearch(server.upstream, searchQuery)
+}
+
+function toolPolicyRowMatchesSearch(row: ToolPolicyRow, searchQuery: string): boolean {
+  if (!searchQuery) {
+    return true
+  }
+
+  return includesSearch(row.name, searchQuery)
+    || includesSearch(row.title, searchQuery)
+    || includesSearch(row.description, searchQuery)
+    || includesSearch(row.driftStatus, searchQuery)
+    || includesSearch(row.disposition, searchQuery)
+}
+
 function getToolDispositionOrDefault(server: ServerPolicyModel | null, toolName: string): ToolDisposition {
   return server ? getToolDisposition(server, toolName) : 'default'
 }
@@ -2827,7 +2886,15 @@ function createServerPolicyModel(form: NewServerPolicyForm): ServerPolicyModel {
   }
 }
 
-function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mode) => void }) {
+function Policy({
+  mode,
+  onModeChanged,
+  searchQuery = '',
+}: {
+  mode: Mode
+  onModeChanged: (mode: Mode) => void
+  searchQuery?: string
+}) {
   const [policy, setPolicy] = useState<PolicyResponse | null>(null)
   const [draft, setDraft] = useState<PolicyModel | null>(null)
   const [toolInventory, setToolInventory] = useState<ToolInventoryResponse | null>(null)
@@ -2850,6 +2917,11 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
   const [pendingEnforceApply, setPendingEnforceApply] = useState<PolicyModel | null>(null)
 
   const serverEntries = useMemo(() => Object.entries(draft?.servers ?? {}), [draft])
+  const normalizedSearchQuery = normalizeSearchQuery(searchQuery)
+  const visibleServerEntries = useMemo(
+    () => serverEntries.filter(([serverId, server]) => policyServerMatchesSearch(serverId, server, normalizedSearchQuery)),
+    [normalizedSearchQuery, serverEntries],
+  )
   const toolInventoryByServer = useMemo(
     () => new Map((toolInventory?.servers ?? []).map((server) => [server.serverId, server])),
     [toolInventory],
@@ -3246,7 +3318,7 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
               <span>Global</span>
               <Badge tone={draft.mode === 'enforce' ? 'allow' : 'warn'}>{draft.mode || mode}</Badge>
             </button>
-            {serverEntries.map(([serverId, server]) => (
+            {visibleServerEntries.map(([serverId, server]) => (
               <button
                 key={serverId}
                 type="button"
@@ -3260,6 +3332,9 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
             ))}
             {serverEntries.length === 0 ? (
               <StatePanel state="empty" title="No server policies" detail="Add a server policy before validating or applying." />
+            ) : null}
+            {serverEntries.length > 0 && visibleServerEntries.length === 0 ? (
+              <StatePanel state="empty" title="No matching policy scopes" detail="No server id, route, or upstream matches the top search." />
             ) : null}
           </div>
         </Card>
@@ -3275,6 +3350,7 @@ function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mod
               toolsLoading={toolInventoryLoading}
               toolsError={toolDiscoveryErrors[selectedServer.id] ?? (selectedServerInventory ? null : toolInventoryError)}
               discovering={discoveringServerId === selectedServer.id}
+              searchQuery={normalizedSearchQuery}
               onDiscover={() => discoverServerTools(selectedServer.id, selectedServer.upstream)}
               onChange={(updater) => updateServer(selectedServer.id, updater)}
               onDelete={() => setPendingDeleteServer(selectedServer)}
@@ -3378,8 +3454,8 @@ function GlobalPolicyEditor({
               value={draft.mode}
               onChange={(value) => onChange((current) => ({ ...current, mode: value }))}
               options={[
-                { value: 'audit', label: 'Audit' },
-                { value: 'enforce', label: 'Enforce' },
+                { value: 'audit', label: 'Audit', tone: 'warn' },
+                { value: 'enforce', label: 'Enforce', tone: 'allow' },
               ]}
             />
           </PolicyField>
@@ -3515,6 +3591,7 @@ function ServerPolicyEditor({
   toolsLoading,
   toolsError,
   discovering,
+  searchQuery,
   onDiscover,
   onChange,
   onDelete,
@@ -3525,6 +3602,7 @@ function ServerPolicyEditor({
   toolsLoading: boolean
   toolsError: string | null
   discovering: boolean
+  searchQuery: string
   onDiscover: () => void
   onChange: (updater: (server: ServerPolicyModel) => ServerPolicyModel) => void
   onDelete: () => void
@@ -3607,6 +3685,7 @@ function ServerPolicyEditor({
             baselineServer={baselineServer}
             loading={toolsLoading || discovering}
             error={toolsError}
+            searchQuery={searchQuery}
             onChange={onChange}
           />
         </div>
@@ -3777,6 +3856,7 @@ function ToolPolicySelector({
   baselineServer,
   loading,
   error,
+  searchQuery,
   onChange,
 }: {
   server: ServerPolicyModel
@@ -3784,12 +3864,18 @@ function ToolPolicySelector({
   baselineServer: ServerPolicyModel | null
   loading: boolean
   error: string | null
+  searchQuery: string
   onChange: (updater: (server: ServerPolicyModel) => ServerPolicyModel) => void
 }) {
   const rows = useMemo(
     () => createToolPolicyRows(server, inventory, baselineServer),
     [server, inventory, baselineServer],
   )
+  const visibleRows = useMemo(
+    () => rows.filter((row) => toolPolicyRowMatchesSearch(row, searchQuery)),
+    [rows, searchQuery],
+  )
+  const defaultDispositionTone = server.tools.default === 'allow' ? 'allow' : 'deny'
 
   return (
     <div className="tool-policy-panel">
@@ -3802,9 +3888,12 @@ function ToolPolicySelector({
           detail="Run discovery or call tools/list through the proxy to populate this list."
         />
       ) : null}
-      {rows.length > 0 ? (
+      {rows.length > 0 && visibleRows.length === 0 ? (
+        <StatePanel state="empty" title="No matching tools" detail="No discovered or configured tools match the top search." />
+      ) : null}
+      {visibleRows.length > 0 ? (
         <div className={`tool-policy-list ${loading ? 'loading' : ''}`}>
-          {rows.map((row) => (
+          {visibleRows.map((row) => (
             <div className="tool-policy-row" key={row.name}>
               <div className="tool-policy-main">
                 <div className="tool-policy-title">
@@ -3824,7 +3913,7 @@ function ToolPolicySelector({
               <SegmentedControl<ToolDisposition>
                 value={row.disposition}
                 options={[
-                  { value: 'default', label: 'Default' },
+                  { value: 'default', label: 'Default', tone: defaultDispositionTone },
                   { value: 'allow', label: 'Allow' },
                   { value: 'block', label: 'Block' },
                 ]}

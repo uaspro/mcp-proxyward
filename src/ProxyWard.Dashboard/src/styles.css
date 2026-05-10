@@ -14,6 +14,9 @@
   --accent: #10b981;
   --accent-bg: #ecfdf5;
   --accent-fg: #065f46;
+  --deny: #ef4444;
+  --deny-bg: #fef2f2;
+  --deny-fg: #991b1b;
   --block: #ef4444;
   --block-bg: #fef2f2;
   --block-fg: #991b1b;
@@ -49,6 +52,8 @@
   --fg-faint: #525252;
   --accent-bg: #052e1f;
   --accent-fg: #6ee7b7;
+  --deny-bg: #2a1010;
+  --deny-fg: #fca5a5;
   --block-bg: #2a1010;
   --block-fg: #fca5a5;
   --warn-bg: #2a1f08;
@@ -160,10 +165,6 @@ button:focus-visible {
   font-size: 11px;
   font-weight: 650;
   text-transform: uppercase;
-}
-
-.nav-section.resources {
-  margin-top: 18px;
 }
 
 .nav-item {
@@ -287,6 +288,30 @@ button:focus-visible {
   padding: 7px 9px;
   color: var(--fg-subtle);
   text-align: left;
+}
+
+.search-box:focus-within {
+  border-color: var(--accent);
+  background: var(--bg-elevated);
+}
+
+.search-box input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  outline: 0;
+}
+
+.search-box input::placeholder {
+  color: var(--fg-subtle);
+  font-style: normal;
+}
+
+.search-box input::-webkit-search-cancel-button {
+  display: none;
 }
 
 .search-box span {
@@ -1328,8 +1353,8 @@ kbd {
 
 .badge.block {
   border-color: transparent;
-  background: var(--block-bg);
-  color: var(--block-fg);
+  background: var(--deny-bg);
+  color: var(--deny-fg);
 }
 
 .badge.warn {
@@ -1542,7 +1567,9 @@ kbd {
 .tabs,
 .segmented {
   display: inline-flex;
+  width: fit-content;
   max-width: 100%;
+  justify-self: start;
   align-items: center;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -1553,10 +1580,12 @@ kbd {
 
 .tabs button,
 .segmented button {
+  flex: 0 0 auto;
   min-height: 26px;
   min-width: 0;
+  border: 1px solid transparent;
   border-radius: 5px;
-  padding: 4px 9px;
+  padding: 3px 9px;
   color: var(--fg-subtle);
   font-size: 12px;
   font-weight: 600;
@@ -1567,9 +1596,44 @@ kbd {
 
 .tabs button.active,
 .segmented button.active {
+  border-color: color-mix(in srgb, currentColor 42%, transparent);
   background: var(--bg-elevated);
   color: var(--fg);
+  font-weight: 700;
   box-shadow: var(--shadow-sm);
+}
+
+.segmented button.option-allow {
+  color: var(--accent-fg);
+}
+
+.segmented button.option-warn {
+  color: var(--warn-fg);
+}
+
+.segmented button.option-deny,
+.segmented button.option-block {
+  color: var(--deny-fg);
+}
+
+.segmented button.option-allow.active {
+  background: var(--accent-bg);
+  color: var(--accent-fg);
+}
+
+.segmented button.option-warn.active {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+.segmented button.option-deny.active,
+.segmented button.option-block.active {
+  background: var(--deny-bg);
+  color: var(--deny-fg);
+}
+
+.tool-policy-row > .segmented {
+  justify-self: end;
 }
 
 .toggle {
@@ -1873,5 +1937,13 @@ kbd {
   .table-row span:nth-child(3),
   .table-row span:nth-child(4) {
     display: none;
+  }
+
+  .tool-policy-row {
+    grid-template-columns: 1fr;
+  }
+
+  .tool-policy-row > .segmented {
+    justify-self: start;
   }
 }

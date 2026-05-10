@@ -2,6 +2,12 @@ import { AlertCircle, Loader2, X, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 type Tone = 'neutral' | 'allow' | 'warn' | 'block' | 'info'
+type SegmentedOptionTone = 'neutral' | 'allow' | 'warn' | 'deny' | 'block' | 'info'
+type SegmentedOption<TValue extends string> = {
+  value: TValue
+  label: string
+  tone?: SegmentedOptionTone
+}
 
 export function Button({
   children,
@@ -180,7 +186,7 @@ export function Tabs<TValue extends string>({
   onChange,
 }: {
   value: TValue
-  options: Array<{ value: TValue; label: string }>
+  options: Array<SegmentedOption<TValue>>
   onChange: (value: TValue) => void
 }) {
   return (
@@ -236,7 +242,7 @@ export function SegmentedControl<TValue extends string>({
   disabled = false,
 }: {
   value: TValue
-  options: Array<{ value: TValue; label: string }>
+  options: Array<SegmentedOption<TValue>>
   onChange: (value: TValue) => void
   disabled?: boolean
 }) {
@@ -246,7 +252,7 @@ export function SegmentedControl<TValue extends string>({
         <button
           key={option.value}
           type="button"
-          className={value === option.value ? 'active' : ''}
+          className={`${value === option.value ? 'active' : ''} ${segmentedOptionClass(option)}`.trim()}
           disabled={disabled}
           onClick={() => onChange(option.value)}
         >
@@ -255,6 +261,11 @@ export function SegmentedControl<TValue extends string>({
       ))}
     </div>
   )
+}
+
+function segmentedOptionClass<TValue extends string>(option: SegmentedOption<TValue>): string {
+  const value = option.tone ?? option.value
+  return `option-${value.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`).replace(/[^a-z0-9-]/g, '-')}`
 }
 
 export function StatePanel({
