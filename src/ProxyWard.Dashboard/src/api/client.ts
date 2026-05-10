@@ -89,7 +89,7 @@ async function readErrorMessage(response: Response, fallback: string): Promise<s
       return payload.error
     }
   } catch {
-    // Keep the original request-oriented fallback for non-JSON error bodies.
+    return fallback
   }
 
   return fallback
