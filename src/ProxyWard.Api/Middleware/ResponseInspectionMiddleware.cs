@@ -399,12 +399,12 @@ public sealed class ResponseInspectionMiddleware(
 
     private ToolListExtractionResult ExtractToolsListResponse(byte[] body, string? contentType)
     {
-        if (!IsStreamingContentType(contentType))
+        if (!HttpContentTypes.IsStreaming(contentType))
         {
             return extractor.Extract(body);
         }
 
-        var payloads = ExtractServerSentEventDataPayloads(body);
+        var payloads = ServerSentEventDataParser.ExtractDataPayloads(body);
         if (payloads.Count == 0)
         {
             return ToolListExtractionResult.Failed(PolicyReasonCodes.JsonMalformed);
@@ -446,45 +446,6 @@ public sealed class ResponseInspectionMiddleware(
                 : jsonMessages.ToJsonString());
 
         return extractor.Extract(extractableBody);
-    }
-
-    private static IReadOnlyList<string> ExtractServerSentEventDataPayloads(byte[] body)
-    {
-        var text = Encoding.UTF8.GetString(body);
-        var payloads = new List<string>();
-        var currentDataLines = new List<string>();
-
-        foreach (var rawLine in text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
-        {
-            var line = rawLine.EndsWith('\r') ? rawLine[..^1] : rawLine;
-            if (line.Length == 0)
-            {
-                FlushEventData(currentDataLines, payloads);
-                continue;
-            }
-
-            if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var data = line[5..];
-            currentDataLines.Add(data.StartsWith(' ') ? data[1..] : data);
-        }
-
-        FlushEventData(currentDataLines, payloads);
-        return payloads;
-    }
-
-    private static void FlushEventData(List<string> currentDataLines, List<string> payloads)
-    {
-        if (currentDataLines.Count == 0)
-        {
-            return;
-        }
-
-        payloads.Add(string.Join('\n', currentDataLines));
-        currentDataLines.Clear();
     }
 
     private async Task HandleToolCallSecretResponseAsync(
@@ -908,7 +869,7 @@ public sealed class ResponseInspectionMiddleware(
         var bodyHash = Convert.ToHexStringLower(SHA256.HashData(body));
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"{server.Id}\u001f{server.Upstream}\u001f{policy.VersionHash}\u001f{SanitizeMediaType(contentType)}\u001f{bodyHash}");
+            $"{server.Id}\u001f{server.Upstream}\u001f{policy.VersionHash}\u001f{HttpContentTypes.Sanitize(contentType)}\u001f{bodyHash}");
     }
 
     private static IEnumerable<(string FieldName, IReadOnlyCollection<string> Reasons)> CreateDriftReviewFields(
@@ -1122,7 +1083,7 @@ public sealed class ResponseInspectionMiddleware(
             FormatDecision(decision),
             unsupportedKind,
             PolicyReasonCodes.InspectionUnsupported,
-            SanitizeMediaType(context.Response.ContentType),
+            HttpContentTypes.Sanitize(context.Response.ContentType),
             responseBytes,
             FormatMode(policy.Mode),
             policy.VersionHash,
@@ -1245,7 +1206,7 @@ public sealed class ResponseInspectionMiddleware(
         }
         catch (JsonException)
         {
-            // Fall back to raw response text matching without ever logging the response body.
+            return patternSet.MatchText(Encoding.UTF8.GetString(body));
         }
 
         return patternSet.MatchText(Encoding.UTF8.GetString(body));
@@ -1278,7 +1239,7 @@ public sealed class ResponseInspectionMiddleware(
 
         if (CanWriteJsonRpcToolResponseError(target))
         {
-            var response = CreateJsonRpcError(
+            var response = JsonRpcPolicyError.Create(
                 target.Message!.Id!,
                 reasons,
                 "MCP ProxyWard blocked this tool response");
@@ -1304,40 +1265,7 @@ public sealed class ResponseInspectionMiddleware(
         && string.Equals(target.Message.JsonRpc, "2.0", StringComparison.Ordinal)
         && string.Equals(target.Message.Method, "tools/call", StringComparison.Ordinal)
         && target.Message.Id is not null
-        && IsValidJsonRpcRequestId(target.Message.Id);
-
-    private static bool IsValidJsonRpcRequestId(JsonNode id)
-    {
-        var json = id.ToJsonString();
-        return json.Length > 0 && (json[0] == '"' || json[0] == '-' || char.IsDigit(json[0]));
-    }
-
-    private static JsonObject CreateJsonRpcError(
-        JsonNode id,
-        IReadOnlyCollection<string> reasons,
-        string message)
-    {
-        var reasonNodes = new JsonArray();
-        foreach (var reason in reasons)
-        {
-            reasonNodes.Add(JsonValue.Create(reason));
-        }
-
-        return new JsonObject
-        {
-            ["jsonrpc"] = "2.0",
-            ["id"] = id.DeepClone(),
-            ["error"] = new JsonObject
-            {
-                ["code"] = -32001,
-                ["message"] = message,
-                ["data"] = new JsonObject
-                {
-                    ["reasons"] = reasonNodes
-                }
-            }
-        };
-    }
+        && JsonRpcPolicyError.HasSupportedRequestId(target.Message.Id);
 
     private static string ResolveCorrelationId(HttpContext context) =>
         context.Items[AuditItems.CorrelationId] as string ?? context.TraceIdentifier;
@@ -1384,21 +1312,6 @@ public sealed class ResponseInspectionMiddleware(
             SchemaVersion: schemaVersion,
             AuditEventType: eventType,
             ArgumentSummary: FormatArgumentSummary(argumentSummary));
-
-    private static string SanitizeMediaType(string? contentType)
-    {
-        if (string.IsNullOrWhiteSpace(contentType))
-        {
-            return string.Empty;
-        }
-
-        var separatorIndex = contentType.IndexOf(';', StringComparison.Ordinal);
-        var mediaType = separatorIndex >= 0 ? contentType[..separatorIndex] : contentType;
-        return mediaType.Trim();
-    }
-
-    private static bool IsStreamingContentType(string? contentType) =>
-        SanitizeMediaType(contentType).Equals("text/event-stream", StringComparison.OrdinalIgnoreCase);
 
     private static string FormatMode(ProxyWardMode mode) =>
         mode == ProxyWardMode.Enforce ? "enforce" : "audit";
@@ -1482,145 +1395,4 @@ public sealed class ResponseInspectionMiddleware(
         IReadOnlyList<DiscoveredTool> Tools,
         ToolSurfaceDriftResult DriftResult);
 
-    private sealed class ResponseInspectionStream(
-        Stream passthrough,
-        HttpResponse response,
-        int maxBodyBytes,
-        bool blockUnsupported) : Stream
-    {
-        private readonly MemoryStream _buffer = new(capacity: Math.Min(maxBodyBytes, 64 * 1024));
-        private CaptureMode _mode = CaptureMode.Undecided;
-
-        public string? UnsupportedReason { get; private set; }
-        public long ObservedBytes { get; private set; }
-        public bool WasPassedThrough => _mode == CaptureMode.PassThrough;
-
-        public override bool CanRead => false;
-        public override bool CanSeek => false;
-        public override bool CanWrite => true;
-        public override long Length => throw new NotSupportedException();
-
-        public override long Position
-        {
-            get => throw new NotSupportedException();
-            set => throw new NotSupportedException();
-        }
-
-        public byte[] GetBufferedBody() => _buffer.ToArray();
-
-        public async Task CopyBufferedBodyToAsync(Stream destination, CancellationToken cancellationToken)
-        {
-            _buffer.Position = 0;
-            await _buffer.CopyToAsync(destination, cancellationToken);
-        }
-
-        public override void Flush()
-        {
-            if (_mode == CaptureMode.PassThrough)
-            {
-                passthrough.Flush();
-            }
-        }
-
-        public override Task FlushAsync(CancellationToken cancellationToken) =>
-            _mode == CaptureMode.PassThrough
-                ? passthrough.FlushAsync(cancellationToken)
-                : Task.CompletedTask;
-
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
-        }
-
-        public override async ValueTask WriteAsync(
-            ReadOnlyMemory<byte> buffer,
-            CancellationToken cancellationToken = default)
-        {
-            DecideIfNeeded();
-            ObservedBytes += buffer.Length;
-
-            switch (_mode)
-            {
-                case CaptureMode.PassThrough:
-                    await passthrough.WriteAsync(buffer, cancellationToken);
-                    break;
-                case CaptureMode.Buffer:
-                    if (_buffer.Length + buffer.Length <= maxBodyBytes)
-                    {
-                        await _buffer.WriteAsync(buffer, cancellationToken);
-                        break;
-                    }
-
-                    UnsupportedReason = "response_too_large";
-                    if (blockUnsupported)
-                    {
-                        _buffer.SetLength(0);
-                        _mode = CaptureMode.Discard;
-                        break;
-                    }
-
-                    _buffer.Position = 0;
-                    await _buffer.CopyToAsync(passthrough, cancellationToken);
-                    _buffer.SetLength(0);
-                    _mode = CaptureMode.PassThrough;
-                    await passthrough.WriteAsync(buffer, cancellationToken);
-                    break;
-            }
-        }
-
-        public override int Read(byte[] buffer, int offset, int count) =>
-            throw new NotSupportedException();
-
-        public override long Seek(long offset, SeekOrigin origin) =>
-            throw new NotSupportedException();
-
-        public override void SetLength(long value) =>
-            throw new NotSupportedException();
-
-        private void DecideIfNeeded()
-        {
-            if (_mode != CaptureMode.Undecided)
-            {
-                return;
-            }
-
-            if (!IsInspectableContentType(response.ContentType))
-            {
-                SetUnsupported("unsupported_content_type");
-                return;
-            }
-
-            var contentLength = response.ContentLength;
-            if (contentLength > maxBodyBytes)
-            {
-                ObservedBytes = contentLength.Value;
-                SetUnsupported("response_too_large");
-                return;
-            }
-
-            _mode = CaptureMode.Buffer;
-        }
-
-        private void SetUnsupported(string reason)
-        {
-            UnsupportedReason = reason;
-            _mode = blockUnsupported ? CaptureMode.Discard : CaptureMode.PassThrough;
-        }
-
-        private static bool IsInspectableContentType(string? contentType)
-        {
-            var mediaType = SanitizeMediaType(contentType);
-            return mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase)
-                || mediaType.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase)
-                || mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private enum CaptureMode
-        {
-            Undecided,
-            Buffer,
-            PassThrough,
-            Discard
-        }
-    }
 }

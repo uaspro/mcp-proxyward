@@ -58,8 +58,7 @@ public sealed class ToolPolicyMiddleware(
 
             var argumentSummary = redactor.Redact("params", message.Params, CreateSecretRedactionOptions(server)).Value;
             var stopwatch = Stopwatch.StartNew();
-            PolicyDecision decision;
-            var argumentOverrideApplied = false;
+            ToolPolicyDecisionResult decisionResult;
             using (var activity = ProxyWardTelemetry.StartActivity(
                 ProxyWardTelemetry.PolicyEvaluationActivity,
                 CreateTelemetryMetadata(
@@ -68,38 +67,13 @@ public sealed class ToolPolicyMiddleware(
                     server,
                     classification.ToolName)))
             {
-                decision = evaluator.Evaluate(policy.Mode, server.Tools, classification.ToolName);
-                if (decision.Type == PolicyDecisionType.Allow)
-                {
-                    var effectiveArguments = argumentOverrides.Resolve(server.Arguments, classification.ToolName);
-                    argumentOverrideApplied = effectiveArguments.OverrideApplied;
-
-                    // Run path, host, and command argument rules even when one already blocks: a single
-                    // tool_call_policy audit row carries the merged reasons, which gives operators
-                    // complete forensic context in one place.
-                    var argReasons = new List<string>();
-                    var pathDecision = pathRules.Evaluate(policy.Mode, effectiveArguments.Paths, message.Params);
-                    if (pathDecision.Type != PolicyDecisionType.Allow)
-                    {
-                        argReasons.AddRange(pathDecision.Reasons);
-                    }
-                    var hostDecision = await hostRules
-                        .EvaluateAsync(policy.Mode, effectiveArguments.Hosts, message.Params, context.RequestAborted)
-                        .ConfigureAwait(false);
-                    if (hostDecision.Type != PolicyDecisionType.Allow)
-                    {
-                        argReasons.AddRange(hostDecision.Reasons);
-                    }
-                    var commandDecision = commandRules.Evaluate(policy.Mode, effectiveArguments.Commands, message.Params);
-                    if (commandDecision.Type != PolicyDecisionType.Allow)
-                    {
-                        argReasons.AddRange(commandDecision.Reasons);
-                    }
-                    if (argReasons.Count > 0)
-                    {
-                        decision = policy.Mode.AsBlockDecision(argReasons);
-                    }
-                }
+                decisionResult = await EvaluateToolCallAsync(
+                        context,
+                        policy,
+                        server,
+                        classification.ToolName,
+                        message)
+                    .ConfigureAwait(false);
 
                 stopwatch.Stop();
 
@@ -108,8 +82,8 @@ public sealed class ToolPolicyMiddleware(
                     policy,
                     server,
                     classification.ToolName,
-                    FormatDecision(decision.Type),
-                    decision.Reasons,
+                    FormatDecision(decisionResult.Decision.Type),
+                    decisionResult.Decision.Reasons,
                     argumentSummary: argumentSummary);
                 ProxyWardTelemetry.Enrich(activity, telemetry);
                 ProxyWardTelemetry.RecordPolicyDecision(telemetry);
@@ -120,14 +94,14 @@ public sealed class ToolPolicyMiddleware(
                 policy,
                 server,
                 classification.ToolName,
-                decision,
+                decisionResult.Decision,
                 argumentSummary,
                 parseResult.Messages.Count,
                 parseResult.IsBatch ? message.BatchIndex : null,
                 stopwatch.ElapsedMilliseconds,
-                argumentOverrideApplied);
+                decisionResult.ArgumentOverrideApplied);
 
-            evaluations.Add(new ToolPolicyEvaluation(message, classification.ToolName, decision));
+            evaluations.Add(new ToolPolicyEvaluation(message, classification.ToolName, decisionResult.Decision));
         }
 
         if (evaluations.Count == 0)
@@ -160,6 +134,63 @@ public sealed class ToolPolicyMiddleware(
         }
 
         await next(context);
+    }
+
+    private async Task<ToolPolicyDecisionResult> EvaluateToolCallAsync(
+        HttpContext context,
+        ProxyWardPolicy policy,
+        ServerPolicy server,
+        string? toolName,
+        JsonRpcMessage message)
+    {
+        var toolDecision = evaluator.Evaluate(policy.Mode, server.Tools, toolName);
+        if (toolDecision.Type != PolicyDecisionType.Allow)
+        {
+            return new ToolPolicyDecisionResult(toolDecision, ArgumentOverrideApplied: false);
+        }
+
+        var effectiveArguments = argumentOverrides.Resolve(server.Arguments, toolName);
+        var argumentReasons = await EvaluateAllArgumentRulesAsync(
+                context,
+                policy,
+                effectiveArguments,
+                message.Params)
+            .ConfigureAwait(false);
+        var decision = argumentReasons.Count == 0
+            ? toolDecision
+            : policy.Mode.AsBlockDecision(argumentReasons);
+
+        return new ToolPolicyDecisionResult(decision, effectiveArguments.OverrideApplied);
+    }
+
+    private async Task<IReadOnlyList<string>> EvaluateAllArgumentRulesAsync(
+        HttpContext context,
+        ProxyWardPolicy policy,
+        ResolvedArgumentPolicy effectiveArguments,
+        JsonNode? arguments)
+    {
+        var reasons = new List<string>();
+        AddBlockingReasons(
+            reasons,
+            pathRules.Evaluate(policy.Mode, effectiveArguments.Paths, arguments));
+        AddBlockingReasons(
+            reasons,
+            await hostRules
+                .EvaluateAsync(policy.Mode, effectiveArguments.Hosts, arguments, context.RequestAborted)
+                .ConfigureAwait(false));
+        AddBlockingReasons(
+            reasons,
+            commandRules.Evaluate(policy.Mode, effectiveArguments.Commands, arguments));
+
+        return reasons;
+    }
+
+    private static void AddBlockingReasons(List<string> reasons, PolicyDecision decision)
+    {
+        if (decision.Type != PolicyDecisionType.Allow)
+        {
+            reasons.AddRange(decision.Reasons);
+        }
     }
 
     private async Task EmitAuditAsync(
@@ -268,7 +299,7 @@ public sealed class ToolPolicyMiddleware(
 
         foreach (var message in parseResult.Messages)
         {
-            if (message.Id is null || !IsValidJsonRpcRequestId(message.Id))
+            if (message.Id is null || !JsonRpcPolicyError.HasSupportedRequestId(message.Id))
             {
                 continue;
             }
@@ -278,7 +309,7 @@ public sealed class ToolPolicyMiddleware(
                 ? evaluation.Decision.Reasons
                 : [PolicyReasonCodes.BatchBlocked];
 
-            responses.Add(CreateJsonRpcError(
+            responses.Add(JsonRpcPolicyError.Create(
                 message.Id,
                 reasons,
                 "MCP ProxyWard blocked this batch",
@@ -320,20 +351,14 @@ public sealed class ToolPolicyMiddleware(
         && string.Equals(message.JsonRpc, "2.0", StringComparison.Ordinal)
         && string.Equals(message.Method, "tools/call", StringComparison.Ordinal)
         && message.Id is not null
-        && IsValidJsonRpcRequestId(message.Id);
-
-    private static bool IsValidJsonRpcRequestId(JsonNode id)
-    {
-        var json = id.ToJsonString();
-        return json.Length > 0 && (json[0] == '"' || json[0] == '-' || char.IsDigit(json[0]));
-    }
+        && JsonRpcPolicyError.HasSupportedRequestId(message.Id);
 
     private static async Task WriteJsonRpcErrorAsync(
         HttpContext context,
         JsonNode id,
         IReadOnlyCollection<string> reasons)
     {
-        var response = CreateJsonRpcError(
+        var response = JsonRpcPolicyError.Create(
             id,
             reasons,
             "MCP ProxyWard blocked this tool call",
@@ -343,49 +368,6 @@ public sealed class ToolPolicyMiddleware(
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = "application/json";
         await context.Response.WriteAsync(response.ToJsonString(), context.RequestAborted);
-    }
-
-    private static JsonObject CreateJsonRpcError(
-        JsonNode id,
-        IReadOnlyCollection<string> reasons,
-        string message,
-        int? batchIndex,
-        string? toolName)
-    {
-        var reasonNodes = new JsonArray();
-        foreach (var reason in reasons)
-        {
-            reasonNodes.Add(JsonValue.Create(reason));
-        }
-
-        var data = new JsonObject
-        {
-            ["reasons"] = reasonNodes
-        };
-
-        if (batchIndex is not null)
-        {
-            data["batchIndex"] = batchIndex.Value;
-        }
-
-        if (toolName is not null)
-        {
-            data["toolName"] = toolName;
-        }
-
-        var response = new JsonObject
-        {
-            ["jsonrpc"] = "2.0",
-            ["id"] = id.DeepClone(),
-            ["error"] = new JsonObject
-            {
-                ["code"] = -32001,
-                ["message"] = message,
-                ["data"] = data
-            }
-        };
-
-        return response;
     }
 
     private static string ResolveCorrelationId(HttpContext context) =>
@@ -451,4 +433,8 @@ public sealed class ToolPolicyMiddleware(
         JsonRpcMessage Message,
         string? ToolName,
         PolicyDecision Decision);
+
+    private sealed record ToolPolicyDecisionResult(
+        PolicyDecision Decision,
+        bool ArgumentOverrideApplied);
 }

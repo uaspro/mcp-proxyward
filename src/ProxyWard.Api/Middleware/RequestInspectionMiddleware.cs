@@ -76,7 +76,7 @@ public sealed class RequestInspectionMiddleware(
             return;
         }
 
-        if (!IsJsonContentType(context.Request.ContentType))
+        if (!HttpContentTypes.IsJson(context.Request.ContentType))
         {
             await HandleUnsupportedAsync(
                 context,
@@ -342,7 +342,7 @@ public sealed class RequestInspectionMiddleware(
             FormatDecision(decision),
             unsupportedKind,
             PolicyReasonCodes.InspectionUnsupported,
-            SanitizeMediaType(context.Request.ContentType),
+            HttpContentTypes.Sanitize(context.Request.ContentType),
             requestBytes,
             FormatMode(policy.Mode),
             policy.VersionHash,
@@ -350,38 +350,8 @@ public sealed class RequestInspectionMiddleware(
             ResolveCorrelationId(context));
     }
 
-    private static string SanitizeMediaType(string? contentType)
-    {
-        if (string.IsNullOrWhiteSpace(contentType))
-        {
-            return string.Empty;
-        }
-
-        var separatorIndex = contentType.IndexOf(';', StringComparison.Ordinal);
-        var mediaType = separatorIndex >= 0 ? contentType[..separatorIndex] : contentType;
-        return mediaType.Trim();
-    }
-
     private static bool HasBody(HttpRequest request) =>
         request.ContentLength is > 0 || request.Headers.ContainsKey("Transfer-Encoding");
-
-    private static bool IsJsonContentType(string? contentType)
-    {
-        if (string.IsNullOrWhiteSpace(contentType))
-        {
-            return false;
-        }
-
-        var separatorIndex = contentType.IndexOf(';', StringComparison.Ordinal);
-        var mediaType = separatorIndex >= 0
-            ? contentType[..separatorIndex]
-            : contentType;
-
-        mediaType = mediaType.Trim();
-
-        return mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase)
-            || mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase);
-    }
 
     private static ReadOnlyMemory<byte> GetWrittenMemory(MemoryStream stream) =>
         stream.TryGetBuffer(out var buffer)
