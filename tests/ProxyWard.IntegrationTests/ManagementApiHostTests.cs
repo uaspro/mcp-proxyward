@@ -1,6 +1,9 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
+using ProxyWard.Audit.Events;
+using ProxyWard.Audit.Sinks;
 using ManagementMarker = ProxyWard.Management.Api.ProxyWardManagementApiMarker;
 using ManagementProgram = ProxyWard.Management.Api.Program;
 
@@ -12,6 +15,7 @@ public class ManagementApiHostTests
     public async Task StatusEndpointReturnsConfiguredManagementMetadata()
     {
         var auditDbPath = Path.Combine(Path.GetTempPath(), $"proxyward-management-{Guid.NewGuid():N}.db");
+        await EnsureAuditDbExistsAsync(auditDbPath);
         Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", auditDbPath);
         Environment.SetEnvironmentVariable("PROXYWARD_PROXY_CONTROL_URL", "http://127.0.0.1:8089");
 
@@ -26,19 +30,49 @@ public class ManagementApiHostTests
 
             await using var stream = await response.Content.ReadAsStreamAsync();
             using var payload = await JsonDocument.ParseAsync(stream);
+            var root = payload.RootElement;
 
-            Assert.Equal("healthy", payload.RootElement.GetProperty("status").GetString());
-            Assert.Equal("MCP ProxyWard Management API", payload.RootElement.GetProperty("service").GetString());
-            Assert.Equal(auditDbPath, payload.RootElement.GetProperty("audit").GetProperty("sqlitePath").GetString());
+            // Top-level status: healthy when audit DB is reachable, even though proxyControl is unknown
+            // (no PROXYWARD_PROXY_CONTROL_TOKEN configured). unknown components do not degrade top.
+            Assert.Equal("healthy", root.GetProperty("status").GetString());
+            Assert.Equal("MCP ProxyWard Management API", root.GetProperty("service").GetString());
+
+            var components = root.GetProperty("components");
+            Assert.Equal("healthy", components.GetProperty("managementApi").GetProperty("status").GetString());
+            Assert.Equal("unknown", components.GetProperty("proxyControl").GetProperty("status").GetString());
+            Assert.Equal("healthy", components.GetProperty("auditDb").GetProperty("status").GetString());
             Assert.Equal(
-                "http://127.0.0.1:8089/",
-                payload.RootElement.GetProperty("proxyControl").GetProperty("baseUrl").GetString());
+                auditDbPath,
+                components.GetProperty("auditDb").GetProperty("details").GetProperty("sqlitePath").GetString());
+            Assert.Equal(
+                "audit-db",
+                components.GetProperty("telemetry").GetProperty("details").GetProperty("source").GetString());
         }
         finally
         {
             Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", null);
             Environment.SetEnvironmentVariable("PROXYWARD_PROXY_CONTROL_URL", null);
         }
+    }
+
+    private static async Task EnsureAuditDbExistsAsync(string dbPath)
+    {
+        using var sink = new SqliteAuditSink(dbPath);
+        await sink.WriteAsync(new AuditEvent(
+            Timestamp: DateTimeOffset.UtcNow.AddDays(-30),
+            EventType: "tool_call_policy",
+            Mode: "audit",
+            Decision: AuditDecision.Allow,
+            ServerId: "alpha",
+            Method: "tools/list",
+            ToolName: null,
+            Reasons: ["allowed"],
+            PolicyVersion: "policy-1",
+            CorrelationId: "corr-host-test",
+            RequestBytes: 0,
+            DurationMs: 1,
+            ArgumentSummary: JsonNode.Parse("""{"token":"[redacted]"}"""),
+            BatchSize: 0), CancellationToken.None);
     }
 
     [Fact]

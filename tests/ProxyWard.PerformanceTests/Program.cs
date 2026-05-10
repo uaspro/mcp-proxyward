@@ -342,6 +342,8 @@ internal static class PerfHosts
 
         var sqlitePath = Path.Combine(dataDirectory, "proxyward-perf.db");
         var schemaStore = new SqliteTrackedToolSchemaStore(sqlitePath);
+        var driftReviewStore = new SqliteSchemaDriftReviewStore(sqlitePath);
+        var diffMetadataStore = new SqliteToolSchemaDiffMetadataStore(sqlitePath);
         await SeedStaleSchemaAsync(schemaStore, upstreamBaseAddress, toolCount: 50).ConfigureAwait(false);
 
         var policy = ProxyWardPolicyLoader.Load(CreateWorstCasePolicy(
@@ -350,12 +352,15 @@ internal static class PerfHosts
 
         builder.AddProxyWardObservability(policy);
         builder.Services.AddSingleton(policy);
+        builder.Services.AddSingleton(ToolSchemaDiffMetadataOptions.Default);
         builder.Services.AddSingleton<IMcpMessageParser, McpMessageParser>();
         builder.Services.AddSingleton<IMcpMethodClassifier, McpMethodClassifier>();
         builder.Services.AddSingleton<IRedactor, Redactor>();
         builder.Services.AddSingleton<IToolDefinitionExtractor, ToolDefinitionExtractor>();
         builder.Services.AddSingleton<IToolFingerprinter, ToolFingerprinter>();
         builder.Services.AddSingleton<ITrackedToolSchemaStore>(schemaStore);
+        builder.Services.AddSingleton<ISchemaDriftReviewStore>(driftReviewStore);
+        builder.Services.AddSingleton<IToolSchemaDiffMetadataStore>(diffMetadataStore);
         builder.Services.AddSingleton<ToolSurfaceDriftEvaluator>();
         builder.Services.AddSingleton<ServerAllowlistPolicyEvaluator>();
         builder.Services.AddSingleton<ToolPolicyEvaluator>();

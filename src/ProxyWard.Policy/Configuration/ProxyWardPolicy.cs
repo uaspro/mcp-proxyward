@@ -44,8 +44,14 @@ public sealed record ServerPolicy(
     string Route,
     Uri Upstream,
     bool Allowed,
+    SecretsPolicy Secrets,
     ToolPolicy Tools,
     ArgumentPolicy Arguments);
+
+public sealed record SecretsPolicy(
+    bool RedactInLogs,
+    bool BlockReturn,
+    IReadOnlyCollection<string> Patterns);
 
 public sealed record ToolPolicy(
     ToolDefaultMode Default,

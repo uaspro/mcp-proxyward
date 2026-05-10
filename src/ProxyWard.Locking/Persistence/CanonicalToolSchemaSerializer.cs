@@ -25,9 +25,24 @@ internal static class CanonicalToolSchemaSerializer
             .ToArray();
 
         var toolArray = new JsonArray();
+        var hashToolArray = new JsonArray();
         foreach (var entry in orderedTools)
         {
             toolArray.Add(new JsonObject
+            {
+                ["name"] = entry.ToolName,
+                ["nameHash"] = entry.Fingerprint.NameHash,
+                ["titleHash"] = entry.Fingerprint.TitleHash,
+                ["descriptionHash"] = entry.Fingerprint.DescriptionHash,
+                ["inputSchemaHash"] = entry.Fingerprint.InputSchemaHash,
+                ["outputSchemaHash"] = entry.Fingerprint.OutputSchemaHash,
+                ["title"] = entry.Title,
+                ["description"] = entry.Description,
+                ["inputSchemaJson"] = entry.InputSchemaJson,
+                ["outputSchemaJson"] = entry.OutputSchemaJson
+            });
+
+            hashToolArray.Add(new JsonObject
             {
                 ["name"] = entry.ToolName,
                 ["nameHash"] = entry.Fingerprint.NameHash,
@@ -43,9 +58,14 @@ internal static class CanonicalToolSchemaSerializer
             ["mcpProtocol"] = mcpProtocol,
             ["tools"] = toolArray
         };
+        var hashRoot = new JsonObject
+        {
+            ["mcpProtocol"] = mcpProtocol,
+            ["tools"] = hashToolArray
+        };
 
         var canonicalJson = root.ToJsonString(CompactJson);
-        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(canonicalJson));
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(hashRoot.ToJsonString(CompactJson)));
         var snapshotHash = Convert.ToHexStringLower(hashBytes);
 
         return (canonicalJson, snapshotHash);
@@ -73,7 +93,13 @@ internal static class CanonicalToolSchemaSerializer
                 InputSchemaHash: ReadOptionalString(element, "inputSchemaHash"),
                 OutputSchemaHash: ReadOptionalString(element, "outputSchemaHash"));
 
-            entries.Add(new ToolSchemaSnapshotEntry(name, fingerprint));
+            entries.Add(new ToolSchemaSnapshotEntry(
+                name,
+                fingerprint,
+                Title: ReadOptionalString(element, "title"),
+                Description: ReadOptionalString(element, "description"),
+                InputSchemaJson: ReadOptionalString(element, "inputSchemaJson"),
+                OutputSchemaJson: ReadOptionalString(element, "outputSchemaJson")));
         }
 
         return entries;

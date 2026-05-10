@@ -7,6 +7,10 @@ _bmad/
 _bmad-output/
 **/bin/
 **/obj/
+**/node_modules/
+**/dist/
+**/test-results/
+**/playwright-report/
 **/TestResults/
 coverage/
 docs/

@@ -242,6 +242,47 @@ public class RedactorTests
     }
 
     [Fact]
+    public void RedactsConfiguredLiteralSecretPatterns()
+    {
+        var redactor = new Redactor();
+        var secrets = new SecretRedactionOptions(RedactInLogs: true, Patterns: ["ghp_"]);
+
+        var result = redactor.Redact("arguments.value", "token ghp_abc123", secrets);
+
+        Assert.True(result.WasRedacted);
+        Assert.Equal("[redacted-secret:literal]", result.Value?.GetValue<string>());
+    }
+
+    [Fact]
+    public void RedactsConfiguredRegexSecretPatterns()
+    {
+        var redactor = new Redactor();
+        var secrets = new SecretRedactionOptions(
+            RedactInLogs: true,
+            Patterns: ["/github_pat_[A-Za-z0-9_]+/"]);
+
+        var result = redactor.Redact("arguments.value", "token github_pat_abc123", secrets);
+
+        Assert.True(result.WasRedacted);
+        Assert.Equal("[redacted-secret:regex]", result.Value?.GetValue<string>());
+    }
+
+    [Fact]
+    public void ConfiguredSecretPatternsAreIgnoredWhenRedactInLogsIsFalse()
+    {
+        var redactor = new Redactor();
+        var secrets = new SecretRedactionOptions(RedactInLogs: false, Patterns: ["ghp_"]);
+
+        var result = redactor.Redact("arguments.value", "token ghp_abc123", secrets);
+        var builtInResult = redactor.Redact("arguments.token", "token ghp_abc123", secrets);
+
+        Assert.False(result.WasRedacted);
+        Assert.Equal("token ghp_abc123", result.Value?.GetValue<string>());
+        Assert.True(builtInResult.WasRedacted);
+        Assert.Equal("[redacted]", builtInResult.Value?.GetValue<string>());
+    }
+
+    [Fact]
     public void RedactingNullReturnsNullValueAndNotRedacted()
     {
         var redactor = new Redactor();

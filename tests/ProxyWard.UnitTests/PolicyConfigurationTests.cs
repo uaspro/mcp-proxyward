@@ -24,6 +24,9 @@ public class PolicyConfigurationTests
         Assert.Equal("/sample/mcp", policy.Servers["sample"].Route);
         Assert.Equal(new Uri("http://localhost:8080/mcp"), policy.Servers["sample"].Upstream);
         Assert.Equal(ToolDefaultMode.Deny, policy.Servers["sample"].Tools.Default);
+        Assert.True(policy.Servers["sample"].Secrets.RedactInLogs);
+        Assert.False(policy.Servers["sample"].Secrets.BlockReturn);
+        Assert.Empty(policy.Servers["sample"].Secrets.Patterns);
         Assert.StartsWith("sha256:", policy.VersionHash, StringComparison.Ordinal);
     }
 
@@ -191,6 +194,80 @@ public class PolicyConfigurationTests
         Assert.NotEqual(first.VersionHash, second.VersionHash);
     }
 
+    [Fact]
+    public void LoadSecretsPolicyReturnsTypedPolicy()
+    {
+        var policy = ProxyWardPolicyLoader.Load(ValidYamlWithSecrets(
+            """
+            secrets:
+              redactInLogs: true
+              blockReturn: true
+              patterns:
+                - ghp_
+                - /github_pat_[A-Za-z0-9_]+/
+            """));
+
+        var secrets = policy.Servers["sample"].Secrets;
+        Assert.True(secrets.RedactInLogs);
+        Assert.True(secrets.BlockReturn);
+        Assert.Equal(["/github_pat_[A-Za-z0-9_]+/", "ghp_"], secrets.Patterns);
+    }
+
+    [Fact]
+    public void LoadInvalidSecretsRegexThrowsClearValidationException()
+    {
+        var yaml = ValidYamlWithSecrets(
+            """
+            secrets:
+              patterns:
+                - /github_pat_(/
+            """);
+
+        var ex = Assert.Throws<PolicyValidationException>(() =>
+            ProxyWardPolicyLoader.Load(yaml));
+
+        Assert.Contains("servers.sample.secrets.patterns[0] is not a valid regex", ex.Message);
+    }
+
+    [Fact]
+    public void LoadOverbroadSecretsRegexThrowsClearValidationException()
+    {
+        var yaml = ValidYamlWithSecrets(
+            """
+            secrets:
+              patterns:
+                - /.*/
+            """);
+
+        var ex = Assert.Throws<PolicyValidationException>(() =>
+            ProxyWardPolicyLoader.Load(yaml));
+
+        Assert.Contains("servers.sample.secrets.patterns[0] is over-broad", ex.Message);
+    }
+
+    [Fact]
+    public void PolicyVersionHashChangesWhenSecretsPolicyChanges()
+    {
+        var first = ProxyWardPolicyLoader.Load(ValidYamlWithSecrets(
+            """
+            secrets:
+              redactInLogs: true
+              blockReturn: false
+              patterns:
+                - ghp_
+            """));
+        var second = ProxyWardPolicyLoader.Load(ValidYamlWithSecrets(
+            """
+            secrets:
+              redactInLogs: true
+              blockReturn: true
+              patterns:
+                - ghp_
+            """));
+
+        Assert.NotEqual(first.VersionHash, second.VersionHash);
+    }
+
     private static string ValidYamlWithOverrides(string overridesBlock) =>
         """
         mode: audit
@@ -239,6 +316,12 @@ public class PolicyConfigurationTests
                   - powershell
                   - bash
         """ + "\n" + Indent(overridesBlock, 6);
+
+    private static string ValidYamlWithSecrets(string secretsBlock) =>
+        ValidYaml.Replace(
+            "    tools:",
+            Indent(secretsBlock, 4) + "\n    tools:",
+            StringComparison.Ordinal);
 
     private static string Indent(string block, int spaces)
     {

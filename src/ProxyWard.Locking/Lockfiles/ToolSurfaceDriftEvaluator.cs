@@ -4,10 +4,27 @@ using ProxyWard.Locking.Tools;
 
 namespace ProxyWard.Locking.Lockfiles;
 
-public sealed class ToolSurfaceDriftEvaluator(
-    IToolFingerprinter fingerprinter,
-    ITrackedToolSchemaStore store)
+public sealed class ToolSurfaceDriftEvaluator
 {
+    private readonly IToolFingerprinter _fingerprinter;
+    private readonly ITrackedToolSchemaStore _store;
+    private readonly ToolSchemaDiffMetadataOptions _metadataOptions;
+
+    public ToolSurfaceDriftEvaluator(IToolFingerprinter fingerprinter, ITrackedToolSchemaStore store)
+        : this(fingerprinter, store, ToolSchemaDiffMetadataOptions.Default)
+    {
+    }
+
+    public ToolSurfaceDriftEvaluator(
+        IToolFingerprinter fingerprinter,
+        ITrackedToolSchemaStore store,
+        ToolSchemaDiffMetadataOptions metadataOptions)
+    {
+        _fingerprinter = fingerprinter;
+        _store = store;
+        _metadataOptions = metadataOptions.Normalize();
+    }
+
     public async Task<ToolSurfaceDriftResult> EvaluateAsync(
         string serverId,
         string upstreamUrl,
@@ -27,14 +44,14 @@ public sealed class ToolSurfaceDriftEvaluator(
 
         var fingerprintEntries = discoveredTools
             .Where(tool => !string.IsNullOrWhiteSpace(tool.Name))
-            .Select(tool => new ToolSchemaSnapshotEntry(tool.Name!, fingerprinter.Fingerprint(tool)))
+            .Select(tool => SafeToolSchemaMetadata.CreateSnapshotEntry(tool, _fingerprinter, _metadataOptions))
             .ToArray();
 
         ToolSchemaVersionRow? latest;
         RecordedVersion recorded;
         try
         {
-            latest = await store.GetLatestAsync(serverId, cancellationToken).ConfigureAwait(false);
+            latest = await _store.GetLatestAsync(serverId, cancellationToken).ConfigureAwait(false);
 
             var snapshot = new ToolSchemaSnapshotInput(
                 serverId,
@@ -44,7 +61,7 @@ public sealed class ToolSurfaceDriftEvaluator(
                 policyVersion,
                 sourceCorrelationId);
 
-            recorded = await store
+            recorded = await _store
                 .RecordAsync(snapshot, capturedAtUtc, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -79,7 +96,14 @@ public sealed class ToolSurfaceDriftEvaluator(
             .Order(StringComparer.Ordinal)
             .ToArray();
 
-        return new ToolSurfaceDriftResult(drifts, aggregateReasons, recorded.Version, recorded.WasNewVersion);
+        return new ToolSurfaceDriftResult(
+            drifts,
+            aggregateReasons,
+            recorded.Version,
+            recorded.WasNewVersion,
+            PreviousVersion: latest.Version,
+            PreviousMcpProtocol: latest.McpProtocol,
+            CurrentMcpProtocol: mcpProtocol);
     }
 
     private static IReadOnlyList<ToolSurfaceDrift> ComputeDrifts(
@@ -125,7 +149,7 @@ public sealed class ToolSurfaceDriftEvaluator(
 
             if (reasons.Count > 0)
             {
-                drifts.Add(new ToolSurfaceDrift(entry.ToolName, reasons.ToArray()));
+                drifts.Add(new ToolSurfaceDrift(entry.ToolName, reasons.ToArray(), storedEntry, entry));
             }
         }
 
@@ -137,7 +161,7 @@ public sealed class ToolSurfaceDriftEvaluator(
             {
                 if (stored.ContainsKey(entry.ToolName))
                 {
-                    drifts.Add(new ToolSurfaceDrift(entry.ToolName, [PolicyReasonCodes.McpProtocolChanged]));
+                    drifts.Add(new ToolSurfaceDrift(entry.ToolName, [PolicyReasonCodes.McpProtocolChanged], stored[entry.ToolName], entry));
                 }
             }
         }

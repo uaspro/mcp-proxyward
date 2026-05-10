@@ -45,6 +45,7 @@ public class ServerAllowlistPolicyTests
             "/github/mcp",
             new Uri("http://localhost:8080/mcp"),
             allowed,
+            new SecretsPolicy(RedactInLogs: true, BlockReturn: false, Patterns: []),
             new ToolPolicy(ToolDefaultMode.Deny, [], []),
             new ArgumentPolicy(
                 new PathArgumentPolicy([], BlockTraversal: true),

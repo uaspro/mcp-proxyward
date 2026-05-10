@@ -213,6 +213,86 @@ public class ObservabilityIntegrationTests
     }
 
     [Fact]
+    public async Task ConfiguredSecretPatternsAreRedactedFromAuditAndTelemetrySummaries()
+    {
+        await using var activities = new ActivityCollector();
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, """{"jsonrpc":"2.0","id":1,"result":{}}"""));
+        var dbPath = NewTempSqlitePath();
+        var policyPath = WriteTempPolicy(CreatePolicy(
+            "enforce",
+            "warn",
+            4096,
+            upstream.BaseAddress,
+            dbPath,
+            secretsBlock: """
+            secrets:
+              redactInLogs: true
+              blockReturn: true
+              patterns:
+                - ghp_
+                - /github_pat_[A-Za-z0-9_]+/
+            """));
+        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+
+        const string literalSecret = "ghp_literal_secret";
+        const string regexSecret = "github_pat_regex_secret_123";
+        var body = new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = 711,
+            ["method"] = "tools/call",
+            ["params"] = new JsonObject
+            {
+                ["name"] = "repos.search",
+                ["arguments"] = new JsonObject
+                {
+                    ["note"] = $"prefix {literalSecret}",
+                    ["session"] = regexSecret,
+                    ["limit"] = 5
+                }
+            }
+        }.ToJsonString();
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Correlation-Id", "corr-711");
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(1, upstream.RequestCount);
+
+            var auditRow = Assert.Single(
+                ReadAuditEvents(dbPath),
+                row => row.EventType == "tool_call_policy");
+            var auditSummary = auditRow.ArgumentSummary.ToJsonString();
+            var policyActivity = Assert.Single(
+                activities.Snapshots,
+                activity => activity.Name == ProxyWardTelemetry.PolicyEvaluationActivity
+                    && activity.Tags.TryGetValue(ProxyWardTelemetry.McpToolNameTag, out var toolName)
+                    && toolName == "repos.search");
+            var telemetrySummary = policyActivity.Tags[ProxyWardTelemetry.McpArgumentSummaryTag];
+
+            Assert.DoesNotContain(literalSecret, auditSummary, StringComparison.Ordinal);
+            Assert.DoesNotContain(regexSecret, auditSummary, StringComparison.Ordinal);
+            Assert.DoesNotContain(literalSecret, telemetrySummary, StringComparison.Ordinal);
+            Assert.DoesNotContain(regexSecret, telemetrySummary, StringComparison.Ordinal);
+            Assert.Contains("[redacted-secret:literal]", auditSummary, StringComparison.Ordinal);
+            Assert.Contains("[redacted-secret:regex]", auditSummary, StringComparison.Ordinal);
+            Assert.Equal(auditSummary, telemetrySummary);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            DeleteIfExists(dbPath);
+        }
+    }
+
+    [Fact]
     public async Task BlockedAndWouldBlockToolCallsEmitDedicatedDecisionMetrics()
     {
         using var metrics = new MetricCollector();
@@ -504,13 +584,14 @@ public class ObservabilityIntegrationTests
         int maxBodyBytes,
         string upstreamBaseAddress,
         string sqlitePath,
-        string? blockTool = null)
+        string? blockTool = null,
+        string? secretsBlock = null)
     {
         var blockBlock = string.IsNullOrWhiteSpace(blockTool)
             ? "block: []"
             : "block:\n              - " + blockTool;
 
-        return
+        var yaml =
         $$"""
         mode: {{mode}}
         inspection:
@@ -552,6 +633,29 @@ public class ObservabilityIntegrationTests
                 blockShell: false
                 dangerous: []
         """;
+
+        return string.IsNullOrWhiteSpace(secretsBlock)
+            ? yaml
+            : InsertBeforeFirstTools(yaml, secretsBlock);
+    }
+
+    private static string InsertBeforeFirstTools(string yaml, string secretsBlock)
+    {
+        var markerIndex = yaml.IndexOf("tools:", StringComparison.Ordinal);
+        var lineStart = yaml.LastIndexOf('\n', markerIndex) + 1;
+        var indent = yaml[lineStart..markerIndex];
+        return yaml.Insert(lineStart, Indent(secretsBlock, indent.Length) + "\n");
+    }
+
+    private static string Indent(string block, int spaces)
+    {
+        var prefix = new string(' ', spaces);
+        return string.Join(
+            "\n",
+            block.ReplaceLineEndings("\n")
+                .Split('\n')
+                .Where(line => line.Length > 0)
+                .Select(line => prefix + line));
     }
 
     private sealed record ActivitySnapshot(

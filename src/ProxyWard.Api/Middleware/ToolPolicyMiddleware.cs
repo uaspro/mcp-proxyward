@@ -56,7 +56,7 @@ public sealed class ToolPolicyMiddleware(
                 continue;
             }
 
-            var argumentSummary = redactor.Redact("params", message.Params).Value;
+            var argumentSummary = redactor.Redact("params", message.Params, CreateSecretRedactionOptions(server)).Value;
             var stopwatch = Stopwatch.StartNew();
             PolicyDecision decision;
             var argumentOverrideApplied = false;
@@ -420,6 +420,11 @@ public sealed class ToolPolicyMiddleware(
 
     private static string? FormatArgumentSummary(JsonNode? argumentSummary) =>
         argumentSummary?.ToJsonString();
+
+    private static SecretRedactionOptions CreateSecretRedactionOptions(ServerPolicy server) =>
+        new(
+            RedactInLogs: server.Secrets.RedactInLogs,
+            Patterns: server.Secrets.Patterns);
 
     private static AuditDecision ToAuditDecision(PolicyDecisionType type) =>
         type switch

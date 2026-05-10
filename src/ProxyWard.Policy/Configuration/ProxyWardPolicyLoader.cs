@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using YamlDotNet.RepresentationModel;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -51,6 +52,19 @@ public static class ProxyWardPolicyLoader
 
         var policy = BuildPolicy(raw);
         return policy with { VersionHash = ComputeVersionHash(policy) };
+    }
+
+    public static ProxyWardPolicy WithMode(ProxyWardPolicy policy, ProxyWardMode mode)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+
+        var replacement = policy with
+        {
+            Mode = mode,
+            VersionHash = string.Empty
+        };
+
+        return replacement with { VersionHash = ComputeVersionHash(replacement) };
     }
 
     private static List<string> Validate(ProxyWardPolicyYaml raw)
@@ -165,11 +179,82 @@ public static class ProxyWardPolicyLoader
                     errors.Add($"{prefix}.tools.default must be 'allow' or 'deny'");
                 }
 
+                ValidateSecrets(prefix, server.Secrets, errors);
                 ValidateArgumentOverrides(prefix, server.Arguments, errors);
             }
         }
 
         return errors;
+    }
+
+    private static void ValidateSecrets(
+        string serverPrefix,
+        SecretsPolicyYaml? secrets,
+        List<string> errors)
+    {
+        if (secrets?.Patterns is null)
+        {
+            return;
+        }
+
+        for (var index = 0; index < secrets.Patterns.Count; index++)
+        {
+            var pattern = secrets.Patterns[index];
+            var field = $"{serverPrefix}.secrets.patterns[{index}]";
+            if (string.IsNullOrWhiteSpace(pattern))
+            {
+                errors.Add($"{field} must not be empty");
+                continue;
+            }
+
+            var trimmed = pattern.Trim();
+            if (trimmed.Length == 2 && trimmed[0] == '/' && trimmed[^1] == '/')
+            {
+                errors.Add($"{field} regex body is required");
+                continue;
+            }
+
+            if (IsRegexPattern(trimmed))
+            {
+                ValidateSecretRegex(field, trimmed[1..^1], errors);
+            }
+        }
+    }
+
+    private static void ValidateSecretRegex(
+        string field,
+        string regexBody,
+        List<string> errors)
+    {
+        Regex regex;
+        try
+        {
+            regex = new Regex(regexBody, RegexOptions.None, TimeSpan.FromMilliseconds(100));
+        }
+        catch (ArgumentException)
+        {
+            errors.Add($"{field} is not a valid regex");
+            return;
+        }
+
+        if (regex.IsMatch(string.Empty) || IsTrivialCatchAllRegex(regexBody))
+        {
+            errors.Add($"{field} is over-broad");
+        }
+    }
+
+    private static bool IsRegexPattern(string pattern) =>
+        pattern.Length > 2 && pattern[0] == '/' && pattern[^1] == '/';
+
+    private static bool IsTrivialCatchAllRegex(string regexBody)
+    {
+        var compact = Regex.Replace(regexBody, @"\s+", string.Empty, RegexOptions.None, TimeSpan.FromMilliseconds(100));
+        return compact switch
+        {
+            ".*" or ".+" or ".*?" or "^.*$" or "^.+$" or "^.*?$"
+                or @"[\s\S]*" or @"[\s\S]+" or @"^[\s\S]*$" or @"^[\s\S]+$" => true,
+            _ => false
+        };
     }
 
     private static void ValidateArgumentOverrides(
@@ -231,6 +316,7 @@ public static class ProxyWardPolicyLoader
 
             var tools = server.Tools ?? new ToolPolicyYaml();
             var arguments = server.Arguments ?? new ArgumentPolicyYaml();
+            var secrets = server.Secrets ?? new SecretsPolicyYaml();
             var paths = arguments.Paths ?? new PathArgumentPolicyYaml();
             var hosts = arguments.Hosts ?? new HostArgumentPolicyYaml();
             var commands = arguments.Commands ?? new CommandArgumentPolicyYaml();
@@ -241,6 +327,10 @@ public static class ProxyWardPolicyLoader
                 server.Route!,
                 new Uri(server.Upstream!, UriKind.Absolute),
                 server.Allowed,
+                new SecretsPolicy(
+                    secrets.RedactInLogs,
+                    secrets.BlockReturn,
+                    NormalizeList(secrets.Patterns)),
                 new ToolPolicy(
                     ParseToolDefault(tools.Default),
                     NormalizeList(tools.Allow),
@@ -369,6 +459,12 @@ public static class ProxyWardPolicyLoader
                 ["allow"] = server.Tools.Allow,
                 ["block"] = server.Tools.Block,
                 ["default"] = FormatToolDefault(server.Tools.Default)
+            },
+            ["secrets"] = new SortedDictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["blockReturn"] = server.Secrets.BlockReturn,
+                ["patterns"] = server.Secrets.Patterns,
+                ["redactInLogs"] = server.Secrets.RedactInLogs
             },
             ["upstream"] = server.Upstream.ToString()
         };
@@ -621,8 +717,16 @@ public static class ProxyWardPolicyLoader
         public string? Route { get; set; }
         public string? Upstream { get; set; }
         public bool Allowed { get; set; }
+        public SecretsPolicyYaml? Secrets { get; set; }
         public ToolPolicyYaml? Tools { get; set; }
         public ArgumentPolicyYaml? Arguments { get; set; }
+    }
+
+    private sealed class SecretsPolicyYaml
+    {
+        public bool RedactInLogs { get; set; } = true;
+        public bool BlockReturn { get; set; }
+        public List<string>? Patterns { get; set; }
     }
 
     private sealed class ToolPolicyYaml

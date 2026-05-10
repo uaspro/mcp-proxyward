@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
+using ProxyWard.Audit.Events;
+using ProxyWard.Audit.Sinks;
 using ProxyWard.Api.Runtime;
 using ProxyWard.Api.Yarp;
 using ProxyWard.Policy.Configuration;
@@ -18,32 +20,41 @@ public static class ProxyWardControlEndpoints
         }
 
         var group = app.MapGroup("/control");
-
-        group.MapGet("/status", (
-            HttpContext context,
-            IProxyWardPolicyProvider policyProvider,
-            IProxyWardYarpConfigProvider yarpConfigProvider,
-            ProxyWardControlOptions controlOptions) =>
+        group.AddEndpointFilter(async (context, next) =>
         {
-            if (!IsAuthorized(context, controlOptions))
+            var httpContext = context.HttpContext;
+            var controlOptions = httpContext.RequestServices.GetRequiredService<ProxyWardControlOptions>();
+            if (IsAuthorized(httpContext, controlOptions, out var failureReason))
             {
-                return Results.Unauthorized();
+                return await next(context).ConfigureAwait(false);
             }
 
-            return Results.Ok(CreateStatusResponse(policyProvider.Current, yarpConfigProvider.Version));
+            var logger = httpContext.RequestServices
+                .GetRequiredService<ILoggerFactory>()
+                .CreateLogger("ProxyWard.Api.Control");
+            var auditSink = httpContext.RequestServices.GetRequiredService<IAuditSink>();
+            var policyProvider = httpContext.RequestServices.GetRequiredService<IProxyWardPolicyProvider>();
+            await RecordAuthorizationFailureAsync(
+                    httpContext,
+                    logger,
+                    auditSink,
+                    policyProvider.Current,
+                    failureReason)
+                .ConfigureAwait(false);
+
+            return Results.Unauthorized();
         });
+
+        group.MapGet("/status", (
+            IProxyWardPolicyProvider policyProvider,
+            IProxyWardYarpConfigProvider yarpConfigProvider) =>
+            Results.Ok(CreateStatusResponse(policyProvider.Current, yarpConfigProvider.Version)));
 
         group.MapPut("/policy-snapshot", async (
             HttpContext context,
             IProxyWardPolicyProvider policyProvider,
-            IProxyWardYarpConfigProvider yarpConfigProvider,
-            ProxyWardControlOptions controlOptions) =>
+            IProxyWardYarpConfigProvider yarpConfigProvider) =>
         {
-            if (!IsAuthorized(context, controlOptions))
-            {
-                return Results.Unauthorized();
-            }
-
             using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
             var yaml = await reader.ReadToEndAsync(context.RequestAborted);
             if (string.IsNullOrWhiteSpace(yaml))
@@ -71,16 +82,36 @@ public static class ProxyWardControlEndpoints
             }
         });
 
-        group.MapPut("/yarp-config", async (
+        group.MapPatch("/mode", async (
             HttpContext context,
-            IProxyWardYarpConfigProvider yarpConfigProvider,
-            ProxyWardControlOptions controlOptions) =>
+            IProxyWardPolicyProvider policyProvider,
+            IProxyWardYarpConfigProvider yarpConfigProvider) =>
         {
-            if (!IsAuthorized(context, controlOptions))
+            ModeApplyRequest? request;
+            try
             {
-                return Results.Unauthorized();
+                request = await context.Request.ReadFromJsonAsync<ModeApplyRequest>(
+                    cancellationToken: context.RequestAborted);
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                return CreateModeValidationError([$"JSON could not be parsed: {ex.Message}"]);
             }
 
+            if (!TryParseMode(request?.Mode, out var mode))
+            {
+                return CreateModeValidationError(["mode must be 'audit' or 'enforce'"]);
+            }
+
+            var replacement = ProxyWardPolicyLoader.WithMode(policyProvider.Current, mode);
+            policyProvider.Replace(replacement);
+            return Results.Ok(CreateStatusResponse(replacement, yarpConfigProvider.Version));
+        });
+
+        group.MapPut("/yarp-config", async (
+            HttpContext context,
+            IProxyWardYarpConfigProvider yarpConfigProvider) =>
+        {
             YarpConfigApplyRequest? request;
             try
             {
@@ -124,6 +155,13 @@ public static class ProxyWardControlEndpoints
         Results.BadRequest(new
         {
             error = "yarp_config_validation_failed",
+            errors
+        });
+
+    private static IResult CreateModeValidationError(IReadOnlyCollection<string> errors) =>
+        Results.BadRequest(new
+        {
+            error = "mode_validation_failed",
             errors
         });
 
@@ -342,10 +380,75 @@ public static class ProxyWardControlEndpoints
             || key.Equals("PathPrefix", StringComparison.OrdinalIgnoreCase))
         && value.StartsWith('/');
 
-    private static bool IsAuthorized(HttpContext context, ProxyWardControlOptions options)
+    private static bool TryParseMode(string? value, out ProxyWardMode mode)
     {
+        mode = ProxyWardMode.Audit;
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "audit" => true,
+            "enforce" => Set(out mode, ProxyWardMode.Enforce),
+            _ => false
+        };
+    }
+
+    private static bool Set<T>(out T target, T value)
+    {
+        target = value;
+        return true;
+    }
+
+    private static async Task RecordAuthorizationFailureAsync(
+        HttpContext context,
+        ILogger logger,
+        IAuditSink auditSink,
+        ProxyWardPolicy policy,
+        string reason)
+    {
+        logger.LogWarning(
+            "Proxy control authorization failed for {Method} {Path} from {RemoteIp}. Reason: {Reason}.",
+            context.Request.Method,
+            context.Request.Path,
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            reason);
+
+        try
+        {
+            await auditSink.WriteAsync(
+                new AuditEvent(
+                    Timestamp: DateTimeOffset.UtcNow,
+                    EventType: "proxy_control_auth_failure",
+                    Mode: FormatMode(policy.Mode),
+                    Decision: AuditDecision.Block,
+                    ServerId: "proxy-control",
+                    Method: $"{context.Request.Method} {context.Request.Path}",
+                    ToolName: null,
+                    Reasons: [reason],
+                    PolicyVersion: policy.VersionHash,
+                    CorrelationId: context.TraceIdentifier,
+                    RequestBytes: context.Request.ContentLength ?? 0,
+                    DurationMs: 0,
+                    ArgumentSummary: null,
+                    BatchSize: 1),
+                context.RequestAborted).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                ex,
+                "ProxyWard audit sink failed to record proxy control authorization failure.");
+        }
+    }
+
+    private static bool IsAuthorized(
+        HttpContext context,
+        ProxyWardControlOptions options,
+        out string failureReason)
+    {
+        failureReason = string.Empty;
+
         if (string.IsNullOrWhiteSpace(options.Token))
         {
+            failureReason = "control_token_not_configured";
             return false;
         }
 
@@ -353,21 +456,32 @@ public static class ProxyWardControlEndpoints
         const string bearerPrefix = "Bearer ";
         if (!headerValue.StartsWith(bearerPrefix, StringComparison.OrdinalIgnoreCase))
         {
+            failureReason = "authorization_header_missing";
             return false;
         }
 
         var suppliedToken = headerValue[bearerPrefix.Length..].Trim();
         if (suppliedToken.Length == 0)
         {
+            failureReason = "bearer_token_missing";
             return false;
         }
 
         var expectedBytes = Encoding.UTF8.GetBytes(options.Token);
         var suppliedBytes = Encoding.UTF8.GetBytes(suppliedToken);
 
-        return expectedBytes.Length == suppliedBytes.Length
-            && CryptographicOperations.FixedTimeEquals(expectedBytes, suppliedBytes);
+        if (expectedBytes.Length == suppliedBytes.Length
+            && CryptographicOperations.FixedTimeEquals(expectedBytes, suppliedBytes))
+        {
+            return true;
+        }
+
+        failureReason = "bearer_token_invalid";
+        return false;
     }
+
+    private static string FormatMode(ProxyWardMode mode) =>
+        mode == ProxyWardMode.Enforce ? "enforce" : "audit";
 
     private sealed class YarpConfigApplyRequest
     {
@@ -404,5 +518,10 @@ public static class ProxyWardControlEndpoints
     private sealed class YarpDestinationApplyRequest
     {
         public string? Address { get; set; }
+    }
+
+    private sealed class ModeApplyRequest
+    {
+        public string? Mode { get; set; }
     }
 }

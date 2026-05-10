@@ -16,4 +16,5 @@ public static class PolicyReasonCodes
     public const string HostNotAllowed = "host_not_allowed";
     public const string PrivateNetworkTarget = "private_network_target";
     public const string DangerousCommand = "dangerous_command";
+    public const string SecretReturnBlocked = "secret_return_blocked";
 }

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.vite/
+test-results/
+playwright-report/
+vite-dev.err.log
+vite-dev.out.log
+npm-debug.log*

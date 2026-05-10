@@ -14,6 +14,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using ProxyWard.Api.Observability;
+using ProxyWard.Core.Policies;
 using ProxyWard.Locking.Persistence;
 using ProxyWard.Locking.Tools;
 
@@ -214,6 +215,32 @@ public class ToolsListResponseInspectionIntegrationTests
             .ToArray();
         Assert.Equal(["repos.search"], driftedToolNames);
 
+        var reviews = ReadDriftReviews(dbPath);
+        var review = Assert.Single(reviews);
+        Assert.Equal("github", review.ServerId);
+        Assert.Equal("repos.search", review.ToolName);
+        Assert.Equal("description", review.FieldName);
+        Assert.Equal(1, review.FromVersion);
+        Assert.Equal(2, review.ToVersion);
+        Assert.Equal("pending", review.Status);
+        Assert.Equal("tool_description_changed", review.Reasons);
+        Assert.StartsWith("sha256:", review.PolicyVersion, StringComparison.Ordinal);
+
+        var driftReviewIds = payload.RootElement
+            .GetProperty("argumentSummary")
+            .GetProperty("driftReviewIds")
+            .EnumerateArray()
+            .Select(id => id.GetInt64())
+            .ToArray();
+        Assert.Equal([review.Id], driftReviewIds);
+
+        var diffMetadata = Assert.Single(ReadDiffMetadata(dbPath));
+        Assert.Equal(review.Id, diffMetadata.DriftReviewId);
+        Assert.Contains("Old description", diffMetadata.BeforeJson, StringComparison.Ordinal);
+        Assert.Contains("New description", diffMetadata.AfterJson, StringComparison.Ordinal);
+        Assert.StartsWith("sha256:", diffMetadata.BeforeHash, StringComparison.Ordinal);
+        Assert.StartsWith("sha256:", diffMetadata.AfterHash, StringComparison.Ordinal);
+
         Assert.Equal(2, await CountSchemaVersionsAsync(dbPath, "github"));
 
         DeleteIfExists(dbPath);
@@ -263,7 +290,269 @@ public class ToolsListResponseInspectionIntegrationTests
         Assert.Equal("block", row.Decision);
         Assert.Contains("tool_schema_changed", row.Reasons, StringComparison.Ordinal);
 
+        var reviews = ReadDriftReviews(dbPath);
+        var review = Assert.Single(reviews);
+        Assert.Equal("github", review.ServerId);
+        Assert.Equal("repos.search", review.ToolName);
+        Assert.Equal("schema", review.FieldName);
+        Assert.Equal(1, review.FromVersion);
+        Assert.Equal(2, review.ToVersion);
+        Assert.Equal("pending", review.Status);
+        Assert.Equal("tool_schema_changed", review.Reasons);
+
+        using var payload = JsonDocument.Parse(row.PayloadJson);
+        var driftReviewIds = payload.RootElement
+            .GetProperty("argumentSummary")
+            .GetProperty("driftReviewIds")
+            .EnumerateArray()
+            .Select(id => id.GetInt64())
+            .ToArray();
+        Assert.Equal([review.Id], driftReviewIds);
+
+        var diffMetadata = Assert.Single(ReadDiffMetadata(dbPath));
+        Assert.Equal(review.Id, diffMetadata.DriftReviewId);
+        Assert.Contains("\"q\"", diffMetadata.BeforeJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"limit\"", diffMetadata.BeforeJson, StringComparison.Ordinal);
+        Assert.Contains("\"limit\"", diffMetadata.AfterJson, StringComparison.Ordinal);
+        Assert.StartsWith("sha256:", diffMetadata.BeforeHash, StringComparison.Ordinal);
+        Assert.StartsWith("sha256:", diffMetadata.AfterHash, StringComparison.Ordinal);
+
         Assert.Equal(2, await CountSchemaVersionsAsync(dbPath, "github"));
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task ApprovedCurrentDriftReviewAllowsObservedSurfaceInEnforceMode()
+    {
+        const string responseBody = """
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}}]}}
+            """;
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        var dbPath = NewTempSqlitePath();
+        await SeedReviewedCurrentSchemaAsync(dbPath, "github", $"{upstream.BaseAddress}/mcp", status: "approved");
+        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
+        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        Assert.Equal("allow", row.Decision);
+        Assert.DoesNotContain("driftReviewIds", row.PayloadJson, StringComparison.Ordinal);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Theory]
+    [InlineData("rejected")]
+    [InlineData("blocked")]
+    public async Task UnapprovedCurrentDriftReviewBlocksObservedSurfaceInEnforceMode(string reviewStatus)
+    {
+        const string responseBody = """
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}}]}}
+            """;
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        var dbPath = NewTempSqlitePath();
+        var review = await SeedReviewedCurrentSchemaAsync(dbPath, "github", $"{upstream.BaseAddress}/mcp", reviewStatus);
+        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
+        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.Contains("tool_schema_changed", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("limit", body, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        Assert.Equal("block", row.Decision);
+        Assert.Contains("tool_schema_changed", row.Reasons, StringComparison.Ordinal);
+
+        using var payload = JsonDocument.Parse(row.PayloadJson);
+        var driftReviewIds = payload.RootElement
+            .GetProperty("argumentSummary")
+            .GetProperty("driftReviewIds")
+            .EnumerateArray()
+            .Select(id => id.GetInt64())
+            .ToArray();
+        Assert.Equal([review.Row.Id], driftReviewIds);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task SchemaDriftWithValueCaptureDisabledStoresHashOnlyDiffMetadata()
+    {
+        const string responseBody = """
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}}]}}
+            """;
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        var dbPath = NewTempSqlitePath();
+        await SeedSchemaVersionAsync(
+            dbPath,
+            "github",
+            $"{upstream.BaseAddress}/mcp",
+            new DiscoveredTool(
+                "repos.search",
+                "Search",
+                "Description",
+                JsonNode.Parse("""{"type":"object","properties":{"q":{"type":"string"}}}"""),
+                null),
+            captureMetadata: false);
+        var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
+        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_SCHEMA_DIFF_CAPTURE_VALUES", "false");
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_SCHEMA_DIFF_CAPTURE_VALUES", null);
+        }
+
+        var review = Assert.Single(ReadDriftReviews(dbPath));
+        var diffMetadata = Assert.Single(ReadDiffMetadata(dbPath));
+        Assert.Equal(review.Id, diffMetadata.DriftReviewId);
+        Assert.Null(diffMetadata.BeforeJson);
+        Assert.Null(diffMetadata.AfterJson);
+        Assert.StartsWith("sha256:", diffMetadata.BeforeHash, StringComparison.Ordinal);
+        Assert.StartsWith("sha256:", diffMetadata.AfterHash, StringComparison.Ordinal);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task RepeatedDescriptionDriftDoesNotCreateDuplicatePendingReviewRows()
+    {
+        const string responseBody = """
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"New description","inputSchema":{"type":"object"}}]}}
+            """;
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        var dbPath = NewTempSqlitePath();
+        await SeedSchemaVersionAsync(
+            dbPath,
+            "github",
+            $"{upstream.BaseAddress}/mcp",
+            new DiscoveredTool("repos.search", "Search", "Old description", JsonNode.Parse("""{"type":"object"}"""), null));
+        var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
+        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var first = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+            using var second = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+        }
+
+        var review = Assert.Single(ReadDriftReviews(dbPath));
+        Assert.Equal("pending", review.Status);
+        Assert.Equal(1, review.FromVersion);
+        Assert.Equal(2, review.ToVersion);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task DriftReviewWriteFailurePreservesAuditModeResponseAndOmitsReviewIds()
+    {
+        const string responseBody = """
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"New description","inputSchema":{"type":"object"}}]}}
+            """;
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        var dbPath = NewTempSqlitePath();
+        await SeedSchemaVersionAsync(
+            dbPath,
+            "github",
+            $"{upstream.BaseAddress}/mcp",
+            new DiscoveredTool("repos.search", "Search", "Old description", JsonNode.Parse("""{"type":"object"}"""), null));
+        var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
+        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>()
+                .WithWebHostBuilder(builder =>
+                {
+                    builder.ConfigureTestServices(services =>
+                    {
+                        services.RemoveAll<ISchemaDriftReviewStore>();
+                        services.AddSingleton<ISchemaDriftReviewStore>(
+                            new ThrowingDriftReviewStore(SchemaLockWriteFailureReasons.DbLocked));
+                    });
+                });
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        Assert.Equal("warn", row.Decision);
+        Assert.Contains("tool_description_changed", row.Reasons, StringComparison.Ordinal);
+
+        using var payload = JsonDocument.Parse(row.PayloadJson);
+        Assert.False(payload.RootElement
+            .GetProperty("argumentSummary")
+            .TryGetProperty("driftReviewIds", out _));
 
         DeleteIfExists(dbPath);
     }
@@ -474,17 +763,84 @@ public class ToolsListResponseInspectionIntegrationTests
         string dbPath,
         string serverId,
         string upstreamUrl,
-        DiscoveredTool tool)
+        DiscoveredTool tool,
+        bool captureMetadata = true)
     {
         using var store = new SqliteTrackedToolSchemaStore(dbPath);
         var fingerprinter = new ToolFingerprinter();
+        var options = new ToolSchemaDiffMetadataOptions(
+            CaptureValues: captureMetadata,
+            MaxValueBytes: ToolSchemaDiffMetadataOptions.Default.MaxValueBytes);
         var snapshot = new ToolSchemaSnapshotInput(
             serverId,
             upstreamUrl,
             "2025-11-25",
-            [new ToolSchemaSnapshotEntry(tool.Name!, fingerprinter.Fingerprint(tool))]);
+            [SafeToolSchemaMetadata.CreateSnapshotEntry(tool, fingerprinter, options)]);
 
         await store.RecordAsync(snapshot, new DateTimeOffset(2026, 5, 3, 12, 0, 0, TimeSpan.Zero), CancellationToken.None);
+    }
+
+    private static async Task<DriftReviewRecordResult> SeedReviewedCurrentSchemaAsync(
+        string dbPath,
+        string serverId,
+        string upstreamUrl,
+        string status)
+    {
+        var oldTool = new DiscoveredTool(
+            "repos.search",
+            "Search",
+            "Description",
+            JsonNode.Parse("""{"type":"object","properties":{"q":{"type":"string"}}}"""),
+            null);
+        var currentTool = new DiscoveredTool(
+            "repos.search",
+            "Search",
+            "Description",
+            JsonNode.Parse("""{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}"""),
+            null);
+
+        await SeedSchemaVersionAsync(dbPath, serverId, upstreamUrl, oldTool);
+        await SeedSchemaVersionAsync(dbPath, serverId, upstreamUrl, currentTool);
+
+        using var reviewStore = new SqliteSchemaDriftReviewStore(dbPath);
+        var result = await reviewStore.RecordObservationAsync(
+            new DriftReviewObservation(
+                ServerId: serverId,
+                ToolName: "repos.search",
+                FieldName: "schema",
+                FromVersion: 1,
+                ToVersion: 2,
+                Reasons: [PolicyReasonCodes.ToolSchemaChanged],
+                PolicyVersion: "sha256:policy",
+                DetectedAtUtc: new DateTimeOffset(2026, 5, 10, 10, 0, 0, TimeSpan.Zero)),
+            CancellationToken.None);
+
+        await UpdateReviewStatusAsync(dbPath, result.Row.Id, status);
+        return result;
+    }
+
+    private static async Task UpdateReviewStatusAsync(string dbPath, long reviewId, string status)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = SqliteOpenMode.ReadWriteCreate
+        }.ToString());
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE schema_drift_reviews
+            SET status = $status,
+                reviewed_at_utc = $reviewed_at_utc,
+                reviewed_by = $reviewed_by
+            WHERE id = $id;
+            """;
+        command.Parameters.AddWithValue("$status", status);
+        command.Parameters.AddWithValue("$reviewed_at_utc", "2026-05-10T10:30:00.0000000Z");
+        command.Parameters.AddWithValue("$reviewed_by", "test");
+        command.Parameters.AddWithValue("$id", reviewId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task<long> CountSchemaVersionsAsync(string dbPath, string serverId)
@@ -653,6 +1009,76 @@ public class ToolsListResponseInspectionIntegrationTests
                   - rm
         """;
 
+    private static List<DriftReviewDbRow> ReadDriftReviews(string path) =>
+        AuditDatabase.ReadEventually(() =>
+        {
+            var rows = new List<DriftReviewDbRow>();
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = path,
+                Mode = SqliteOpenMode.ReadOnly
+            }.ToString());
+
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, server_id, tool_name, field_name, from_version, to_version,
+                       status, reasons, policy_version
+                FROM schema_drift_reviews
+                ORDER BY id ASC;
+                """;
+
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                rows.Add(new DriftReviewDbRow(
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetString(3),
+                    reader.GetInt32(4),
+                    reader.GetInt32(5),
+                    reader.GetString(6),
+                    reader.GetString(7),
+                    reader.IsDBNull(8) ? null : reader.GetString(8)));
+            }
+
+            return rows;
+        });
+
+    private static List<DiffMetadataDbRow> ReadDiffMetadata(string path) =>
+        AuditDatabase.ReadEventually(() =>
+        {
+            var rows = new List<DiffMetadataDbRow>();
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = path,
+                Mode = SqliteOpenMode.ReadOnly
+            }.ToString());
+
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, drift_review_id, before_json, after_json, before_hash, after_hash
+                FROM tool_schema_diff_metadata
+                ORDER BY id ASC;
+                """;
+
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                rows.Add(new DiffMetadataDbRow(
+                    reader.GetInt64(0),
+                    reader.GetInt64(1),
+                    reader.IsDBNull(2) ? null : reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.GetString(4),
+                    reader.GetString(5)));
+            }
+
+            return rows;
+        });
+
     private static List<AuditRow> ReadAuditEvents(string path) =>
         AuditDatabase.ReadEventually(() =>
         {
@@ -699,6 +1125,25 @@ public class ToolsListResponseInspectionIntegrationTests
         string Reasons,
         string PayloadJson);
 
+    private sealed record DriftReviewDbRow(
+        long Id,
+        string ServerId,
+        string ToolName,
+        string FieldName,
+        int FromVersion,
+        int ToVersion,
+        string Status,
+        string Reasons,
+        string? PolicyVersion);
+
+    private sealed record DiffMetadataDbRow(
+        long Id,
+        long DriftReviewId,
+        string? BeforeJson,
+        string? AfterJson,
+        string BeforeHash,
+        string AfterHash);
+
     private sealed class ThrowingSchemaStore(string reason) : ITrackedToolSchemaStore
     {
         public ValueTask<ToolSchemaVersionRow?> GetLatestAsync(
@@ -714,6 +1159,22 @@ public class ToolsListResponseInspectionIntegrationTests
                 reason,
                 "Simulated schema-lock write failure.",
                 new IOException("simulated"));
+    }
+
+    private sealed class ThrowingDriftReviewStore(string reason) : ISchemaDriftReviewStore
+    {
+        public ValueTask<DriftReviewRecordResult> RecordObservationAsync(
+            DriftReviewObservation observation,
+            CancellationToken cancellationToken) =>
+            throw new SchemaLockWriteFailedException(
+                reason,
+                "Simulated drift-review write failure.",
+                new IOException("simulated"));
+
+        public ValueTask<IReadOnlyList<DriftReviewRow>> GetByServerAsync(
+            string serverId,
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyList<DriftReviewRow>>([]);
     }
 
     private sealed record MeasurementSnapshot(

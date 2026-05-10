@@ -1,13 +1,24 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using Microsoft.Net.Http.Headers;
 using ProxyWard.Management.Api.Audit;
 using ProxyWard.Management.Api.Dashboard;
+using ProxyWard.Management.Api.Drift;
+using ProxyWard.Management.Api.Policy;
+using ProxyWard.Management.Api.Security;
+using ProxyWard.Management.Api.Settings;
+using ProxyWard.Management.Api.Status;
+using ProxyWard.Management.Api.Tools;
+using ProxyWard.Policy.Configuration;
 
 namespace ProxyWard.Management.Api;
 
 public partial class Program
 {
+    private const string CorsPolicyName = "ProxyWardManagementCors";
     private const string AuditExportFileName = "proxyward-audit-events.ndjson";
     private const string AuditExportContentType = "application/x-ndjson";
     private const int AuditExportFlushEveryRows = 100;
@@ -22,6 +33,8 @@ public partial class Program
     private const int OverviewMaxTopN = 50;
     private static readonly TimeSpan OverviewDefaultWindow = TimeSpan.FromHours(1);
 
+    private static readonly TimeSpan ProxyControlProbeTimeout = TimeSpan.FromSeconds(2);
+
     public static Task Main(string[] args) =>
         CreateApp(args).RunAsync();
 
@@ -31,32 +44,330 @@ public partial class Program
         var options = LoadOptions(builder.Configuration);
         var auditReadOptions = LoadAuditReadOptions(builder.Configuration);
 
+        builder.Services.AddCors(cors =>
+        {
+            cors.AddPolicy(CorsPolicyName, policy =>
+            {
+                if (options.CorsAllowedOrigins.Count == 0)
+                {
+                    policy.SetIsOriginAllowed(_ => false);
+                }
+                else
+                {
+                    policy.WithOrigins(options.CorsAllowedOrigins.ToArray());
+                }
+
+                policy
+                    .WithMethods("GET", "POST", "PUT", "PATCH", "OPTIONS")
+                    .WithHeaders(HeaderNames.Accept, HeaderNames.Authorization, HeaderNames.ContentType)
+                    .SetPreflightMaxAge(TimeSpan.FromHours(1));
+            });
+        });
+
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(auditReadOptions);
         builder.Services.AddScoped(services => new ManagementAuditEventRepository(
             services.GetRequiredService<ManagementApiOptions>().AuditDatabasePath,
             services.GetRequiredService<ManagementAuditReadOptions>()));
+        builder.Services.AddScoped(services => new ManagementSchemaDriftRepository(
+            services.GetRequiredService<ManagementApiOptions>().AuditDatabasePath,
+            services.GetRequiredService<ManagementAuditReadOptions>()));
+        builder.Services.AddScoped(services => new ManagementSchemaDriftActionService(
+            services.GetRequiredService<ManagementApiOptions>().AuditDatabasePath,
+            services.GetRequiredService<ManagementSchemaDriftRepository>()));
         builder.Services.AddScoped<IProxyTelemetryReader>(services => new AuditDbProxyTelemetryReader(
             services.GetRequiredService<ManagementApiOptions>().AuditDatabasePath,
             services.GetRequiredService<ManagementAuditReadOptions>()));
+        builder.Services.AddScoped<ManagementToolInventoryRepository>();
+        builder.Services.AddScoped<ManagementPolicyReader>();
+        builder.Services.AddScoped<ManagementPolicyValidationService>();
+        builder.Services.AddScoped<ManagementPolicyApplyService>();
+        builder.Services.AddScoped<ManagementPolicyModeService>();
+        builder.Services.AddScoped<ManagementSecurityAuditService>();
+        builder.Services.AddScoped<ManagementSettingsService>();
+        builder.Services.AddHttpClient<IProxyControlClient, HttpProxyControlClient>(client =>
+        {
+            client.BaseAddress = options.ProxyControlBaseUrl;
+            client.Timeout = ProxyControlProbeTimeout;
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            AllowAutoRedirect = false
+        });
+        builder.Services.AddScoped<ManagementStatusService>();
 
         var app = builder.Build();
 
+        app.UseCors(CorsPolicyName);
+
         app.MapGet("/", () => Results.Redirect("/api/status"));
 
-        app.MapGet("/api/status", (ManagementApiOptions managementOptions) => Results.Ok(new
+        app.MapGet("/api/status", async (
+            ManagementStatusService statusService,
+            CancellationToken cancellationToken) =>
         {
-            status = "healthy",
-            service = "MCP ProxyWard Management API",
-            audit = new
+            var response = await statusService.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+            return Results.Ok(response);
+        });
+
+        app.MapGet("/api/settings", async Task<IResult> (
+            ManagementSettingsService settingsService,
+            CancellationToken cancellationToken) =>
+        {
+            try
             {
-                sqlitePath = managementOptions.AuditDatabasePath
-            },
-            proxyControl = new
-            {
-                baseUrl = managementOptions.ProxyControlBaseUrl.ToString()
+                var response = await settingsService.GetAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(response);
             }
-        }));
+            catch (FileNotFoundException ex)
+            {
+                return Results.NotFound(new
+                {
+                    error = "policy_not_found",
+                    path = ex.FileName
+                });
+            }
+            catch (PolicyValidationException ex)
+            {
+                return Results.Problem(
+                    title: "Invalid ProxyWard policy",
+                    detail: string.Join("; ", ex.Errors),
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["error"] = "policy_invalid",
+                        ["errors"] = ex.Errors
+                    });
+            }
+            catch (IOException ex)
+            {
+                return Results.Problem(
+                    title: "Policy file could not be read",
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["error"] = "policy_read_failed"
+                    });
+            }
+        });
+
+        app.MapGet("/api/policy", async Task<IResult> (
+            ManagementPolicyReader policyReader,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var response = await policyReader.ReadAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(response);
+            }
+            catch (FileNotFoundException ex)
+            {
+                return Results.NotFound(new
+                {
+                    error = "policy_not_found",
+                    path = ex.FileName
+                });
+            }
+            catch (PolicyValidationException ex)
+            {
+                return Results.Problem(
+                    title: "Invalid ProxyWard policy",
+                    detail: string.Join("; ", ex.Errors),
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["error"] = "policy_invalid",
+                        ["errors"] = ex.Errors
+                    });
+            }
+            catch (IOException ex)
+            {
+                return Results.Problem(
+                    title: "Policy file could not be read",
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["error"] = "policy_read_failed"
+                    });
+            }
+        });
+
+        app.MapPost("/api/policy/validate", async Task<IResult> (
+            HttpContext context,
+            ManagementPolicyValidationService validationService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var result = await validationService
+                    .ValidateAsync(context.Request, cancellationToken)
+                    .ConfigureAwait(false);
+                return Results.Ok(result);
+            }
+            catch (ManagementPolicyValidationRequestException ex)
+            {
+                return Results.BadRequest(new
+                {
+                    error = "policy_validation_request_invalid",
+                    message = ex.Message
+                });
+            }
+        });
+
+        app.MapPut("/api/policy", async Task<IResult> (
+            HttpContext context,
+            ManagementApiOptions managementOptions,
+            ManagementSecurityAuditService securityAuditService,
+            ILogger<Program> logger,
+            ManagementPolicyApplyService applyService,
+            CancellationToken cancellationToken) =>
+        {
+            if (!await IsAuthorizedManagementWriteAsync(
+                    context,
+                    managementOptions,
+                    securityAuditService,
+                    logger,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var outcome = await applyService
+                    .ApplyAsync(context.Request, cancellationToken)
+                    .ConfigureAwait(false);
+
+                return outcome.IsApplied
+                    ? Results.Ok(outcome.Response)
+                    : Results.BadRequest(new
+                    {
+                        error = "policy_validation_failed",
+                        validation = outcome.ValidationFailure
+                    });
+            }
+            catch (ManagementPolicyValidationRequestException ex)
+            {
+                return Results.BadRequest(new
+                {
+                    error = "policy_apply_request_invalid",
+                    message = ex.Message
+                });
+            }
+            catch (ManagementPolicyApplyException ex)
+            {
+                return Results.Json(
+                    new
+                    {
+                        error = "policy_apply_failed",
+                        phase = ex.Phase,
+                        message = ex.Message,
+                        rollbackAttempted = ex.RollbackAttempted,
+                        rollbackApplied = ex.RollbackApplied
+                    },
+                    statusCode: StatusCodes.Status502BadGateway);
+            }
+        });
+
+        app.MapGet("/api/policy/impact", async Task<IResult> (
+            ManagementPolicyModeService modeService,
+            string? mode,
+            DateTimeOffset? fromUtc,
+            DateTimeOffset? toUtc,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var response = await modeService
+                    .GetImpactAsync(mode, fromUtc, toUtc, cancellationToken)
+                    .ConfigureAwait(false);
+                return Results.Ok(response);
+            }
+            catch (ManagementPolicyModeRequestException ex)
+            {
+                return Results.BadRequest(new
+                {
+                    error = ex.Error,
+                    message = ex.Message
+                });
+            }
+            catch (ProxyControlClientException ex)
+            {
+                return Results.Problem(
+                    title: "Proxy control request failed",
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status502BadGateway,
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["error"] = ex.Error,
+                        ["proxyStatusCode"] = ex.StatusCode
+                    });
+            }
+        });
+
+        app.MapPatch("/api/policy/mode", async Task<IResult> (
+            HttpContext context,
+            ManagementApiOptions managementOptions,
+            ManagementSecurityAuditService securityAuditService,
+            ILogger<Program> logger,
+            ManagementPolicyModeService modeService,
+            CancellationToken cancellationToken) =>
+        {
+            if (!await IsAuthorizedManagementWriteAsync(
+                    context,
+                    managementOptions,
+                    securityAuditService,
+                    logger,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                return Results.Unauthorized();
+            }
+
+            ManagementPolicyModeSwitchRequest? request;
+            try
+            {
+                request = await context.Request
+                    .ReadFromJsonAsync<ManagementPolicyModeSwitchRequest>(cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (JsonException ex)
+            {
+                return Results.BadRequest(new
+                {
+                    error = "mode_switch_request_invalid",
+                    message = ex.Message
+                });
+            }
+
+            try
+            {
+                var response = await modeService
+                    .SwitchModeAsync(request, cancellationToken)
+                    .ConfigureAwait(false);
+                return Results.Ok(response);
+            }
+            catch (ManagementPolicyModeRequestException ex)
+            {
+                return Results.BadRequest(new
+                {
+                    error = ex.Error,
+                    message = ex.Message
+                });
+            }
+            catch (ProxyControlClientException ex)
+            {
+                return Results.Problem(
+                    title: "Proxy control request failed",
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status502BadGateway,
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["error"] = ex.Error,
+                        ["proxyStatusCode"] = ex.StatusCode
+                    });
+            }
+        });
 
         app.MapGet("/api/audit/events", async (
             ManagementAuditEventRepository repository,
@@ -167,6 +478,117 @@ public partial class Program
             }
         });
 
+        app.MapGet("/api/schema/drifts", async (
+            ManagementSchemaDriftRepository repository,
+            DateTimeOffset? fromUtc,
+            DateTimeOffset? toUtc,
+            string? status,
+            string? serverId,
+            string? toolName,
+            int? offset,
+            int? pageSize,
+            CancellationToken cancellationToken) =>
+        {
+            if (!IsValidDriftStatus(status))
+            {
+                return Results.BadRequest(new
+                {
+                    error = "schema_drift_status_invalid",
+                    message = "status must be one of pending, approved, rejected, or blocked."
+                });
+            }
+
+            var query = new ManagementSchemaDriftQuery(
+                FromUtc: fromUtc,
+                ToUtc: toUtc,
+                Status: status,
+                ServerId: serverId,
+                ToolName: toolName,
+                Offset: offset ?? 0,
+                PageSize: pageSize ?? 50);
+
+            return Results.Ok(await repository.QueryAsync(query, cancellationToken).ConfigureAwait(false));
+        });
+
+        app.MapGet("/api/schema/drifts/{id:long}", async (
+            long id,
+            ManagementSchemaDriftRepository repository,
+            DateTimeOffset? fromUtc,
+            DateTimeOffset? toUtc,
+            CancellationToken cancellationToken) =>
+        {
+            var detail = await repository.GetByIdAsync(id, fromUtc, toUtc, cancellationToken).ConfigureAwait(false);
+            return detail is null
+                ? Results.NotFound(new
+                {
+                    error = "schema_drift_not_found",
+                    id
+                })
+                : Results.Ok(detail);
+        });
+
+        app.MapGet("/api/tools", async (
+            ManagementToolInventoryRepository repository,
+            CancellationToken cancellationToken) =>
+        {
+            var response = await repository.GetAsync(cancellationToken).ConfigureAwait(false);
+            return Results.Ok(response);
+        });
+
+        app.MapPost("/api/schema/drifts/{id:long}/approve", async (
+            HttpContext context,
+            long id,
+            ManagementApiOptions managementOptions,
+            ManagementSecurityAuditService securityAuditService,
+            ILogger<Program> logger,
+            ManagementSchemaDriftActionService actionService,
+            CancellationToken cancellationToken) =>
+            await ApplySchemaDriftActionAsync(
+                context,
+                id,
+                "approve",
+                managementOptions,
+                securityAuditService,
+                logger,
+                actionService,
+                cancellationToken).ConfigureAwait(false));
+
+        app.MapPost("/api/schema/drifts/{id:long}/reject", async (
+            HttpContext context,
+            long id,
+            ManagementApiOptions managementOptions,
+            ManagementSecurityAuditService securityAuditService,
+            ILogger<Program> logger,
+            ManagementSchemaDriftActionService actionService,
+            CancellationToken cancellationToken) =>
+            await ApplySchemaDriftActionAsync(
+                context,
+                id,
+                "reject",
+                managementOptions,
+                securityAuditService,
+                logger,
+                actionService,
+                cancellationToken).ConfigureAwait(false));
+
+        app.MapPost("/api/schema/drifts/{id:long}/block", async (
+            HttpContext context,
+            long id,
+            ManagementApiOptions managementOptions,
+            ManagementSecurityAuditService securityAuditService,
+            ILogger<Program> logger,
+            ManagementSchemaDriftActionService actionService,
+            CancellationToken cancellationToken) =>
+            await ApplySchemaDriftActionAsync(
+                context,
+                id,
+                "block",
+                managementOptions,
+                securityAuditService,
+                logger,
+                actionService,
+                cancellationToken).ConfigureAwait(false));
+
         app.MapGet("/api/overview", async (
             IProxyTelemetryReader reader,
             DateTimeOffset? fromUtc,
@@ -187,6 +609,151 @@ public partial class Program
         });
 
         return app;
+    }
+
+    private static async Task<IResult> ApplySchemaDriftActionAsync(
+        HttpContext context,
+        long id,
+        string action,
+        ManagementApiOptions managementOptions,
+        ManagementSecurityAuditService securityAuditService,
+        ILogger<Program> logger,
+        ManagementSchemaDriftActionService actionService,
+        CancellationToken cancellationToken)
+    {
+        if (!await IsAuthorizedManagementWriteAsync(
+                context,
+                managementOptions,
+                securityAuditService,
+                logger,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return Results.Unauthorized();
+        }
+
+        ManagementSchemaDriftActionRequest? request;
+        try
+        {
+            request = await ReadOptionalActionRequestAsync(context, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JsonException ex)
+        {
+            return Results.BadRequest(new
+            {
+                error = "request_json_invalid",
+                message = ex.Message
+            });
+        }
+
+        var detail = await actionService
+            .ApplyAsync(id, action, request, cancellationToken)
+            .ConfigureAwait(false);
+        return detail is null
+            ? Results.NotFound(new
+            {
+                error = "schema_drift_not_found",
+                id
+            })
+            : Results.Ok(detail);
+    }
+
+    private static async Task<ManagementSchemaDriftActionRequest?> ReadOptionalActionRequestAsync(
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        if (context.Request.ContentLength is null or 0)
+        {
+            return null;
+        }
+
+        return await context.Request
+            .ReadFromJsonAsync<ManagementSchemaDriftActionRequest>(cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<bool> IsAuthorizedManagementWriteAsync(
+        HttpContext context,
+        ManagementApiOptions options,
+        ManagementSecurityAuditService securityAuditService,
+        ILogger<Program> logger,
+        CancellationToken cancellationToken)
+    {
+        if (TryAuthorizeManagementWrite(context, options, out var failureReason))
+        {
+            return true;
+        }
+
+        logger.LogWarning(
+            "Management write authorization failed for {Method} {Path} from {RemoteIp}. Reason: {Reason}.",
+            context.Request.Method,
+            context.Request.Path,
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            failureReason);
+
+        await securityAuditService
+            .RecordAuthorizationFailureAsync(context, failureReason, cancellationToken)
+            .ConfigureAwait(false);
+
+        return false;
+    }
+
+    private static bool TryAuthorizeManagementWrite(
+        HttpContext context,
+        ManagementApiOptions options,
+        out string failureReason)
+    {
+        failureReason = string.Empty;
+
+        if (options.LocalDevelopmentMode)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.AdminToken))
+        {
+            failureReason = "admin_token_not_configured";
+            return false;
+        }
+
+        var headerValue = context.Request.Headers.Authorization.ToString();
+        const string bearerPrefix = "Bearer ";
+        if (!headerValue.StartsWith(bearerPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            failureReason = "authorization_header_missing";
+            return false;
+        }
+
+        var suppliedToken = headerValue[bearerPrefix.Length..].Trim();
+        if (suppliedToken.Length == 0)
+        {
+            failureReason = "bearer_token_missing";
+            return false;
+        }
+
+        var expectedBytes = Encoding.UTF8.GetBytes(options.AdminToken);
+        var suppliedBytes = Encoding.UTF8.GetBytes(suppliedToken);
+        if (expectedBytes.Length == suppliedBytes.Length
+            && CryptographicOperations.FixedTimeEquals(expectedBytes, suppliedBytes))
+        {
+            return true;
+        }
+
+        failureReason = "bearer_token_invalid";
+        return false;
+    }
+
+    private static bool IsValidDriftStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return true;
+        }
+
+        return status.Trim() switch
+        {
+            "pending" or "approved" or "rejected" or "blocked" => true,
+            _ => false
+        };
     }
 
     private static OverviewValidation ValidateOverviewQuery(
@@ -291,6 +858,11 @@ public partial class Program
             ?? configuration["Management:Audit:SqlitePath"]
             ?? "./data/proxyward.db";
 
+        var policyPath = Environment.GetEnvironmentVariable("PROXYWARD_MANAGEMENT_POLICY_PATH")
+            ?? configuration["Management:Policy:Path"]
+            ?? Environment.GetEnvironmentVariable("PROXYWARD_POLICY_PATH")
+            ?? "proxyward.yaml";
+
         var proxyControlBaseUrlValue = Environment.GetEnvironmentVariable("PROXYWARD_PROXY_CONTROL_URL")
             ?? configuration["Management:ProxyControl:BaseUrl"]
             ?? "http://localhost:8080";
@@ -302,7 +874,34 @@ public partial class Program
                 "Management:ProxyControl:BaseUrl or PROXYWARD_PROXY_CONTROL_URL must be an absolute http or https URL.");
         }
 
-        return new ManagementApiOptions(auditDatabasePath, proxyControlBaseUrl);
+        var proxyControlTokenValue = Environment.GetEnvironmentVariable("PROXYWARD_PROXY_CONTROL_TOKEN")
+            ?? Environment.GetEnvironmentVariable("PROXYWARD_ADMIN_TOKEN")
+            ?? configuration["Management:ProxyControl:Token"];
+        var proxyControlToken = string.IsNullOrWhiteSpace(proxyControlTokenValue) ? null : proxyControlTokenValue;
+
+        var adminTokenValue = Environment.GetEnvironmentVariable("PROXYWARD_MANAGEMENT_ADMIN_TOKEN")
+            ?? Environment.GetEnvironmentVariable("PROXYWARD_ADMIN_TOKEN")
+            ?? configuration["Management:AdminToken"];
+        var adminToken = string.IsNullOrWhiteSpace(adminTokenValue) ? null : adminTokenValue;
+
+        var localDevelopmentMode = ReadBool(
+            configuration,
+            "PROXYWARD_MANAGEMENT_LOCAL_DEV",
+            "Management:LocalDevMode",
+            defaultValue: false);
+
+        var corsAllowedOrigins = ReadStringList(
+            Environment.GetEnvironmentVariable("PROXYWARD_MANAGEMENT_CORS_ALLOWED_ORIGINS")
+                ?? configuration["Management:Cors:AllowedOrigins"]);
+
+        return new ManagementApiOptions(
+            auditDatabasePath,
+            policyPath,
+            proxyControlBaseUrl,
+            proxyControlToken,
+            adminToken,
+            localDevelopmentMode,
+            corsAllowedOrigins);
     }
 
     private static ManagementAuditReadOptions LoadAuditReadOptions(IConfiguration configuration)
@@ -348,4 +947,33 @@ public partial class Program
 
         return parsed;
     }
+
+    private static bool ReadBool(
+        IConfiguration configuration,
+        string envVarName,
+        string configKey,
+        bool defaultValue)
+    {
+        var raw = Environment.GetEnvironmentVariable(envVarName) ?? configuration[configKey];
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return defaultValue;
+        }
+
+        if (!bool.TryParse(raw, out var parsed))
+        {
+            throw new InvalidOperationException($"{configKey} or {envVarName} must be true or false.");
+        }
+
+        return parsed;
+    }
+
+    private static IReadOnlyList<string> ReadStringList(string? raw) =>
+        string.IsNullOrWhiteSpace(raw)
+            ? []
+            : raw.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(origin => origin.TrimEnd('/'))
+                .Where(origin => origin.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
 }

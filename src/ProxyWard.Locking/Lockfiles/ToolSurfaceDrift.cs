@@ -2,7 +2,9 @@ namespace ProxyWard.Locking.Lockfiles;
 
 public sealed record ToolSurfaceDrift(
     string ToolName,
-    IReadOnlyCollection<string> Reasons);
+    IReadOnlyCollection<string> Reasons,
+    Persistence.ToolSchemaSnapshotEntry? PreviousEntry = null,
+    Persistence.ToolSchemaSnapshotEntry? CurrentEntry = null);
 
 public sealed record ToolSurfaceDriftResult(
     IReadOnlyList<ToolSurfaceDrift> Drifts,
@@ -12,7 +14,10 @@ public sealed record ToolSurfaceDriftResult(
     SchemaLockWriteFailure? WriteFailure = null,
     bool UpstreamChanged = false,
     string? PreviousUpstreamUrl = null,
-    string? CurrentUpstreamUrl = null)
+    string? CurrentUpstreamUrl = null,
+    int? PreviousVersion = null,
+    string? PreviousMcpProtocol = null,
+    string? CurrentMcpProtocol = null)
 {
     public bool HasDrift => Drifts.Count > 0;
     public bool Skipped => WriteFailure is not null;

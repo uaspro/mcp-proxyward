@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
 
 namespace ProxyWard.IntegrationTests;
 
@@ -79,6 +80,44 @@ public class ProxyControlEndpointTests
         finally
         {
             ClearProxyWardEnvironment();
+        }
+    }
+
+    [Fact]
+    public async Task ControlAuthFailureIsAuditedWithoutTokenValues()
+    {
+        const string expectedToken = "test-control-token";
+        const string suppliedToken = "wrong-token";
+        var databasePath = Path.Combine(Path.GetTempPath(), $"proxyward-control-auth-{Guid.NewGuid():N}.db");
+        var policyPath = WriteTempPolicy(ValidYaml.Replace(
+            "sqlitePath: ./data/proxyward.db",
+            $"sqlitePath: {databasePath.Replace('\\', '/')}",
+            StringComparison.Ordinal));
+        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
+        Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", expectedToken);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", suppliedToken);
+
+            using var response = await client.GetAsync("/control/status");
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+
+            var audit = Assert.Single(await ReadControlAuthFailureAuditRowsAsync(databasePath));
+            Assert.Equal("bearer_token_invalid", audit.Reasons);
+            Assert.DoesNotContain(expectedToken, audit.PayloadJson, StringComparison.Ordinal);
+            Assert.DoesNotContain(suppliedToken, audit.PayloadJson, StringComparison.Ordinal);
+            Assert.DoesNotContain(expectedToken, audit.Reasons, StringComparison.Ordinal);
+            Assert.DoesNotContain(suppliedToken, audit.Reasons, StringComparison.Ordinal);
+        }
+        finally
+        {
+            ClearProxyWardEnvironment();
+            DeleteDbFiles(databasePath);
         }
     }
 
@@ -232,6 +271,88 @@ public class ProxyControlEndpointTests
             using var payload = await JsonDocument.ParseAsync(stream);
             Assert.Equal("block", payload.RootElement.GetProperty("decision").GetString());
             Assert.Equal("sample", payload.RootElement.GetProperty("serverId").GetString());
+        }
+        finally
+        {
+            ClearProxyWardEnvironment();
+        }
+    }
+
+    [Fact]
+    public async Task ControlModeAppliesModeOnlySnapshotAndComputesPolicyHash()
+    {
+        var policyPath = WriteTempPolicy(ValidYaml);
+        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
+        Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-control-token");
+
+            using var beforeResponse = await client.GetAsync("/control/status");
+            using var before = await ReadJsonAsync(beforeResponse);
+            var beforePolicyVersion = before.RootElement.GetProperty("policyVersion").GetString();
+
+            using var applyResponse = await client.PatchAsync(
+                "/control/mode",
+                new StringContent("""{"mode":"enforce"}""", Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, applyResponse.StatusCode);
+
+            await using var applyStream = await applyResponse.Content.ReadAsStreamAsync();
+            using var applyPayload = await JsonDocument.ParseAsync(applyStream);
+
+            Assert.Equal("enforce", applyPayload.RootElement.GetProperty("mode").GetString());
+            Assert.Equal(1, applyPayload.RootElement.GetProperty("serverCount").GetInt32());
+            Assert.Equal(1, applyPayload.RootElement.GetProperty("routeVersion").GetInt32());
+            Assert.NotEqual(beforePolicyVersion, applyPayload.RootElement.GetProperty("policyVersion").GetString());
+
+            using var afterResponse = await client.GetAsync("/control/status");
+            using var after = await ReadJsonAsync(afterResponse);
+            Assert.Equal("enforce", after.RootElement.GetProperty("mode").GetString());
+            Assert.Equal(applyPayload.RootElement.GetProperty("policyVersion").GetString(), after.RootElement.GetProperty("policyVersion").GetString());
+        }
+        finally
+        {
+            ClearProxyWardEnvironment();
+        }
+    }
+
+    [Fact]
+    public async Task ControlModeRejectsInvalidModeAndPreservesActiveSnapshot()
+    {
+        var policyPath = WriteTempPolicy(ValidYaml);
+        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
+        Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-control-token");
+
+            using var beforeResponse = await client.GetAsync("/control/status");
+            using var before = await ReadJsonAsync(beforeResponse);
+            var beforePolicyVersion = before.RootElement.GetProperty("policyVersion").GetString();
+
+            using var applyResponse = await client.PatchAsync(
+                "/control/mode",
+                new StringContent("""{"mode":"observe"}""", Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.BadRequest, applyResponse.StatusCode);
+
+            await using var errorStream = await applyResponse.Content.ReadAsStreamAsync();
+            using var errorPayload = await JsonDocument.ParseAsync(errorStream);
+            Assert.Equal("mode_validation_failed", errorPayload.RootElement.GetProperty("error").GetString());
+
+            using var afterResponse = await client.GetAsync("/control/status");
+            using var after = await ReadJsonAsync(afterResponse);
+            Assert.Equal("audit", after.RootElement.GetProperty("mode").GetString());
+            Assert.Equal(beforePolicyVersion, after.RootElement.GetProperty("policyVersion").GetString());
         }
         finally
         {
@@ -542,7 +663,50 @@ public class ProxyControlEndpointTests
         Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", null);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", null);
+        Environment.SetEnvironmentVariable("PROXYWARD_ADMIN_TOKEN", null);
     }
+
+    private static async Task<IReadOnlyList<ControlAuthFailureAuditRow>> ReadControlAuthFailureAuditRowsAsync(
+        string databasePath)
+    {
+        var rows = new List<ControlAuthFailureAuditRow>();
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadOnly
+        }.ToString());
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT reasons, payload_json
+            FROM audit_events
+            WHERE event_type = 'proxy_control_auth_failure'
+            ORDER BY id ASC;
+            """;
+
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            rows.Add(new ControlAuthFailureAuditRow(reader.GetString(0), reader.GetString(1)));
+        }
+
+        return rows;
+    }
+
+    private static void DeleteDbFiles(string databasePath)
+    {
+        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
+        {
+            if (File.Exists(path))
+            {
+                try { File.Delete(path); }
+                catch { /* best-effort cleanup */ }
+            }
+        }
+    }
+
+    private sealed record ControlAuthFailureAuditRow(string Reasons, string PayloadJson);
 
     private sealed class UpstreamApp(string baseAddress, WebApplication app) : IAsyncDisposable
     {

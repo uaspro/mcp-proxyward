@@ -115,7 +115,7 @@ public sealed class RequestInspectionMiddleware(
         var result = parser.Parse(GetWrittenMemory(inspectedBody), context.Request.ContentType);
         context.Items[RequestInspectionItems.JsonRpcParseResult] = result;
 
-        var (method, toolName, argumentSummary, batchSize) = ExtractAuditMetadata(result);
+        var (method, toolName, argumentSummary, batchSize) = ExtractAuditMetadata(result, server);
         var (decision, reasons) = result.Status switch
         {
             JsonRpcParseStatus.Malformed => (AuditDecision.Warn, result.Reasons),
@@ -159,7 +159,9 @@ public sealed class RequestInspectionMiddleware(
         await next(context);
     }
 
-    private (string? Method, string? ToolName, System.Text.Json.Nodes.JsonNode? Summary, int BatchSize) ExtractAuditMetadata(JsonRpcParseResult result)
+    private (string? Method, string? ToolName, System.Text.Json.Nodes.JsonNode? Summary, int BatchSize) ExtractAuditMetadata(
+        JsonRpcParseResult result,
+        ServerPolicy server)
     {
         if (result.Status != JsonRpcParseStatus.Parsed || result.Messages.Count == 0)
         {
@@ -168,7 +170,7 @@ public sealed class RequestInspectionMiddleware(
 
         var first = result.Messages[0];
         var classification = classifier.Classify(first);
-        var redacted = redactor.Redact("params", first.Params);
+        var redacted = redactor.Redact("params", first.Params, CreateSecretRedactionOptions(server));
         return (Method: first.Method, ToolName: classification.ToolName, Summary: redacted.Value, BatchSize: result.Messages.Count);
     }
 
@@ -419,6 +421,11 @@ public sealed class RequestInspectionMiddleware(
 
     private static string? FormatArgumentSummary(System.Text.Json.Nodes.JsonNode? argumentSummary) =>
         argumentSummary?.ToJsonString();
+
+    private static SecretRedactionOptions CreateSecretRedactionOptions(ServerPolicy server) =>
+        new(
+            RedactInLogs: server.Secrets.RedactInLogs,
+            Patterns: server.Secrets.Patterns);
 
     private static string FormatAuditDecision(AuditDecision decision) =>
         decision switch

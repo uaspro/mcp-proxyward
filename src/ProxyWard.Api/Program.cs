@@ -23,6 +23,7 @@ var policyPath = Environment.GetEnvironmentVariable("PROXYWARD_POLICY_PATH")
 
 var policy = ProxyWardPolicyLoader.LoadFile(policyPath);
 var controlOptions = ProxyWardControlOptions.Load(builder.Configuration);
+var diffMetadataOptions = CreateToolSchemaDiffMetadataOptions(builder.Configuration);
 var yarpConfigProvider = new DynamicProxyWardYarpConfigProvider(
     ProxyWardYarpConfig.CreateRoutes(policy),
     ProxyWardYarpConfig.CreateClusters(policy));
@@ -30,6 +31,7 @@ builder.AddProxyWardObservability(policy);
 builder.Services.AddSingleton(policy);
 builder.Services.AddSingleton<IProxyWardPolicyProvider>(new InMemoryProxyWardPolicyProvider(policy));
 builder.Services.AddSingleton(controlOptions);
+builder.Services.AddSingleton(diffMetadataOptions);
 builder.Services.AddSingleton<IProxyWardYarpConfigProvider>(yarpConfigProvider);
 builder.Services.AddSingleton<IProxyConfigProvider>(yarpConfigProvider);
 builder.Services.AddSingleton<IMcpMessageParser, McpMessageParser>();
@@ -39,6 +41,10 @@ builder.Services.AddSingleton<IToolDefinitionExtractor, ToolDefinitionExtractor>
 builder.Services.AddSingleton<IToolFingerprinter, ToolFingerprinter>();
 builder.Services.AddSingleton<ITrackedToolSchemaStore>(_ =>
     CreateTrackedToolSchemaStore(policy));
+builder.Services.AddSingleton<ISchemaDriftReviewStore>(_ =>
+    CreateSchemaDriftReviewStore(policy));
+builder.Services.AddSingleton<IToolSchemaDiffMetadataStore>(_ =>
+    CreateToolSchemaDiffMetadataStore(policy));
 builder.Services.AddSingleton<ToolSurfaceDriftEvaluator>();
 builder.Services.AddSingleton<ServerAllowlistPolicyEvaluator>();
 builder.Services.AddSingleton<ToolPolicyEvaluator>();
@@ -87,13 +93,66 @@ app.Run();
 
 static ITrackedToolSchemaStore CreateTrackedToolSchemaStore(ProxyWardPolicy policy)
 {
+    return new SqliteTrackedToolSchemaStore(ResolveSchemaSqlitePath(policy));
+}
+
+static ISchemaDriftReviewStore CreateSchemaDriftReviewStore(ProxyWardPolicy policy)
+{
+    return new SqliteSchemaDriftReviewStore(ResolveSchemaSqlitePath(policy));
+}
+
+static IToolSchemaDiffMetadataStore CreateToolSchemaDiffMetadataStore(ProxyWardPolicy policy)
+{
+    return new SqliteToolSchemaDiffMetadataStore(ResolveSchemaSqlitePath(policy));
+}
+
+static string ResolveSchemaSqlitePath(ProxyWardPolicy policy)
+{
     var sqlitePath = policy.Audit.SqlitePath;
     if (string.IsNullOrWhiteSpace(sqlitePath))
     {
         sqlitePath = Path.Combine(Path.GetTempPath(), $"proxyward-schema-{Environment.ProcessId}.db");
     }
 
-    return new SqliteTrackedToolSchemaStore(sqlitePath);
+    return sqlitePath;
+}
+
+static ToolSchemaDiffMetadataOptions CreateToolSchemaDiffMetadataOptions(ConfigurationManager configuration)
+{
+    var captureValues = ReadBool(
+        configuration,
+        "PROXYWARD_SCHEMA_DIFF_CAPTURE_VALUES",
+        "ProxyWard:SchemaDiff:CaptureValues",
+        defaultValue: true);
+    var maxValueBytes = ReadInt(
+        configuration,
+        "PROXYWARD_SCHEMA_DIFF_MAX_VALUE_BYTES",
+        "ProxyWard:SchemaDiff:MaxValueBytes",
+        ToolSchemaDiffMetadataOptions.Default.MaxValueBytes);
+
+    return new ToolSchemaDiffMetadataOptions(captureValues, maxValueBytes).Normalize();
+}
+
+static bool ReadBool(
+    ConfigurationManager configuration,
+    string environmentVariable,
+    string configurationKey,
+    bool defaultValue)
+{
+    var raw = Environment.GetEnvironmentVariable(environmentVariable)
+        ?? configuration[configurationKey];
+    return bool.TryParse(raw, out var parsed) ? parsed : defaultValue;
+}
+
+static int ReadInt(
+    ConfigurationManager configuration,
+    string environmentVariable,
+    string configurationKey,
+    int defaultValue)
+{
+    var raw = Environment.GetEnvironmentVariable(environmentVariable)
+        ?? configuration[configurationKey];
+    return int.TryParse(raw, out var parsed) ? parsed : defaultValue;
 }
 
 static IAuditSink CreateAuditSink(ProxyWardPolicy policy, ILoggerFactory loggerFactory)

@@ -10,4 +10,9 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.7" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\ProxyWard.Audit\ProxyWard.Audit.csproj" />
+    <ProjectReference Include="..\ProxyWard.Policy\ProxyWard.Policy.csproj" />
+  </ItemGroup>
+
 </Project>

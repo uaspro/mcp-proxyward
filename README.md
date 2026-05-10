@@ -53,7 +53,7 @@ Stack: .NET 10 · ASP.NET Core · YARP · YAML · SQLite · OpenTelemetry · Doc
 
 ## Quick Start
 
-The fastest way to see ProxyWard in action is the bundled Docker Compose stack, which boots ProxyWard, a sample MCP server, and an OpenTelemetry collector together.
+The fastest way to see ProxyWard in action is the bundled Docker Compose stack, which boots ProxyWard, the management API, the dashboard, a sample MCP server, and an OpenTelemetry collector together.
 
 ### Prerequisites
 
@@ -73,15 +73,17 @@ cd mcp-proxyward
 docker compose up --build
 ```
 
-This brings up three services:
+This brings up five services:
 
 | Service          | Purpose                                 | Port  |
 | ---------------- | --------------------------------------- | ----- |
 | `proxyward`      | The guard proxy itself                  | 8080  |
+| `management-api` | Dashboard/stats/control-plane API       | 8081  |
+| `dashboard`      | React operator dashboard                | 8082  |
 | `sample-mcp`     | A tiny MCP echo server used as upstream | (internal) |
 | `otel-collector` | Receives OTLP logs / traces / metrics   | 4317 / 4318 |
 
-The compose file mounts [`samples/compose/proxyward.yaml`](samples/compose/proxyward.yaml) into the container at `/app/config/proxyward.yaml`. SQLite audit data and schema-lock history live in the named `proxyward-data` volume at `/app/data/`.
+The compose file mounts [`samples/compose/proxyward.yaml`](samples/compose/proxyward.yaml) into the proxy and management containers at `/app/config/proxyward.yaml`. SQLite audit data and schema-lock history live in the named `proxyward-data` volume at `/app/data/`. The stack binds published ports to `127.0.0.1`, uses a local compose admin token for management writes and proxy runtime control, and serves dashboard same-origin `/api/*` requests through its web server.
 
 ### 3. Verify the proxy is healthy
 
@@ -101,6 +103,13 @@ You should see something like:
 }
 ```
 
+Verify the management API and dashboard:
+
+```bash
+curl http://localhost:8081/api/status
+curl http://localhost:8082/
+```
+
 ### 4. Point your MCP client at ProxyWard
 
 Replace your client's MCP server URL with the route configured in `proxyward.yaml`. The bundled sample exposes the `sample-mcp` upstream at:
@@ -111,27 +120,107 @@ http://localhost:8080/sample/mcp
 
 ### Running without Docker
 
-If you prefer to run the proxy directly against your own upstream:
+If you prefer to run the services directly, use three terminals. PowerShell uses `$env:NAME = "value"` instead of `export NAME=value`.
 
 ```bash
-# 1. Restore and build
+# 1. Restore and build once
 dotnet build McpProxyWard.slnx
 
-# 2. Point at any policy file
-export PROXYWARD_POLICY_PATH=./proxyward.yaml      # bash / zsh
-$env:PROXYWARD_POLICY_PATH = ".\proxyward.yaml"    # PowerShell
+# 2. Terminal 1: proxy
+export PROXYWARD_POLICY_PATH=./samples/compose/proxyward.yaml
+export PROXYWARD_CONTROL_ENABLED=true
+export PROXYWARD_ADMIN_TOKEN=local-dev-token
+dotnet run --project src/ProxyWard.Api --urls http://localhost:8080
 
-# 3. Run the API host
-dotnet run --project src/ProxyWard.Api
+# 3. Terminal 2: management API
+export PROXYWARD_MANAGEMENT_AUDIT_DB_PATH=./data/proxyward.db
+export PROXYWARD_MANAGEMENT_POLICY_PATH=./samples/compose/proxyward.yaml
+export PROXYWARD_PROXY_CONTROL_URL=http://localhost:8080
+export PROXYWARD_ADMIN_TOKEN=local-dev-token
+export PROXYWARD_MANAGEMENT_CORS_ALLOWED_ORIGINS=http://localhost:5173
+dotnet run --project src/ProxyWard.Management.Api --urls http://localhost:8081
+
+# 4. Terminal 3: dashboard
+cd src/ProxyWard.Dashboard
+export VITE_PROXYWARD_API_BASE_URL=http://localhost:8081
+export VITE_PROXYWARD_ADMIN_TOKEN=local-dev-token
+npm run dev
 ```
 
-ProxyWard listens on `http://localhost:8080` by default. Override with `ASPNETCORE_URLS` if you need a different port.
+ProxyWard listens on `http://localhost:8080`, the management API listens on `http://localhost:8081`, and Vite serves the dashboard at `http://localhost:5173`.
 
 To stop the compose stack and wipe the audit DB and schema-lock history for a clean run:
 
 ```bash
 docker compose down -v
 ```
+
+---
+
+## Services, Security, and APIs
+
+ProxyWard is split into three deployable pieces:
+
+| Service | Project | Local port | Responsibility |
+| ------- | ------- | ---------- | -------------- |
+| MCP proxy | `src/ProxyWard.Api` | 8080 | Data plane for MCP traffic, policy enforcement, audit writes, OpenTelemetry export, and minimal authenticated `/control/*` runtime changes. |
+| Management API | `src/ProxyWard.Management.Api` | 8081 | Dashboard-facing stats, status, audit log, drift review, policy editing, settings, and management-to-proxy control calls. |
+| Dashboard | `src/ProxyWard.Dashboard` | 8082 in Compose, 5173 with Vite dev | React SPA for operators. Browser code talks to the management API only, never directly to proxy `/control/*`. |
+
+Compose binds published ports to `127.0.0.1` and wires the dashboard through Nginx so `/api/*` is same-origin from `http://localhost:8082`. If you run the Vite dev server separately on `http://localhost:5173`, configure management CORS explicitly.
+
+### Key Environment Variables
+
+| Variable | Service | Purpose |
+| -------- | ------- | ------- |
+| `PROXYWARD_POLICY_PATH` | Proxy | YAML policy file path loaded by the MCP proxy. |
+| `PROXYWARD_CONTROL_ENABLED` | Proxy | Enables the minimal `/control/*` runtime-control endpoints. |
+| `PROXYWARD_CONTROL_TOKEN` | Proxy | Bearer token for proxy control endpoints. Falls back to `PROXYWARD_ADMIN_TOKEN`. |
+| `PROXYWARD_ADMIN_TOKEN` | Proxy and management | Shared local admin-token fallback used by Compose. Prefer secret injection outside local development. |
+| `PROXYWARD_MANAGEMENT_AUDIT_DB_PATH` | Management API | SQLite audit/schema-lock DB path mounted from the proxy data volume. |
+| `PROXYWARD_MANAGEMENT_POLICY_PATH` | Management API | Policy file path used for read/validate/apply workflows. |
+| `PROXYWARD_PROXY_CONTROL_URL` | Management API | Internal URL of the proxy control API, for example `http://proxyward:8080` in Compose. |
+| `PROXYWARD_PROXY_CONTROL_TOKEN` | Management API | Bearer token used by management API when calling proxy `/control/*`; falls back to `PROXYWARD_ADMIN_TOKEN`. |
+| `PROXYWARD_MANAGEMENT_ADMIN_TOKEN` | Management API | Bearer token required by privileged management write endpoints outside explicit local-dev mode. |
+| `PROXYWARD_MANAGEMENT_LOCAL_DEV` | Management API | Set to `true` only for explicit local development if you need management writes without an admin token. |
+| `PROXYWARD_MANAGEMENT_CORS_ALLOWED_ORIGINS` | Management API | Comma- or semicolon-separated browser origins allowed for cross-origin dashboard/API calls, such as `http://localhost:5173`. Empty by default. |
+| `VITE_PROXYWARD_API_BASE_URL` | Dashboard | Build/dev API base URL. Compose uses `/` so Nginx proxies same-origin `/api/*`; Vite dev commonly uses `http://localhost:8081`. |
+| `VITE_PROXYWARD_ADMIN_TOKEN` | Dashboard | Optional local dashboard token sent on privileged management writes. Do not bake production secrets into a static dashboard bundle. |
+
+### Endpoint Summary
+
+Proxy endpoints:
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| `GET` | `/health` | Proxy health, active mode, policy hash, and server count. |
+| `GET` | `/control/status` | Authenticated runtime-control status. |
+| `PATCH` | `/control/mode` | Authenticated runtime mode change. |
+| `PUT` | `/control/policy-snapshot` | Authenticated in-memory policy snapshot replacement. |
+| `PUT` | `/control/yarp-config` | Authenticated dynamic YARP route/cluster replacement. |
+| `*` | configured MCP routes, for example `/sample/mcp` | Proxied MCP Streamable HTTP traffic. |
+
+Management API endpoints:
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| `GET` | `/api/status` | Management, proxy control, audit DB, schema lock, and telemetry health. |
+| `GET` | `/api/settings` | Read-only effective settings summary for the dashboard. |
+| `GET` | `/api/overview` | Dashboard aggregate stats and time-series data from the audit DB. |
+| `GET` | `/api/audit/events` | Paged/filterable audit events. |
+| `GET` | `/api/audit/events/{id}` | Audit event detail. |
+| `GET` | `/api/audit/export.ndjson` | Bounded NDJSON audit export. |
+| `GET` | `/api/schema/drifts` | Paged/filterable schema drift review queue. |
+| `GET` | `/api/schema/drifts/{id}` | Schema drift review detail and safe diff metadata. |
+| `POST` | `/api/schema/drifts/{id}/approve|reject|block` | Privileged drift review action. |
+| `GET` | `/api/policy` | Structured policy read model and redacted YAML. |
+| `POST` | `/api/policy/validate` | Validate YAML or structured policy input. |
+| `PUT` | `/api/policy` | Privileged policy apply workflow through management-to-proxy control calls. |
+| `GET` | `/api/policy/impact` | Mode-switch impact preview. |
+| `PATCH` | `/api/policy/mode` | Privileged runtime mode switch. |
+| `GET` | `/api/tools` | Tool inventory from schema-lock history. |
+
+Privileged management writes require `Authorization: Bearer <admin-token>` unless `PROXYWARD_MANAGEMENT_LOCAL_DEV=true` is explicitly set. Auth failures are logged and written to the audit DB without token values.
 
 ---
 

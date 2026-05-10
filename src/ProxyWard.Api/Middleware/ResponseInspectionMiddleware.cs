@@ -1,12 +1,16 @@
 using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using ProxyWard.Api.Observability;
 using ProxyWard.Api.Runtime;
 using ProxyWard.Audit.Events;
+using ProxyWard.Audit.Redaction;
 using ProxyWard.Core.JsonRpc;
 using ProxyWard.Core.Mcp;
 using ProxyWard.Core.Policies;
 using ProxyWard.Locking.Lockfiles;
+using ProxyWard.Locking.Persistence;
 using ProxyWard.Locking.Tools;
 using ProxyWard.Policy.Configuration;
 
@@ -18,16 +22,24 @@ public sealed class ResponseInspectionMiddleware(
     IMcpMethodClassifier classifier,
     IToolDefinitionExtractor extractor,
     ToolSurfaceDriftEvaluator driftEvaluator,
+    ISchemaDriftReviewStore driftReviewStore,
+    IToolSchemaDiffMetadataStore diffMetadataStore,
+    ToolSchemaDiffMetadataOptions diffMetadataOptions,
     IAuditSink auditSink,
     ILogger<ResponseInspectionMiddleware> logger)
 {
     private const string DefaultMcpProtocol = "2025-11-25";
+    private const string ToolsListResponseInspectionEventType = "tools_list_response_inspection";
+    private const string ToolResponseSecretInspectionEventType = "tool_response_secret_inspection";
 
     private static readonly EventId ResponseInspectionEvent = new(1301, "ResponseInspection");
     private static readonly EventId AuditSinkFailureEvent = new(1302, "AuditSinkFailure");
     private static readonly EventId SchemaLockWriteFailureEvent = new(1303, "SchemaLockWriteFailure");
     private static readonly EventId SchemaLockUpstreamChangedEvent = new(1304, "SchemaLockUpstreamChanged");
     private static readonly EventId SchemaDriftEvent = new(1305, "SchemaDrift");
+    private static readonly EventId SchemaDriftReviewWriteFailureEvent = new(1306, "SchemaDriftReviewWriteFailure");
+    private static readonly EventId SchemaDiffMetadataWriteFailureEvent = new(1307, "SchemaDiffMetadataWriteFailure");
+    private static readonly EventId SchemaDriftReviewReadFailureEvent = new(1308, "SchemaDriftReviewReadFailure");
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -39,16 +51,17 @@ public sealed class ResponseInspectionMiddleware(
         }
 
         var policy = ResolvePolicySnapshot(context);
-        var method = ResolveFirstMcpMethod(context);
-        if (!ShouldInspectToolsListResponse(context))
+        var fallbackMethod = ResolveFirstMcpMethod(context);
+        var target = ResolveResponseInspectionTarget(context, server);
+        if (target.Kind == ResponseInspectionKind.None)
         {
             using var proxyActivity = ProxyWardTelemetry.StartActivity(
                 ProxyWardTelemetry.YarpProxyActivity,
-                CreateTelemetryMetadata(context, policy, server, method));
+                CreateTelemetryMetadata(context, policy, server, fallbackMethod));
             await next(context);
             ProxyWardTelemetry.SetTag(proxyActivity, ProxyWardTelemetry.HttpStatusCodeTag, context.Response.StatusCode);
             ProxyWardTelemetry.RecordProxiedRequest(
-                CreateTelemetryMetadata(context, policy, server, method),
+                CreateTelemetryMetadata(context, policy, server, fallbackMethod),
                 context.Response.StatusCode);
             return;
         }
@@ -67,11 +80,11 @@ public sealed class ResponseInspectionMiddleware(
         {
             using var proxyActivity = ProxyWardTelemetry.StartActivity(
                 ProxyWardTelemetry.YarpProxyActivity,
-                CreateTelemetryMetadata(context, policy, server, method));
+                CreateTelemetryMetadata(context, policy, server, target.Method, toolName: target.ToolName));
             await next(context);
             ProxyWardTelemetry.SetTag(proxyActivity, ProxyWardTelemetry.HttpStatusCodeTag, context.Response.StatusCode);
             ProxyWardTelemetry.RecordProxiedRequest(
-                CreateTelemetryMetadata(context, policy, server, method),
+                CreateTelemetryMetadata(context, policy, server, target.Method, toolName: target.ToolName),
                 context.Response.StatusCode);
         }
         finally
@@ -87,6 +100,7 @@ public sealed class ResponseInspectionMiddleware(
                 context,
                 policy,
                 server,
+                target,
                 capture.UnsupportedReason!,
                 capture.ObservedBytes,
                 stopwatch.ElapsedMilliseconds,
@@ -95,6 +109,20 @@ public sealed class ResponseInspectionMiddleware(
         }
 
         var body = capture.GetBufferedBody();
+        if (target.Kind == ResponseInspectionKind.ToolCallSecretReturn)
+        {
+            await HandleToolCallSecretResponseAsync(
+                context,
+                policy,
+                server,
+                target,
+                body,
+                stopwatch.ElapsedMilliseconds,
+                capture,
+                originalBody);
+            return;
+        }
+
         var result = extractor.Extract(body);
         if (!result.Success)
         {
@@ -102,6 +130,9 @@ public sealed class ResponseInspectionMiddleware(
                 context,
                 policy,
                 server,
+                ToolsListResponseInspectionEventType,
+                "tools/list",
+                null,
                 AuditDecision.Warn,
                 result.Reasons.Count == 0 ? [PolicyReasonCodes.InspectionUnsupported] : result.Reasons,
                 body.Length,
@@ -123,6 +154,9 @@ public sealed class ResponseInspectionMiddleware(
                 context,
                 policy,
                 server,
+                ToolsListResponseInspectionEventType,
+                "tools/list",
+                null,
                 AuditDecision.Allow,
                 [],
                 body.Length,
@@ -148,6 +182,8 @@ public sealed class ResponseInspectionMiddleware(
 
         if (driftResult.HasDrift)
         {
+            var driftReviewResults = await RecordDriftReviewsAsync(context, policy, server, driftResult);
+            await RecordDiffMetadataAsync(context, server, driftResult, driftReviewResults);
             var decision = policy.Mode == ProxyWardMode.Enforce
                 ? AuditDecision.Block
                 : AuditDecision.Warn;
@@ -155,7 +191,7 @@ public sealed class ResponseInspectionMiddleware(
                 context,
                 policy,
                 server,
-                method,
+                target.Method,
                 FormatAuditDecision(decision),
                 driftResult.Reasons,
                 schemaVersion: driftResult.Version);
@@ -166,11 +202,14 @@ public sealed class ResponseInspectionMiddleware(
                 context,
                 policy,
                 server,
+                ToolsListResponseInspectionEventType,
+                "tools/list",
+                null,
                 decision,
                 driftResult.Reasons,
                 body.Length,
                 stopwatch.ElapsedMilliseconds,
-                CreateToolSummary(result.Tools, driftResult));
+                CreateToolSummary(result.Tools, driftResult, driftReviewResults));
 
             if (decision == AuditDecision.Block)
             {
@@ -194,10 +233,88 @@ public sealed class ResponseInspectionMiddleware(
             return;
         }
 
+        var currentUnapprovedReviews = await GetCurrentUnapprovedDriftReviewsAsync(
+            context,
+            server,
+            driftResult,
+            result.Tools);
+        if (currentUnapprovedReviews.Count > 0)
+        {
+            var reasons = currentUnapprovedReviews
+                .SelectMany(review => review.Row.Reasons)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            var decision = policy.Mode == ProxyWardMode.Enforce
+                ? AuditDecision.Block
+                : AuditDecision.Warn;
+            var telemetry = CreateTelemetryMetadata(
+                context,
+                policy,
+                server,
+                target.Method,
+                FormatAuditDecision(decision),
+                reasons,
+                schemaVersion: driftResult.Version);
+
+            LogSchemaDriftReviewState(server, decision, driftResult.Version, currentUnapprovedReviews);
+            ProxyWardTelemetry.RecordSchemaDrift(telemetry);
+
+            await EmitAuditAsync(
+                context,
+                policy,
+                server,
+                ToolsListResponseInspectionEventType,
+                "tools/list",
+                null,
+                decision,
+                reasons,
+                body.Length,
+                stopwatch.ElapsedMilliseconds,
+                CreateToolSummary(result.Tools, driftResult, currentUnapprovedReviews));
+
+            if (decision == AuditDecision.Block)
+            {
+                context.Response.Headers.Clear();
+                context.Response.StatusCode = StatusCodes.Status502BadGateway;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    error = "MCP tool surface drift review is not approved.",
+                    decision = "block",
+                    reasons,
+                    tools = currentUnapprovedReviews
+                        .GroupBy(review => review.Row.ToolName, StringComparer.Ordinal)
+                        .Select(group => new
+                        {
+                            name = group.Key,
+                            statuses = group
+                                .Select(review => FormatDriftReviewStatus(review.Row.Status))
+                                .Distinct(StringComparer.Ordinal)
+                                .Order(StringComparer.Ordinal)
+                                .ToArray(),
+                            reasons = group
+                                .SelectMany(review => review.Row.Reasons)
+                                .Distinct(StringComparer.Ordinal)
+                                .Order(StringComparer.Ordinal)
+                                .ToArray()
+                        })
+                        .OrderBy(tool => tool.name, StringComparer.Ordinal)
+                        .ToArray()
+                }, context.RequestAborted);
+                return;
+            }
+
+            await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
+            return;
+        }
+
         await EmitAuditAsync(
             context,
             policy,
             server,
+            ToolsListResponseInspectionEventType,
+            "tools/list",
+            null,
             AuditDecision.Allow,
             [],
             body.Length,
@@ -207,27 +324,117 @@ public sealed class ResponseInspectionMiddleware(
         await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
     }
 
-    private bool ShouldInspectToolsListResponse(HttpContext context)
+    private ResponseInspectionTarget ResolveResponseInspectionTarget(HttpContext context, ServerPolicy server)
     {
         if (!context.Items.TryGetValue(RequestInspectionItems.JsonRpcParseResult, out var parseItem)
             || parseItem is not JsonRpcParseResult parseResult
             || parseResult.Status != JsonRpcParseStatus.Parsed)
         {
-            return false;
+            return ResponseInspectionTarget.None;
         }
 
-        if (!parseResult.Messages.Any(message => classifier.Classify(message).Kind == McpMessageKind.ToolsList))
+        foreach (var message in parseResult.Messages)
         {
-            return false;
+            var classification = classifier.Classify(message);
+            if (classification.Kind == McpMessageKind.ToolsList)
+            {
+                return ResponseInspectionTarget.ToolsList;
+            }
         }
 
-        return true;
+        if (!server.Secrets.BlockReturn || server.Secrets.Patterns.Count == 0)
+        {
+            return ResponseInspectionTarget.None;
+        }
+
+        foreach (var message in parseResult.Messages)
+        {
+            var classification = classifier.Classify(message);
+            if (classification.Kind == McpMessageKind.ToolCall)
+            {
+                return new ResponseInspectionTarget(
+                    ResponseInspectionKind.ToolCallSecretReturn,
+                    "tools/call",
+                    ToolResponseSecretInspectionEventType,
+                    classification.ToolName,
+                    parseResult,
+                    message);
+            }
+        }
+
+        return ResponseInspectionTarget.None;
+    }
+
+    private async Task HandleToolCallSecretResponseAsync(
+        HttpContext context,
+        ProxyWardPolicy policy,
+        ServerPolicy server,
+        ResponseInspectionTarget target,
+        byte[] body,
+        long durationMs,
+        ResponseInspectionStream capture,
+        Stream originalBody)
+    {
+        var matchResult = MatchToolResponseSecrets(server, body);
+        if (!matchResult.WasMatched)
+        {
+            await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
+            return;
+        }
+
+        var decision = policy.Mode == ProxyWardMode.Enforce
+            ? AuditDecision.Block
+            : AuditDecision.WouldBlock;
+        var reasons = (IReadOnlyCollection<string>)[PolicyReasonCodes.SecretReturnBlocked];
+        var summary = CreateSecretResponseSummary(matchResult, target.ParseResult?.IsBatch == true ? "batch" : "single");
+        var telemetry = CreateTelemetryMetadata(
+            context,
+            policy,
+            server,
+            target.Method,
+            FormatAuditDecision(decision),
+            reasons,
+            eventType: target.EventType,
+            argumentSummary: summary,
+            toolName: target.ToolName);
+
+        using (var activity = ProxyWardTelemetry.StartActivity(
+            ProxyWardTelemetry.PolicyEvaluationActivity,
+            telemetry))
+        {
+            ProxyWardTelemetry.RecordPolicyDecision(telemetry);
+            ProxyWardTelemetry.Enrich(activity, telemetry);
+        }
+
+        await EmitAuditAsync(
+            context,
+            policy,
+            server,
+            target.EventType,
+            target.Method,
+            target.ToolName,
+            decision,
+            reasons,
+            body.Length,
+            durationMs,
+            summary,
+            target.ParseResult?.Messages.Count ?? 0,
+            target.ParseResult?.IsBatch == true ? target.Message?.BatchIndex : null);
+
+        if (decision != AuditDecision.Block)
+        {
+            await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
+            return;
+        }
+
+        await WriteToolResponseSecretBlockAsync(context, target, reasons);
     }
 
     private async Task HandleUnsupportedAsync(
         HttpContext context,
         ProxyWardPolicy policy,
         ServerPolicy server,
+        ResponseInspectionTarget target,
         string unsupportedReason,
         long responseBytes,
         long durationMs,
@@ -242,20 +449,25 @@ public sealed class ResponseInspectionMiddleware(
             _ => AuditDecision.Allow
         };
 
-        LogUnsupported(context, policy, unsupportedReason, decision, responseBytes);
+        LogUnsupported(context, policy, target, unsupportedReason, decision, responseBytes);
         var telemetry = CreateTelemetryMetadata(
             context,
             policy,
             server,
-            "tools/list",
+            target.Method,
             FormatAuditDecision(auditDecision),
-            [PolicyReasonCodes.InspectionUnsupported]);
+            [PolicyReasonCodes.InspectionUnsupported],
+            eventType: target.EventType,
+            toolName: target.ToolName);
         ProxyWardTelemetry.RecordInspectionSkip(telemetry, "response", unsupportedReason);
 
         await EmitAuditAsync(
             context,
             policy,
             server,
+            target.EventType,
+            target.Method,
+            target.ToolName,
             auditDecision,
             [PolicyReasonCodes.InspectionUnsupported],
             responseBytes,
@@ -291,27 +503,33 @@ public sealed class ResponseInspectionMiddleware(
         HttpContext context,
         ProxyWardPolicy policy,
         ServerPolicy server,
+        string eventType,
+        string method,
+        string? toolName,
         AuditDecision decision,
         IReadOnlyCollection<string> reasons,
         long responseBytes,
         long durationMs,
-        JsonNode? summary)
+        JsonNode? summary,
+        int batchSize = 0,
+        int? batchIndex = null)
     {
         var auditEvent = new AuditEvent(
             Timestamp: DateTimeOffset.UtcNow,
-            EventType: "tools_list_response_inspection",
+            EventType: eventType,
             Mode: FormatMode(policy.Mode),
             Decision: decision,
             ServerId: server.Id,
-            Method: "tools/list",
-            ToolName: null,
+            Method: method,
+            ToolName: toolName,
             Reasons: reasons,
             PolicyVersion: policy.VersionHash,
             CorrelationId: ResolveCorrelationId(context),
             RequestBytes: responseBytes,
             DurationMs: durationMs,
             ArgumentSummary: summary,
-            BatchSize: 0);
+            BatchSize: batchSize,
+            BatchIndex: batchIndex);
 
         using var activity = ProxyWardTelemetry.StartActivity(
             ProxyWardTelemetry.AuditWriteActivity,
@@ -319,10 +537,11 @@ public sealed class ResponseInspectionMiddleware(
                 context,
                 policy,
                 server,
-                "tools/list",
+                method,
                 FormatAuditDecision(decision),
                 reasons,
-                eventType: auditEvent.EventType));
+                eventType: auditEvent.EventType,
+                toolName: toolName));
 
         try
         {
@@ -335,14 +554,16 @@ public sealed class ResponseInspectionMiddleware(
                 context,
                 policy,
                 server,
-                "tools/list",
+                method,
                 FormatAuditDecision(decision),
                 reasons,
-                eventType: auditEvent.EventType));
+                eventType: auditEvent.EventType,
+                toolName: toolName));
             logger.LogWarning(
                 AuditSinkFailureEvent,
                 ex,
-                "ProxyWard audit sink failed to record tools_list_response_inspection event for server {ServerId}.",
+                "ProxyWard audit sink failed to record {EventType} event for server {ServerId}.",
+                eventType,
                 server.Id);
         }
     }
@@ -385,6 +606,185 @@ public sealed class ResponseInspectionMiddleware(
         return result;
     }
 
+    private async Task<IReadOnlyList<DriftReviewRecordResult>> RecordDriftReviewsAsync(
+        HttpContext context,
+        ProxyWardPolicy policy,
+        ServerPolicy server,
+        ToolSurfaceDriftResult driftResult)
+    {
+        if (driftResult.PreviousVersion is not { } previousVersion
+            || previousVersion < 0
+            || driftResult.Version <= previousVersion)
+        {
+            return [];
+        }
+
+        var detectedAtUtc = DateTimeOffset.UtcNow;
+        var results = new List<DriftReviewRecordResult>();
+
+        try
+        {
+            foreach (var drift in driftResult.Drifts)
+            {
+                foreach (var reviewField in CreateDriftReviewFields(drift))
+                {
+                    var observation = new DriftReviewObservation(
+                        ServerId: server.Id,
+                        ToolName: drift.ToolName,
+                        FieldName: reviewField.FieldName,
+                        FromVersion: previousVersion,
+                        ToVersion: driftResult.Version,
+                        Reasons: reviewField.Reasons,
+                        PolicyVersion: policy.VersionHash,
+                        DetectedAtUtc: detectedAtUtc);
+
+                    results.Add(await driftReviewStore
+                        .RecordObservationAsync(observation, context.RequestAborted)
+                        .ConfigureAwait(false));
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogSchemaDriftReviewWriteFailure(server, ex);
+            return [];
+        }
+
+        return results;
+    }
+
+    private async Task<IReadOnlyList<DriftReviewRecordResult>> GetCurrentUnapprovedDriftReviewsAsync(
+        HttpContext context,
+        ServerPolicy server,
+        ToolSurfaceDriftResult driftResult,
+        IReadOnlyList<DiscoveredTool> tools)
+    {
+        if (driftResult.Version <= 0)
+        {
+            return [];
+        }
+
+        var currentToolNames = tools
+            .Where(tool => !string.IsNullOrWhiteSpace(tool.Name))
+            .Select(tool => tool.Name!)
+            .ToHashSet(StringComparer.Ordinal);
+        if (currentToolNames.Count == 0)
+        {
+            return [];
+        }
+
+        try
+        {
+            var rows = await driftReviewStore
+                .GetByServerAsync(server.Id, context.RequestAborted)
+                .ConfigureAwait(false);
+
+            return rows
+                .Where(row => row.ToVersion == driftResult.Version
+                    && row.Status != DriftReviewStatus.Approved
+                    && currentToolNames.Contains(row.ToolName))
+                .OrderBy(row => row.Id)
+                .Select(row => new DriftReviewRecordResult(row, WasNewlyCreated: false))
+                .ToArray();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogSchemaDriftReviewReadFailure(server, ex);
+            return [];
+        }
+    }
+
+    private static IEnumerable<(string FieldName, IReadOnlyCollection<string> Reasons)> CreateDriftReviewFields(
+        ToolSurfaceDrift drift)
+    {
+        if (drift.Reasons.Contains(PolicyReasonCodes.ToolDescriptionChanged, StringComparer.Ordinal))
+        {
+            yield return ("description", [PolicyReasonCodes.ToolDescriptionChanged]);
+        }
+
+        if (drift.Reasons.Contains(PolicyReasonCodes.ToolSchemaChanged, StringComparer.Ordinal))
+        {
+            yield return ("schema", [PolicyReasonCodes.ToolSchemaChanged]);
+        }
+
+        if (drift.Reasons.Contains(PolicyReasonCodes.McpProtocolChanged, StringComparer.Ordinal))
+        {
+            yield return ("mcpProtocol", [PolicyReasonCodes.McpProtocolChanged]);
+        }
+    }
+
+    private async Task RecordDiffMetadataAsync(
+        HttpContext context,
+        ServerPolicy server,
+        ToolSurfaceDriftResult driftResult,
+        IReadOnlyList<DriftReviewRecordResult> driftReviewResults)
+    {
+        if (driftReviewResults.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var reviewResult in driftReviewResults)
+            {
+                var matchingDrift = driftResult.Drifts.FirstOrDefault(drift =>
+                    string.Equals(drift.ToolName, reviewResult.Row.ToolName, StringComparison.Ordinal));
+                if (matchingDrift is null)
+                {
+                    continue;
+                }
+
+                var input = CreateDiffMetadataInput(reviewResult.Row, matchingDrift, driftResult);
+                if (input is null)
+                {
+                    continue;
+                }
+
+                await diffMetadataStore
+                    .RecordAsync(input, context.RequestAborted)
+                    .ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogSchemaDiffMetadataWriteFailure(server, ex);
+        }
+    }
+
+    private ToolSchemaDiffMetadataInput? CreateDiffMetadataInput(
+        DriftReviewRow review,
+        ToolSurfaceDrift drift,
+        ToolSurfaceDriftResult driftResult)
+    {
+        var createdAtUtc = DateTimeOffset.UtcNow;
+        return review.FieldName switch
+        {
+            "description" => new ToolSchemaDiffMetadataInput(
+                review.Id,
+                SafeToolSchemaMetadata.CreateDescriptionJson(drift.PreviousEntry, diffMetadataOptions),
+                SafeToolSchemaMetadata.CreateDescriptionJson(drift.CurrentEntry, diffMetadataOptions),
+                SafeToolSchemaMetadata.HashDescription(drift.PreviousEntry),
+                SafeToolSchemaMetadata.HashDescription(drift.CurrentEntry),
+                createdAtUtc),
+            "schema" => new ToolSchemaDiffMetadataInput(
+                review.Id,
+                SafeToolSchemaMetadata.CreateSchemaJson(drift.PreviousEntry, diffMetadataOptions),
+                SafeToolSchemaMetadata.CreateSchemaJson(drift.CurrentEntry, diffMetadataOptions),
+                SafeToolSchemaMetadata.HashSchema(drift.PreviousEntry),
+                SafeToolSchemaMetadata.HashSchema(drift.CurrentEntry),
+                createdAtUtc),
+            "mcpProtocol" => new ToolSchemaDiffMetadataInput(
+                review.Id,
+                BeforeJson: null,
+                AfterJson: null,
+                SafeToolSchemaMetadata.HashText(driftResult.PreviousMcpProtocol),
+                SafeToolSchemaMetadata.HashText(driftResult.CurrentMcpProtocol),
+                createdAtUtc),
+            _ => null
+        };
+    }
+
     private void LogSchemaWriteFailure(ServerPolicy server, string reason)
     {
         logger.LogWarning(
@@ -423,6 +823,48 @@ public sealed class ResponseInspectionMiddleware(
             string.Join(',', driftResult.Reasons));
     }
 
+    private void LogSchemaDriftReviewWriteFailure(ServerPolicy server, Exception exception)
+    {
+        logger.LogWarning(
+            SchemaDriftReviewWriteFailureEvent,
+            exception,
+            "ProxyWard schema drift review write failed for server {ServerId}. Audit event will not include drift review ids.",
+            server.Id);
+    }
+
+    private void LogSchemaDiffMetadataWriteFailure(ServerPolicy server, Exception exception)
+    {
+        logger.LogWarning(
+            SchemaDiffMetadataWriteFailureEvent,
+            exception,
+            "ProxyWard schema diff metadata write failed for server {ServerId}. Drift review item remains available with hash fallback.",
+            server.Id);
+    }
+
+    private void LogSchemaDriftReviewReadFailure(ServerPolicy server, Exception exception)
+    {
+        logger.LogWarning(
+            SchemaDriftReviewReadFailureEvent,
+            exception,
+            "ProxyWard schema drift review read failed for server {ServerId}. Current review state will not affect this response.",
+            server.Id);
+    }
+
+    private void LogSchemaDriftReviewState(
+        ServerPolicy server,
+        AuditDecision decision,
+        int schemaVersion,
+        IReadOnlyList<DriftReviewRecordResult> reviewResults)
+    {
+        logger.LogWarning(
+            SchemaDriftEvent,
+            "ProxyWard schema drift review state requires action for server {ServerId} at schema version {SchemaVersion}; decision {Decision}; review ids {ReviewIds}.",
+            server.Id,
+            schemaVersion,
+            FormatAuditDecision(decision),
+            string.Join(',', reviewResults.Select(result => result.Row.Id)));
+    }
+
     private UnsupportedInspectionDecision GetUnsupportedDecision(ProxyWardPolicy policy) =>
         policy.Inspection.UnsupportedStreaming switch
         {
@@ -441,6 +883,7 @@ public sealed class ResponseInspectionMiddleware(
     private void LogUnsupported(
         HttpContext context,
         ProxyWardPolicy policy,
+        ResponseInspectionTarget target,
         string unsupportedKind,
         UnsupportedInspectionDecision decision,
         long responseBytes)
@@ -448,7 +891,7 @@ public sealed class ResponseInspectionMiddleware(
         logger.LogWarning(
             ResponseInspectionEvent,
             "ProxyWard inspection event {EventType}: {Decision} for {UnsupportedKind} with reasons {Reasons}; content type {ContentType}; response bytes {ResponseBytes}; mode {Mode}; policy {PolicyVersion}; service {ServiceName}; correlation {CorrelationId}",
-            "tools_list_response_inspection",
+            target.EventType,
             FormatDecision(decision),
             unsupportedKind,
             PolicyReasonCodes.InspectionUnsupported,
@@ -462,7 +905,8 @@ public sealed class ResponseInspectionMiddleware(
 
     private static JsonObject CreateToolSummary(
         IReadOnlyList<DiscoveredTool> tools,
-        ToolSurfaceDriftResult? driftResult = null)
+        ToolSurfaceDriftResult? driftResult = null,
+        IReadOnlyCollection<DriftReviewRecordResult>? driftReviewResults = null)
     {
         var summary = new JsonObject
         {
@@ -497,6 +941,32 @@ public sealed class ResponseInspectionMiddleware(
                     .ToArray());
         }
 
+        if (driftReviewResults is { Count: > 0 })
+        {
+            var orderedReviews = driftReviewResults
+                .OrderBy(result => result.Row.Id)
+                .ToArray();
+
+            summary["driftReviewIds"] = new JsonArray(
+                orderedReviews
+                    .Select(result => (JsonNode?)JsonValue.Create(result.Row.Id))
+                    .ToArray());
+
+            summary["driftReviews"] = new JsonArray(
+                orderedReviews
+                    .Select(result => (JsonNode?)new JsonObject
+                    {
+                        ["id"] = result.Row.Id,
+                        ["toolName"] = result.Row.ToolName,
+                        ["fieldName"] = result.Row.FieldName,
+                        ["fromVersion"] = result.Row.FromVersion,
+                        ["toVersion"] = result.Row.ToVersion,
+                        ["status"] = FormatDriftReviewStatus(result.Row.Status),
+                        ["wasNewlyCreated"] = result.WasNewlyCreated
+                    })
+                    .ToArray());
+        }
+
         return summary;
     }
 
@@ -505,6 +975,121 @@ public sealed class ResponseInspectionMiddleware(
         {
             ["unsupportedKind"] = unsupportedKind
         };
+
+    private static SecretPatternMatchResult MatchToolResponseSecrets(ServerPolicy server, byte[] body)
+    {
+        var patternSet = SecretPatternSet.Create(new SecretRedactionOptions(
+            RedactInLogs: true,
+            Patterns: server.Secrets.Patterns));
+        if (patternSet.IsEmpty)
+        {
+            return SecretPatternMatchResult.None;
+        }
+
+        try
+        {
+            var root = JsonNode.Parse(body);
+            var result = patternSet.MatchJson(root);
+            if (result.WasMatched)
+            {
+                return result;
+            }
+        }
+        catch (JsonException)
+        {
+            // Fall back to raw response text matching without ever logging the response body.
+        }
+
+        return patternSet.MatchText(Encoding.UTF8.GetString(body));
+    }
+
+    private static JsonObject CreateSecretResponseSummary(
+        SecretPatternMatchResult matchResult,
+        string responseShape)
+    {
+        var matchTypes = new JsonArray();
+        foreach (var matchType in matchResult.MatchTypes)
+        {
+            matchTypes.Add(JsonValue.Create(matchType));
+        }
+
+        return new JsonObject
+        {
+            ["matched"] = matchResult.WasMatched,
+            ["matchTypes"] = matchTypes,
+            ["responseShape"] = responseShape
+        };
+    }
+
+    private static async Task WriteToolResponseSecretBlockAsync(
+        HttpContext context,
+        ResponseInspectionTarget target,
+        IReadOnlyCollection<string> reasons)
+    {
+        context.Response.Headers.Clear();
+
+        if (CanWriteJsonRpcToolResponseError(target))
+        {
+            var response = CreateJsonRpcError(
+                target.Message!.Id!,
+                reasons,
+                "MCP ProxyWard blocked this tool response");
+
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync(response.ToJsonString(), context.RequestAborted);
+            return;
+        }
+
+        context.Response.StatusCode = StatusCodes.Status502BadGateway;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error = "MCP ProxyWard blocked this tool response.",
+            decision = "block",
+            reasons
+        }, context.RequestAborted);
+    }
+
+    private static bool CanWriteJsonRpcToolResponseError(ResponseInspectionTarget target) =>
+        target.ParseResult is { IsBatch: false }
+        && target.Message is not null
+        && string.Equals(target.Message.JsonRpc, "2.0", StringComparison.Ordinal)
+        && string.Equals(target.Message.Method, "tools/call", StringComparison.Ordinal)
+        && target.Message.Id is not null
+        && IsValidJsonRpcRequestId(target.Message.Id);
+
+    private static bool IsValidJsonRpcRequestId(JsonNode id)
+    {
+        var json = id.ToJsonString();
+        return json.Length > 0 && (json[0] == '"' || json[0] == '-' || char.IsDigit(json[0]));
+    }
+
+    private static JsonObject CreateJsonRpcError(
+        JsonNode id,
+        IReadOnlyCollection<string> reasons,
+        string message)
+    {
+        var reasonNodes = new JsonArray();
+        foreach (var reason in reasons)
+        {
+            reasonNodes.Add(JsonValue.Create(reason));
+        }
+
+        return new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = id.DeepClone(),
+            ["error"] = new JsonObject
+            {
+                ["code"] = -32001,
+                ["message"] = message,
+                ["data"] = new JsonObject
+                {
+                    ["reasons"] = reasonNodes
+                }
+            }
+        };
+    }
 
     private static string ResolveCorrelationId(HttpContext context) =>
         context.Items[AuditItems.CorrelationId] as string ?? context.TraceIdentifier;
@@ -536,17 +1121,21 @@ public sealed class ResponseInspectionMiddleware(
         string? decision = null,
         IReadOnlyCollection<string>? reasons = null,
         string? eventType = null,
-        int? schemaVersion = null) =>
+        int? schemaVersion = null,
+        JsonNode? argumentSummary = null,
+        string? toolName = null) =>
         new(
             CorrelationId: ResolveCorrelationId(context),
             ServerId: server.Id,
             Method: method,
+            ToolName: toolName,
             Mode: FormatMode(policy.Mode),
             Decision: decision,
             Reasons: reasons,
             PolicyVersion: policy.VersionHash,
             SchemaVersion: schemaVersion,
-            AuditEventType: eventType);
+            AuditEventType: eventType,
+            ArgumentSummary: FormatArgumentSummary(argumentSummary));
 
     private static string SanitizeMediaType(string? contentType)
     {
@@ -563,6 +1152,9 @@ public sealed class ResponseInspectionMiddleware(
     private static string FormatMode(ProxyWardMode mode) =>
         mode == ProxyWardMode.Enforce ? "enforce" : "audit";
 
+    private static string? FormatArgumentSummary(JsonNode? argumentSummary) =>
+        argumentSummary?.ToJsonString();
+
     private static string FormatAuditDecision(AuditDecision decision) =>
         decision switch
         {
@@ -570,6 +1162,15 @@ public sealed class ResponseInspectionMiddleware(
             AuditDecision.WouldBlock => "would_block",
             AuditDecision.Warn => "warn",
             _ => "allow"
+        };
+
+    private static string FormatDriftReviewStatus(DriftReviewStatus status) =>
+        status switch
+        {
+            DriftReviewStatus.Approved => "approved",
+            DriftReviewStatus.Rejected => "rejected",
+            DriftReviewStatus.Blocked => "blocked",
+            _ => "pending"
         };
 
     private static string FormatDecision(UnsupportedInspectionDecision decision) =>
@@ -587,6 +1188,38 @@ public sealed class ResponseInspectionMiddleware(
         Warn,
         WouldBlock,
         Block
+    }
+
+    private enum ResponseInspectionKind
+    {
+        None,
+        ToolsList,
+        ToolCallSecretReturn
+    }
+
+    private sealed record ResponseInspectionTarget(
+        ResponseInspectionKind Kind,
+        string Method,
+        string EventType,
+        string? ToolName,
+        JsonRpcParseResult? ParseResult,
+        JsonRpcMessage? Message)
+    {
+        public static ResponseInspectionTarget None { get; } = new(
+            ResponseInspectionKind.None,
+            string.Empty,
+            string.Empty,
+            null,
+            null,
+            null);
+
+        public static ResponseInspectionTarget ToolsList { get; } = new(
+            ResponseInspectionKind.ToolsList,
+            "tools/list",
+            ToolsListResponseInspectionEventType,
+            null,
+            null,
+            null);
     }
 
     private sealed class ResponseInspectionStream(

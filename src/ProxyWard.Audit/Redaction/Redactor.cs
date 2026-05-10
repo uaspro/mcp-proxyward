@@ -10,6 +10,8 @@ public sealed class Redactor : IRedactor
     private const string RedactedPathPlaceholder = "[redacted-path]";
     private const string RedactedHostPlaceholder = "[redacted-host]";
     private const string RedactedCommandPlaceholder = "[redacted-command]";
+    private const string RedactedSecretLiteralPlaceholder = "[redacted-secret:literal]";
+    private const string RedactedSecretRegexPlaceholder = "[redacted-secret:regex]";
 
     private static readonly HashSet<string> SensitiveKeys = new(StringComparer.Ordinal)
     {
@@ -79,10 +81,19 @@ public sealed class Redactor : IRedactor
     public RedactedValue Redact(string path, object? value)
     {
         var node = ToNode(value);
-        return RedactNode(path, node);
+        return RedactNode(path, node, SecretPatternSet.Empty);
     }
 
-    private static RedactedValue RedactNode(string path, JsonNode? node)
+    public RedactedValue Redact(string path, object? value, SecretRedactionOptions? secretOptions)
+    {
+        var node = ToNode(value);
+        return RedactNode(path, node, SecretPatternSet.Create(secretOptions));
+    }
+
+    private static RedactedValue RedactNode(
+        string path,
+        JsonNode? node,
+        SecretPatternSet configuredSecretPatterns)
     {
         if (node is null)
         {
@@ -96,14 +107,17 @@ public sealed class Redactor : IRedactor
 
         return node switch
         {
-            JsonObject jsonObject => RedactObject(path, jsonObject),
-            JsonArray jsonArray => RedactArray(path, jsonArray),
-            JsonValue jsonValue => RedactScalar(path, jsonValue),
+            JsonObject jsonObject => RedactObject(path, jsonObject, configuredSecretPatterns),
+            JsonArray jsonArray => RedactArray(path, jsonArray, configuredSecretPatterns),
+            JsonValue jsonValue => RedactScalar(path, jsonValue, configuredSecretPatterns),
             _ => new RedactedValue(node.DeepClone(), WasRedacted: false)
         };
     }
 
-    private static RedactedValue RedactObject(string path, JsonObject source)
+    private static RedactedValue RedactObject(
+        string path,
+        JsonObject source,
+        SecretPatternSet configuredSecretPatterns)
     {
         var redactedAny = false;
         var result = new JsonObject();
@@ -111,7 +125,7 @@ public sealed class Redactor : IRedactor
         foreach (var (key, value) in source)
         {
             var childPath = string.IsNullOrEmpty(path) ? key : $"{path}.{key}";
-            var redacted = RedactNode(childPath, value);
+            var redacted = RedactNode(childPath, value, configuredSecretPatterns);
             result[key] = redacted.Value?.DeepClone();
             redactedAny |= redacted.WasRedacted;
         }
@@ -119,7 +133,10 @@ public sealed class Redactor : IRedactor
         return new RedactedValue(result, redactedAny);
     }
 
-    private static RedactedValue RedactArray(string path, JsonArray source)
+    private static RedactedValue RedactArray(
+        string path,
+        JsonArray source,
+        SecretPatternSet configuredSecretPatterns)
     {
         var redactedAny = false;
         var result = new JsonArray();
@@ -127,7 +144,7 @@ public sealed class Redactor : IRedactor
         for (var index = 0; index < source.Count; index++)
         {
             var childPath = $"{path}[{index}]";
-            var redacted = RedactNode(childPath, source[index]);
+            var redacted = RedactNode(childPath, source[index], configuredSecretPatterns);
             result.Add(redacted.Value?.DeepClone());
             redactedAny |= redacted.WasRedacted;
         }
@@ -135,11 +152,22 @@ public sealed class Redactor : IRedactor
         return new RedactedValue(result, redactedAny);
     }
 
-    private static RedactedValue RedactScalar(string path, JsonValue value)
+    private static RedactedValue RedactScalar(
+        string path,
+        JsonValue value,
+        SecretPatternSet configuredSecretPatterns)
     {
         if (!value.TryGetValue<string>(out var raw) || raw is null)
         {
             return new RedactedValue(value.DeepClone(), WasRedacted: false);
+        }
+
+        if (configuredSecretPatterns.TryGetFirstMatch(raw, out var matchType))
+        {
+            var placeholder = matchType == SecretPatternSet.RegexMatchType
+                ? RedactedSecretRegexPlaceholder
+                : RedactedSecretLiteralPlaceholder;
+            return new RedactedValue(JsonValue.Create(placeholder), WasRedacted: true);
         }
 
         if (!string.IsNullOrWhiteSpace(raw)
@@ -408,4 +436,5 @@ public sealed class Redactor : IRedactor
             decimal dec => JsonValue.Create(dec),
             _ => JsonValue.Create(value.ToString())
         };
+
 }

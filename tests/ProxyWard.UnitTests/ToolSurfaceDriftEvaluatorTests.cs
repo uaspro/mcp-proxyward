@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using ProxyWard.Core.Policies;
 using ProxyWard.Locking.Lockfiles;
@@ -120,6 +121,113 @@ public class ToolSurfaceDriftEvaluatorTests : IAsyncLifetime
         var drift = Assert.Single(second.Drifts);
         Assert.Equal("repos.search", drift.ToolName);
         Assert.Contains(PolicyReasonCodes.ToolDescriptionChanged, drift.Reasons);
+    }
+
+    [Fact]
+    public async Task MetadataCaptureDoesNotChangeSnapshotHash()
+    {
+        using var store = new SqliteTrackedToolSchemaStore(_databasePath);
+        var tool = new DiscoveredTool(
+            "repos.search",
+            "Search",
+            "Description",
+            JsonNode.Parse("""{"type":"object","properties":{"token":{"type":"string","default":"secret-value"}}}"""),
+            null);
+
+        var captureEvaluator = new ToolSurfaceDriftEvaluator(
+            new ToolFingerprinter(),
+            store,
+            new ToolSchemaDiffMetadataOptions(CaptureValues: true, MaxValueBytes: 4096));
+        var hashOnlyEvaluator = new ToolSurfaceDriftEvaluator(
+            new ToolFingerprinter(),
+            store,
+            new ToolSchemaDiffMetadataOptions(CaptureValues: false, MaxValueBytes: 4096));
+
+        var first = await captureEvaluator.EvaluateAsync(
+            "github", "https://github-mcp/", "2025-11-25",
+            [tool], null, null, DateTimeOffset.UtcNow, CancellationToken.None);
+        var second = await hashOnlyEvaluator.EvaluateAsync(
+            "github", "https://github-mcp/", "2025-11-25",
+            [tool], null, null, DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+
+        Assert.Equal(1, first.Version);
+        Assert.True(first.WasNewVersion);
+        Assert.Equal(1, second.Version);
+        Assert.False(second.WasNewVersion);
+        Assert.False(second.HasDrift);
+    }
+
+    [Fact]
+    public async Task MetadataCaptureStoresBoundedRedactedSchemaMetadata()
+    {
+        using var store = new SqliteTrackedToolSchemaStore(_databasePath);
+        var evaluator = new ToolSurfaceDriftEvaluator(
+            new ToolFingerprinter(),
+            store,
+            new ToolSchemaDiffMetadataOptions(CaptureValues: true, MaxValueBytes: 4096));
+        var tool = new DiscoveredTool(
+            "repos.search",
+            "Search",
+            "Description",
+            JsonNode.Parse("""{"properties":{"token":{"default":"secret-value","type":"string"},"q":{"type":"string"}},"type":"object"}"""),
+            null);
+
+        await evaluator.EvaluateAsync(
+            "github", "https://github-mcp/", "2025-11-25",
+            [tool], null, null, DateTimeOffset.UtcNow, CancellationToken.None);
+
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _databasePath,
+            Mode = SqliteOpenMode.ReadOnly
+        }.ToString());
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT fingerprints FROM tool_schema_versions WHERE server_id = 'github';";
+        var fingerprintsJson = (string)(await command.ExecuteScalarAsync())!;
+
+        using var document = JsonDocument.Parse(fingerprintsJson);
+        var toolElement = document.RootElement.GetProperty("tools")[0];
+        Assert.Equal("Description", toolElement.GetProperty("description").GetString());
+        var inputSchema = toolElement.GetProperty("inputSchemaJson").GetString();
+        Assert.NotNull(inputSchema);
+        Assert.Contains("[redacted]", inputSchema, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-value", inputSchema, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MetadataCaptureOmitsValuesOverConfiguredLimit()
+    {
+        using var store = new SqliteTrackedToolSchemaStore(_databasePath);
+        var evaluator = new ToolSurfaceDriftEvaluator(
+            new ToolFingerprinter(),
+            store,
+            new ToolSchemaDiffMetadataOptions(CaptureValues: true, MaxValueBytes: 24));
+        var tool = new DiscoveredTool(
+            "repos.search",
+            "Search",
+            new string('d', 100),
+            JsonNode.Parse("""{"type":"object","properties":{"q":{"type":"string"}}}"""),
+            null);
+
+        await evaluator.EvaluateAsync(
+            "github", "https://github-mcp/", "2025-11-25",
+            [tool], null, null, DateTimeOffset.UtcNow, CancellationToken.None);
+
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _databasePath,
+            Mode = SqliteOpenMode.ReadOnly
+        }.ToString());
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT fingerprints FROM tool_schema_versions WHERE server_id = 'github';";
+        var fingerprintsJson = (string)(await command.ExecuteScalarAsync())!;
+
+        using var document = JsonDocument.Parse(fingerprintsJson);
+        var toolElement = document.RootElement.GetProperty("tools")[0];
+        Assert.Equal(JsonValueKind.Null, toolElement.GetProperty("description").ValueKind);
+        Assert.Equal(JsonValueKind.Null, toolElement.GetProperty("inputSchemaJson").ValueKind);
     }
 
     [Fact]
