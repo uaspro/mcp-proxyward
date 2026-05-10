@@ -31,7 +31,7 @@ public class ToolsListResponseInspectionIntegrationTests
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -47,7 +47,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
@@ -71,7 +71,7 @@ public class ToolsListResponseInspectionIntegrationTests
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -87,7 +87,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
@@ -104,7 +104,7 @@ public class ToolsListResponseInspectionIntegrationTests
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -122,7 +122,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
@@ -141,7 +141,7 @@ public class ToolsListResponseInspectionIntegrationTests
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 128, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -159,7 +159,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
@@ -183,7 +183,7 @@ public class ToolsListResponseInspectionIntegrationTests
             $"{upstream.BaseAddress}/mcp",
             new DiscoveredTool("repos.search", "Search", "Old description", JsonNode.Parse("""{"type":"object"}"""), null));
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -199,7 +199,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
@@ -265,7 +265,7 @@ public class ToolsListResponseInspectionIntegrationTests
                 JsonNode.Parse("""{"type":"object","properties":{"q":{"type":"string"}}}"""),
                 null));
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -283,7 +283,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
@@ -332,7 +332,7 @@ public class ToolsListResponseInspectionIntegrationTests
         var dbPath = NewTempSqlitePath();
         await SeedReviewedCurrentSchemaAsync(dbPath, "github", $"{upstream.BaseAddress}/mcp", status: "approved");
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -348,7 +348,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
@@ -370,7 +370,7 @@ public class ToolsListResponseInspectionIntegrationTests
         var dbPath = NewTempSqlitePath();
         var review = await SeedReviewedCurrentSchemaAsync(dbPath, "github", $"{upstream.BaseAddress}/mcp", reviewStatus);
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -388,7 +388,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
@@ -427,7 +427,7 @@ public class ToolsListResponseInspectionIntegrationTests
                 null),
             captureMetadata: false);
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_SCHEMA_DIFF_CAPTURE_VALUES", "false");
 
         try
@@ -444,7 +444,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
             Environment.SetEnvironmentVariable("PROXYWARD_SCHEMA_DIFF_CAPTURE_VALUES", null);
         }
 
@@ -473,7 +473,7 @@ public class ToolsListResponseInspectionIntegrationTests
             $"{upstream.BaseAddress}/mcp",
             new DiscoveredTool("repos.search", "Search", "Old description", JsonNode.Parse("""{"type":"object"}"""), null));
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -492,7 +492,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var review = Assert.Single(ReadDriftReviews(dbPath));
@@ -517,7 +517,7 @@ public class ToolsListResponseInspectionIntegrationTests
             $"{upstream.BaseAddress}/mcp",
             new DiscoveredTool("repos.search", "Search", "Old description", JsonNode.Parse("""{"type":"object"}"""), null));
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -542,7 +542,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
@@ -566,7 +566,7 @@ public class ToolsListResponseInspectionIntegrationTests
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -582,7 +582,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
@@ -606,7 +606,7 @@ public class ToolsListResponseInspectionIntegrationTests
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy(mode, "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -632,7 +632,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         Assert.Contains(metrics.Snapshots, measurement => measurement.Name == ProxyWardTelemetry.SchemaWriteFailedMetric
@@ -683,7 +683,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
         var before = await CountSchemaVersionsAsync(dbPath, "alpha");
         var policyPath = WriteTempPolicy(CreateSingleServerPolicy("beta", "/beta/mcp", upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -695,7 +695,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         Assert.Equal(1, before);
@@ -752,7 +752,7 @@ public class ToolsListResponseInspectionIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 
@@ -876,7 +876,7 @@ public class ToolsListResponseInspectionIntegrationTests
     private static async Task RunToolsListOnceAsync(string policyYaml, string route)
     {
         var policyPath = WriteTempPolicy(policyYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -891,7 +891,7 @@ public class ToolsListResponseInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 

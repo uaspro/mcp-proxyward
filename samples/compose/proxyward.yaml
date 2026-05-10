@@ -1,39 +1,68 @@
-mode: audit
-inspection:
-  maxBodyBytes: 1048576
-  unsupportedStreaming: warn
-  batchToolCalls: failClosed
 audit:
   sink: sqlite
   sqlitePath: /app/data/proxyward.db
+inspection:
+  batchToolCalls: failClosed
+  maxBodyBytes: 1048576
+  unsupportedStreaming: warn
+mode: audit
 observability:
-  serviceName: mcp-proxyward
+  applicationInsights:
+    connectionStringEnv: APPLICATIONINSIGHTS_CONNECTION_STRING
+    enabled: false
   console:
     enabled: true
   otlp:
     enabled: true
     endpoint: http://otel-collector:4317
-  applicationInsights:
-    enabled: false
-    connectionStringEnv: APPLICATIONINSIGHTS_CONNECTION_STRING
   sampling:
-    tracesRatio: 1.0
+    tracesRatio: 1
+  serviceName: mcp-proxyward
 servers:
-  sample:
-    route: /sample/mcp
-    upstream: http://sample-mcp:8080/mcp
-    allowed: true
-    tools:
-      default: allow
-      allow: []
-      block: []
+  github:
+    allowed: false
     arguments:
-      paths:
-        allowedRoots: []
-        blockTraversal: false
+      commands:
+        blockShell: true
+        dangerous: []
       hosts:
         allow: []
-        blockPrivateNetworks: false
+        blockPrivateNetworks: true
+      overrides: {}
+      paths:
+        allowedRoots: []
+        blockTraversal: true
+    route: /server/github
+    secrets:
+      blockReturn: false
+      patterns: []
+      redactInLogs: false
+    tools:
+      allow:
+      - test
+      block: []
+      default: allow
+    upstream: https://api.githubcopilot.com/mcp/
+  sample:
+    allowed: true
+    arguments:
       commands:
         blockShell: false
         dangerous: []
+      hosts:
+        allow: []
+        blockPrivateNetworks: false
+      overrides: {}
+      paths:
+        allowedRoots: []
+        blockTraversal: false
+    route: /sample/mcp
+    secrets:
+      blockReturn: false
+      patterns: []
+      redactInLogs: true
+    tools:
+      allow: []
+      block: []
+      default: allow
+    upstream: http://sample-mcp:8080/mcp

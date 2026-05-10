@@ -23,7 +23,7 @@ public class ObservabilityExportIntegrationTests
                 enabled: false
                 connectionStringEnv: APPLICATIONINSIGHTS_CONNECTION_STRING
             """));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -33,7 +33,7 @@ public class ObservabilityExportIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
             DeleteIfExists(policyPath);
         }
     }
@@ -54,7 +54,7 @@ public class ObservabilityExportIntegrationTests
                 enabled: true
                 connectionStringEnv: PROXYWARD_TEST_APPLICATIONINSIGHTS_CONNECTION_STRING
             """));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_TEST_APPLICATIONINSIGHTS_CONNECTION_STRING", connectionString);
 
         try
@@ -65,7 +65,7 @@ public class ObservabilityExportIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
             Environment.SetEnvironmentVariable("PROXYWARD_TEST_APPLICATIONINSIGHTS_CONNECTION_STRING", null);
             DeleteIfExists(policyPath);
         }
@@ -85,7 +85,7 @@ public class ObservabilityExportIntegrationTests
                 enabled: false
                 connectionStringEnv: PROXYWARD_TEST_APPLICATIONINSIGHTS_CONNECTION_STRING
             """));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_TEST_APPLICATIONINSIGHTS_CONNECTION_STRING", null);
 
         try
@@ -96,7 +96,7 @@ public class ObservabilityExportIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
             DeleteIfExists(policyPath);
         }
     }
@@ -124,7 +124,7 @@ public class ObservabilityExportIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-export-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 

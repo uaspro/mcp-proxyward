@@ -40,8 +40,7 @@ public sealed class ManagementSchemaDriftActionService
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = fullPath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared
+            Mode = SqliteOpenMode.ReadWriteCreate
         }.ToString();
     }
 
@@ -75,6 +74,12 @@ public sealed class ManagementSchemaDriftActionService
         await EnsureAuditSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
 
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        if (!await TableExistsAsync(connection, transaction, "schema_drift_reviews", cancellationToken).ConfigureAwait(false))
+        {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+
         var existing = await LoadReviewAsync(connection, transaction, id, cancellationToken).ConfigureAwait(false);
         if (existing is null)
         {
@@ -156,6 +161,26 @@ public sealed class ManagementSchemaDriftActionService
             CREATE INDEX IF NOT EXISTS idx_audit_events_reasons ON audit_events(reasons);
             """;
         await schema.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> TableExistsAsync(
+        SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction,
+        string tableName,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name = $table_name
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$table_name", tableName);
+
+        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
     }
 
     private static async Task<ReviewRow?> LoadReviewAsync(

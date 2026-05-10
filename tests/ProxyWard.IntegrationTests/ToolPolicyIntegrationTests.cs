@@ -24,7 +24,7 @@ public class ToolPolicyIntegrationTests
             toolDefault: "deny",
             allow: ["repos.search"],
             block: ["shell.exec"]));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"shell.exec","arguments":{"cmd":"ls"}}}""";
 
@@ -55,7 +55,7 @@ public class ToolPolicyIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -82,7 +82,7 @@ public class ToolPolicyIntegrationTests
             toolDefault: "allow",
             allow: [],
             block: ["shell.exec"]));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"shell.exec","arguments":{"cmd":"ls"}}}""";
 
@@ -100,7 +100,7 @@ public class ToolPolicyIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -125,7 +125,7 @@ public class ToolPolicyIntegrationTests
             toolDefault: "deny",
             allow: ["repos.search"],
             block: []));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"issues.list","arguments":{}}}""";
 
@@ -155,7 +155,7 @@ public class ToolPolicyIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -180,7 +180,7 @@ public class ToolPolicyIntegrationTests
             toolDefault: "allow",
             allow: [],
             block: ["shell.exec"]));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":"request-abc","method":"tools/call","params":{"name":"shell.exec","arguments":{"cmd":"ls"}}}""";
 
@@ -206,7 +206,7 @@ public class ToolPolicyIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -230,7 +230,7 @@ public class ToolPolicyIntegrationTests
             toolDefault: "allow",
             allow: [],
             block: ["shell.exec"]));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","method":"tools/call","params":{"name":"shell.exec","arguments":{"cmd":"ls"}}}""";
 
@@ -252,7 +252,7 @@ public class ToolPolicyIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -278,7 +278,7 @@ public class ToolPolicyIntegrationTests
             toolDefault: "deny",
             allow: ["issues.list", "repos.search"],
             block: []));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """
             [{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"repos.search","arguments":{"q":"proxyward"}}},{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"issues.list","arguments":{"state":"open"}}}]
@@ -302,7 +302,7 @@ public class ToolPolicyIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var toolRows = ReadAuditEvents(dbPath)
@@ -342,7 +342,7 @@ public class ToolPolicyIntegrationTests
             toolDefault: "deny",
             allow: ["repos.search"],
             block: ["shell.exec"]));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """
             [{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"repos.search","arguments":{"q":"proxyward"}}},{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"shell.exec","arguments":{"cmd":"rm -rf /tmp/demo"}}}]
@@ -380,7 +380,7 @@ public class ToolPolicyIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var toolRows = ReadAuditEvents(dbPath)
@@ -421,7 +421,7 @@ public class ToolPolicyIntegrationTests
             toolDefault: "allow",
             allow: [],
             block: ["shell.exec"]));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """
             [{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"shell.exec","arguments":{"cmd":"ls"}}},{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"repos.search","arguments":{"q":"proxyward"}}}]
@@ -445,7 +445,7 @@ public class ToolPolicyIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var toolRows = ReadAuditEvents(dbPath)
@@ -486,7 +486,7 @@ public class ToolPolicyIntegrationTests
             toolDefault: "deny",
             allow: ["repos.search"],
             block: []));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"repos.search","arguments":{"q":"foo"}}}""";
 
@@ -504,7 +504,7 @@ public class ToolPolicyIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -551,7 +551,7 @@ public class ToolPolicyIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 

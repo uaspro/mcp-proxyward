@@ -17,16 +17,6 @@ public static class ProxyWardPolicyLoader
         .IgnoreUnmatchedProperties()
         .Build();
 
-    public static ProxyWardPolicy LoadFile(string path)
-    {
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException($"ProxyWard policy file not found: {path}", path);
-        }
-
-        return Load(File.ReadAllText(path));
-    }
-
     public static ProxyWardPolicy Load(string yaml)
     {
         RejectRemovedLockfileKey(yaml);

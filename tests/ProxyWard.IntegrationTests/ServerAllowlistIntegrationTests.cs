@@ -17,7 +17,7 @@ public class ServerAllowlistIntegrationTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", allowed: true, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -36,7 +36,7 @@ public class ServerAllowlistIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -45,7 +45,7 @@ public class ServerAllowlistIntegrationTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", allowed: false, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -63,7 +63,7 @@ public class ServerAllowlistIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -72,7 +72,7 @@ public class ServerAllowlistIntegrationTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", allowed: false, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -89,7 +89,7 @@ public class ServerAllowlistIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -99,7 +99,7 @@ public class ServerAllowlistIntegrationTests
         await using var upstream = await StartUpstreamAsync();
         var logs = new CapturingLoggerProvider();
         var policyPath = WriteTempPolicy(CreatePolicy("audit", allowed: false, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -128,7 +128,7 @@ public class ServerAllowlistIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -167,7 +167,7 @@ public class ServerAllowlistIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 

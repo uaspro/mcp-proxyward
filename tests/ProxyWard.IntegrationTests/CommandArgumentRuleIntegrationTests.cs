@@ -29,7 +29,7 @@ public class CommandArgumentRuleIntegrationTests
             allowedRoots: [],
             blockPrivateNetworks: false,
             blockTool: null));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":500,"method":"tools/call","params":{"name":"shell.exec","arguments":{"command":"rm -rf /tmp/build"}}}""";
 
@@ -61,7 +61,7 @@ public class CommandArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -90,7 +90,7 @@ public class CommandArgumentRuleIntegrationTests
             allowedRoots: [],
             blockPrivateNetworks: false,
             blockTool: null));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":501,"method":"tools/call","params":{"name":"shell.exec","arguments":{"command":"rm -rf /tmp/build"}}}""";
 
@@ -112,7 +112,7 @@ public class CommandArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -140,7 +140,7 @@ public class CommandArgumentRuleIntegrationTests
             allowedRoots: [],
             blockPrivateNetworks: false,
             blockTool: null));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":502,"method":"tools/call","params":{"name":"shell.exec","arguments":{"command":"echo ready && echo done"}}}""";
 
@@ -166,7 +166,7 @@ public class CommandArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -191,7 +191,7 @@ public class CommandArgumentRuleIntegrationTests
             allowedRoots: ["/workspace"],
             blockPrivateNetworks: true,
             blockTool: null));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var resolver = new StubHostResolver().WithHost("internal.svc", IPAddress.Parse("10.0.0.5"));
         var body = """{"jsonrpc":"2.0","id":503,"method":"tools/call","params":{"name":"fs.fetch","arguments":{"path":"/etc/passwd","url":"https://internal.svc/api","command":"rm -rf tmp"}}}""";
@@ -222,7 +222,7 @@ public class CommandArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -249,7 +249,7 @@ public class CommandArgumentRuleIntegrationTests
             allowedRoots: [],
             blockPrivateNetworks: false,
             blockTool: "shell.exec"));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":504,"method":"tools/call","params":{"name":"shell.exec","arguments":{"command":"rm -rf /tmp/build"}}}""";
 
@@ -280,7 +280,7 @@ public class CommandArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -336,7 +336,7 @@ public class CommandArgumentRuleIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 

@@ -10,7 +10,6 @@ public class ComposeArtifactsTests
         AssertFileExists("Dockerfile");
         AssertFileExists(".dockerignore");
         AssertFileExists("docker-compose.yml");
-        AssertFileExists("samples/compose/proxyward.yaml");
         AssertFileExists("samples/compose/otel-collector.yaml");
         AssertFileExists("samples/compose/README.md");
         AssertFileExists("samples/SampleMcpServer/Program.cs");
@@ -26,9 +25,10 @@ public class ComposeArtifactsTests
     }
 
     [Fact]
-    public void ComposePolicyLoadsSampleRouteStorageAndTelemetrySettings()
+    public void DefaultPolicyBootstrapsSampleRouteStorageAndTelemetrySettings()
     {
-        var policy = ProxyWardPolicyLoader.LoadFile(RepoPath("samples/compose/proxyward.yaml"));
+        var policy = ProxyWardPolicyLoader.Load(
+            ProxyWardDefaultPolicy.CreateYaml("/app/data/proxyward.db", "http://sample-mcp:8080/mcp"));
 
         Assert.Equal(ProxyWardMode.Audit, policy.Mode);
         Assert.Equal("sqlite", policy.Audit.Sink);
@@ -55,8 +55,9 @@ public class ComposeArtifactsTests
         Assert.Contains("sample-mcp:", compose, StringComparison.Ordinal);
         Assert.Contains("otel-collector:", compose, StringComparison.Ordinal);
         Assert.Contains("proxyward-data:", compose, StringComparison.Ordinal);
-        Assert.Contains("./samples/compose/proxyward.yaml:/app/config/proxyward.yaml:ro", compose, StringComparison.Ordinal);
-        Assert.Contains("PROXYWARD_POLICY_PATH: /app/config/proxyward.yaml", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("proxyward.yaml:/app/config/proxyward.yaml", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("PROXYWARD_POLICY_PATH", compose, StringComparison.Ordinal);
+        Assert.Contains("PROXYWARD_DB_PATH: /app/data/proxyward.db", compose, StringComparison.Ordinal);
         Assert.Contains("http://+:8080", compose, StringComparison.Ordinal);
     }
 

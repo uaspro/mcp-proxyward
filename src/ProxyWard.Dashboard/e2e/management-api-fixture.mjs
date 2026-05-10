@@ -2,6 +2,10 @@ import http from 'node:http'
 
 const port = Number(process.env.PROXYWARD_E2E_API_PORT ?? 8091)
 const now = new Date('2026-05-10T15:00:00.000Z').toISOString()
+const confirmationToken = 'e2e-confirmation-token'
+let runtimeMode = 'audit'
+let auditTotal = 1
+let pendingDriftTotal = 1
 
 const auditEvent = {
   id: 101,
@@ -193,8 +197,8 @@ const responses = {
     yaml: 'mode: audit\nservers:\n  sample:\n    route: /sample/mcp\n',
     policyHash: 'sha256:e2e',
     source: {
-      path: '/app/config/proxyward.yaml',
-      format: 'yaml',
+      path: 'sqlite:/app/data/proxyward.db#policy_snapshots',
+      format: 'sqlite',
       exists: true,
       lastModifiedUtc: now,
       sizeBytes: 1024,
@@ -202,7 +206,7 @@ const responses = {
     model: policyModel,
     readOnly: {
       policyHash: 'sha256:e2e',
-      sourcePath: '/app/config/proxyward.yaml',
+      sourcePath: 'sqlite:/app/data/proxyward.db#policy_snapshots',
       serverCount: 1,
       loadedAtUtc: now,
     },
@@ -228,7 +232,7 @@ const responses = {
     },
     service: {
       policyHash: 'sha256:e2e',
-      sourcePath: '/app/config/proxyward.yaml',
+      sourcePath: 'sqlite:/app/data/proxyward.db#policy_snapshots',
       serverCount: 1,
       loadedAtUtc: now,
       sourceLastModifiedUtc: now,
@@ -260,6 +264,96 @@ const responses = {
   },
 }
 
+function createAuditEventsResponse() {
+  return {
+    ...responses['/api/audit/events'],
+    totalCount: auditTotal,
+    items: auditTotal > 0 ? [auditEvent] : [],
+  }
+}
+
+function createSchemaDriftsResponse() {
+  return {
+    ...responses['/api/schema/drifts'],
+    totalCount: pendingDriftTotal,
+    items: pendingDriftTotal > 0 ? [driftItem] : [],
+  }
+}
+
+function createStatusResponse() {
+  return {
+    ...responses['/api/status'],
+    components: {
+      ...responses['/api/status'].components,
+      proxyControl: {
+        ...responses['/api/status'].components.proxyControl,
+        details: {
+          ...responses['/api/status'].components.proxyControl.details,
+          mode: runtimeMode,
+        },
+      },
+    },
+  }
+}
+
+function createPolicyResponse() {
+  return {
+    ...responses['/api/policy'],
+    yaml: `mode: ${runtimeMode}\nservers:\n  sample:\n    route: /sample/mcp\n`,
+    model: {
+      ...policyModel,
+      mode: runtimeMode,
+    },
+  }
+}
+
+function normalizeFixtureMode(value) {
+  return value === 'enforce' ? 'enforce' : 'audit'
+}
+
+function createModeImpactResponse(targetMode) {
+  const requiresConfirmation = runtimeMode === 'audit' && targetMode === 'enforce'
+  return {
+    currentMode: runtimeMode,
+    targetMode,
+    currentPolicyHash: 'sha256:e2e',
+    requiresConfirmation,
+    confirmationToken: requiresConfirmation ? confirmationToken : null,
+    window: {
+      fromUtc: '2026-05-10T14:00:00.000Z',
+      toUtc: now,
+    },
+    wouldBlockCount: 1,
+    pendingDriftCount: 1,
+    unapprovedDriftCount: 1,
+    affected: [
+      {
+        serverId: 'sample',
+        toolName: 'fs.read',
+        wouldBlockCount: 1,
+        pendingDriftCount: 1,
+        unapprovedDriftCount: 1,
+        reasons: ['path_traversal'],
+      },
+    ],
+  }
+}
+
+function writeJson(response, statusCode, payload) {
+  response.writeHead(statusCode, { 'content-type': 'application/json' })
+  response.end(JSON.stringify(payload))
+}
+
+function readJsonRequest(request, callback) {
+  let body = ''
+  request.on('data', (chunk) => {
+    body += chunk.toString('utf8')
+  })
+  request.on('end', () => {
+    callback(body ? JSON.parse(body) : {})
+  })
+}
+
 const server = http.createServer((request, response) => {
   const url = new URL(request.url ?? '/', `http://${request.headers.host}`)
 
@@ -273,15 +367,103 @@ const server = http.createServer((request, response) => {
     return
   }
 
-  const payload = responses[url.pathname]
-  if (payload === undefined) {
-    response.writeHead(404, { 'content-type': 'application/json' })
-    response.end(JSON.stringify({ error: 'not_found', path: url.pathname }))
+  if (request.method === 'POST' && url.pathname === '/__test/reset') {
+    runtimeMode = 'audit'
+    auditTotal = Number(url.searchParams.get('audit') ?? 1)
+    pendingDriftTotal = Number(url.searchParams.get('drift') ?? 1)
+    writeJson(response, 200, { ok: true })
     return
   }
 
-  response.writeHead(200, { 'content-type': 'application/json' })
-  response.end(JSON.stringify(payload))
+  if (request.method === 'GET' && url.pathname === '/api/status') {
+    writeJson(response, 200, createStatusResponse())
+    return
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/policy') {
+    writeJson(response, 200, createPolicyResponse())
+    return
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/policy/impact') {
+    const targetMode = url.searchParams.get('mode') === 'enforce' ? 'enforce' : 'audit'
+    writeJson(response, 200, createModeImpactResponse(targetMode))
+    return
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/audit/events') {
+    writeJson(response, 200, createAuditEventsResponse())
+    return
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/schema/drifts') {
+    writeJson(response, 200, createSchemaDriftsResponse())
+    return
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/policy/validate') {
+    readJsonRequest(request, (body) => {
+      const normalizedModel = body.model ? { ...body.model } : { ...policyModel, mode: runtimeMode }
+      writeJson(response, 200, {
+        valid: true,
+        errors: [],
+        warnings: [],
+        policyHash: 'sha256:e2e',
+        normalizedModel,
+      })
+    })
+    return
+  }
+
+  if (request.method === 'PUT' && url.pathname === '/api/policy') {
+    readJsonRequest(request, (body) => {
+      const previousMode = runtimeMode
+      const appliedMode = normalizeFixtureMode(body.model?.mode)
+      runtimeMode = appliedMode
+      writeJson(response, 200, {
+        previousMode,
+        mode: appliedMode,
+        previousPolicyHash: 'sha256:e2e',
+        policyHash: 'sha256:e2e',
+        serverCount: Object.keys(body.model?.servers ?? policyModel.servers).length,
+        routeVersion: 1,
+        yarp: { routeVersion: 1 },
+      })
+    })
+    return
+  }
+
+  if (request.method === 'PATCH' && url.pathname === '/api/policy/mode') {
+    readJsonRequest(request, (parsed) => {
+      const targetMode = parsed.mode === 'enforce' ? 'enforce' : 'audit'
+      const impact = createModeImpactResponse(targetMode)
+      if (impact.requiresConfirmation && parsed.confirmationToken !== confirmationToken) {
+        writeJson(response, 400, { error: 'mode_confirmation_invalid' })
+        return
+      }
+
+      const previousMode = runtimeMode
+      runtimeMode = targetMode
+      writeJson(response, 200, {
+        mode: runtimeMode,
+        previousMode,
+        policyHash: 'sha256:e2e',
+        previousPolicyHash: 'sha256:e2e',
+        serverCount: 1,
+        routeVersion: 1,
+        impact,
+      })
+    })
+    return
+  }
+
+  const payload = responses[url.pathname]
+  if (payload === undefined) {
+    writeJson(response, 404, { error: 'not_found', path: url.pathname })
+    return
+  }
+
+  writeJson(response, 200, payload)
 })
 
 server.listen(port, '127.0.0.1', () => {

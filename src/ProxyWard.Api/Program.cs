@@ -12,16 +12,24 @@ using ProxyWard.Locking.Lockfiles;
 using ProxyWard.Locking.Persistence;
 using ProxyWard.Locking.Tools;
 using ProxyWard.Policy.Configuration;
+using ProxyWard.Policy.Persistence;
 using ProxyWard.Policy.Engine;
 using Yarp.ReverseProxy.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var policyPath = Environment.GetEnvironmentVariable("PROXYWARD_POLICY_PATH")
-    ?? builder.Configuration["ProxyWard:PolicyPath"]
-    ?? "proxyward.yaml";
+var databasePath = Environment.GetEnvironmentVariable("PROXYWARD_DB_PATH")
+    ?? builder.Configuration["ProxyWard:DatabasePath"]
+    ?? "./data/proxyward.db";
+var bootstrapSampleUpstream = Environment.GetEnvironmentVariable("PROXYWARD_BOOTSTRAP_SAMPLE_UPSTREAM")
+    ?? builder.Configuration["ProxyWard:BootstrapSampleUpstream"]
+    ?? ProxyWardDefaultPolicy.DefaultSampleUpstream;
 
-var policy = ProxyWardPolicyLoader.LoadFile(policyPath);
+var policyStore = new SqlitePolicyStore(databasePath);
+var snapshot = await policyStore.InitializeAndReadCurrentAsync(
+    ProxyWardDefaultPolicy.CreateYaml(databasePath, bootstrapSampleUpstream),
+    CancellationToken.None);
+var policy = snapshot.Policy;
 var controlOptions = ProxyWardControlOptions.Load(builder.Configuration);
 var diffMetadataOptions = CreateToolSchemaDiffMetadataOptions(builder.Configuration);
 var yarpConfigProvider = new DynamicProxyWardYarpConfigProvider(
@@ -29,6 +37,7 @@ var yarpConfigProvider = new DynamicProxyWardYarpConfigProvider(
     ProxyWardYarpConfig.CreateClusters(policy));
 builder.AddProxyWardObservability(policy);
 builder.Services.AddSingleton(policy);
+builder.Services.AddSingleton(policyStore);
 builder.Services.AddSingleton<IProxyWardPolicyProvider>(new InMemoryProxyWardPolicyProvider(policy));
 builder.Services.AddSingleton(controlOptions);
 builder.Services.AddSingleton(diffMetadataOptions);

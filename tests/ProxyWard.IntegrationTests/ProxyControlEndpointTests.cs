@@ -17,7 +17,7 @@ public class ProxyControlEndpointTests
     public async Task ControlStatusIsNotAvailableWhenRuntimeControlIsDisabled()
     {
         var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", null);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", null);
 
@@ -40,7 +40,7 @@ public class ProxyControlEndpointTests
     public async Task ControlStatusRequiresBearerTokenWhenRuntimeControlIsEnabled()
     {
         var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -63,7 +63,7 @@ public class ProxyControlEndpointTests
     public async Task ControlStatusRejectsInvalidBearerTokenWhenRuntimeControlIsEnabled()
     {
         var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -93,7 +93,7 @@ public class ProxyControlEndpointTests
             "sqlitePath: ./data/proxyward.db",
             $"sqlitePath: {databasePath.Replace('\\', '/')}",
             StringComparison.Ordinal));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", expectedToken);
 
@@ -125,7 +125,7 @@ public class ProxyControlEndpointTests
     public async Task ControlStatusReturnsRuntimeMetadataWithValidBearerToken()
     {
         var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -159,7 +159,7 @@ public class ProxyControlEndpointTests
     public async Task ControlPolicySnapshotAppliesValidSnapshotForNewStatusReads()
     {
         var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -202,7 +202,7 @@ public class ProxyControlEndpointTests
     public async Task ControlPolicySnapshotRejectsInvalidYamlAndPreservesActiveSnapshot()
     {
         var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -242,7 +242,7 @@ public class ProxyControlEndpointTests
     public async Task ControlPolicySnapshotMakesNewRequestsUseAppliedServerAllowlist()
     {
         var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -282,7 +282,7 @@ public class ProxyControlEndpointTests
     public async Task ControlModeAppliesModeOnlySnapshotAndComputesPolicyHash()
     {
         var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -325,7 +325,7 @@ public class ProxyControlEndpointTests
     public async Task ControlModeRejectsInvalidModeAndPreservesActiveSnapshot()
     {
         var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -365,7 +365,7 @@ public class ProxyControlEndpointTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -410,7 +410,7 @@ public class ProxyControlEndpointTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -444,7 +444,7 @@ public class ProxyControlEndpointTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -494,7 +494,7 @@ public class ProxyControlEndpointTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -547,7 +547,7 @@ public class ProxyControlEndpointTests
     public async Task ProxyDataPlaneDoesNotServeDashboardAuditApi()
     {
         var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
 
@@ -569,7 +569,7 @@ public class ProxyControlEndpointTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 
@@ -660,7 +660,7 @@ public class ProxyControlEndpointTests
 
     private static void ClearProxyWardEnvironment()
     {
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", null);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", null);
         Environment.SetEnvironmentVariable("PROXYWARD_ADMIN_TOKEN", null);

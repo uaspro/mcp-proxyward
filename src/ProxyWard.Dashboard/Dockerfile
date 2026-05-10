@@ -4,6 +4,7 @@ FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY package*.json ./
+RUN npm install -g npm@11.6.2
 RUN npm ci
 
 COPY . .

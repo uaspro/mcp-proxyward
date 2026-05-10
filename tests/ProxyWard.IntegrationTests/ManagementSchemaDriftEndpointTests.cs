@@ -26,6 +26,36 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DriftListEndpointReturnsEmptyPageWhenDriftTableIsNotInitialized()
+    {
+        await CreateEmptyDatabaseAsync();
+
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        try
+        {
+            await using var factory = new WebApplicationFactory<ManagementProgram>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.GetAsync(
+                "/api/schema/drifts?status=pending&fromUtc=2026-05-10T10%3A00%3A00Z&toUtc=2026-05-10T11%3A00%3A00Z&pageSize=10");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+            var root = payload.RootElement;
+
+            Assert.Equal(0, root.GetProperty("totalCount").GetInt64());
+            Assert.Equal(10, root.GetProperty("pageSize").GetInt32());
+            Assert.Empty(root.GetProperty("items").EnumerateArray());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        }
+    }
+
+    [Fact]
     public async Task DriftListEndpointAppliesFiltersAndReturnsImpactCount()
     {
         var first = await SeedReviewAsync(
@@ -272,6 +302,33 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task DriftActionEndpointReturnsNotFoundWhenDriftTableIsNotInitialized()
+    {
+        await CreateEmptyDatabaseAsync();
+
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
+        try
+        {
+            await using var factory = new WebApplicationFactory<ManagementProgram>();
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "test-admin-token");
+
+            using var response = await client.PostAsync(
+                "/api/schema/drifts/9999/block",
+                new StringContent("{}", Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(AdminTokenEnv, null);
+        }
+    }
+
     private async Task<DriftReviewRecordResult> SeedReviewAsync(
         string serverId,
         string toolName,
@@ -325,6 +382,17 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         command.Parameters.AddWithValue("$status", status);
         command.Parameters.AddWithValue("$id", id);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task CreateEmptyDatabaseAsync()
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+            {
+                DataSource = _databasePath,
+                Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadWriteCreate
+            }.ToString());
+        await connection.OpenAsync();
     }
 
     private async Task<string> ReadReviewStatusAsync(long id)

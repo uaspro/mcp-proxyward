@@ -5,6 +5,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
 using ProxyWard.Management.Api.Status;
+using ProxyWard.Policy.Configuration;
+using ProxyWard.Policy.Persistence;
 
 namespace ProxyWard.Management.Api.Policy;
 
@@ -20,20 +22,22 @@ public sealed class ManagementPolicyModeService
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly IProxyControlClient _proxyControlClient;
+    private readonly SqlitePolicyStore _policyStore;
 
     public ManagementPolicyModeService(
         ManagementApiOptions options,
-        IProxyControlClient proxyControlClient)
+        IProxyControlClient proxyControlClient,
+        SqlitePolicyStore policyStore)
     {
         ArgumentNullException.ThrowIfNull(options);
         _proxyControlClient = proxyControlClient ?? throw new ArgumentNullException(nameof(proxyControlClient));
+        _policyStore = policyStore ?? throw new ArgumentNullException(nameof(policyStore));
 
         _databasePath = Path.GetFullPath(options.AuditDatabasePath);
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = _databasePath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared
+            Mode = SqliteOpenMode.ReadWriteCreate
         }.ToString();
     }
 
@@ -62,6 +66,9 @@ public sealed class ManagementPolicyModeService
 
         var targetMode = NormalizeMode(request.Mode);
         var currentStatus = await _proxyControlClient.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        var currentPolicy = await _policyStore.InitializeAndReadCurrentAsync(
+            ProxyWardDefaultPolicy.CreateYaml(_databasePath),
+            cancellationToken).ConfigureAwait(false);
         var window = NormalizeWindow(request.ImpactFromUtc, request.ImpactToUtc);
         var impact = await BuildImpactAsync(targetMode, currentStatus, window, cancellationToken).ConfigureAwait(false);
 
@@ -86,6 +93,24 @@ public sealed class ManagementPolicyModeService
             .ApplyModeAsync(targetMode, cancellationToken)
             .ConfigureAwait(false);
 
+        var persistedPolicy = ProxyWardPolicyLoader.WithMode(
+            currentPolicy.Policy,
+            targetMode == "enforce" ? ProxyWardMode.Enforce : ProxyWardMode.Audit);
+        var persistedYaml = ProxyWardPolicySerializer.ToYaml(persistedPolicy);
+        try
+        {
+            await _policyStore.SaveAsync(
+                persistedYaml,
+                request.RequestedBy,
+                request.Note,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await TryRollbackModeAsync(currentStatus.Mode, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
         await WriteModeSwitchAuditAsync(
             currentStatus,
             appliedStatus,
@@ -101,6 +126,18 @@ public sealed class ManagementPolicyModeService
             ServerCount: appliedStatus.ServerCount,
             RouteVersion: appliedStatus.RouteVersion,
             Impact: impact);
+    }
+
+    private async Task TryRollbackModeAsync(string previousMode, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _proxyControlClient.ApplyModeAsync(NormalizeMode(previousMode), cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The original DB snapshot remains current; callers receive the persistence failure.
+        }
     }
 
     private async Task<ManagementPolicyModeImpactResponse> BuildImpactAsync(
@@ -147,8 +184,7 @@ public sealed class ManagementPolicyModeService
         var readConnectionString = new SqliteConnectionStringBuilder
         {
             DataSource = _databasePath,
-            Mode = SqliteOpenMode.ReadOnly,
-            Cache = SqliteCacheMode.Shared
+            Mode = SqliteOpenMode.ReadOnly
         }.ToString();
 
         await using var connection = new SqliteConnection(readConnectionString);

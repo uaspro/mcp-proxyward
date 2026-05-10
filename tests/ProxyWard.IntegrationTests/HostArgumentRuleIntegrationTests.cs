@@ -26,7 +26,7 @@ public class HostArgumentRuleIntegrationTests
             dbPath,
             allow: [],
             blockPrivateNetworks: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var resolver = new StubHostResolver().WithHost("internal.svc", IPAddress.Parse("10.0.0.5"));
         var body = """{"jsonrpc":"2.0","id":400,"method":"tools/call","params":{"name":"http.get","arguments":{"url":"https://internal.svc/api"}}}""";
@@ -53,7 +53,7 @@ public class HostArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -76,7 +76,7 @@ public class HostArgumentRuleIntegrationTests
             dbPath,
             allow: ["api.github.com"],
             blockPrivateNetworks: false));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var resolver = new StubHostResolver();
         var body = """{"jsonrpc":"2.0","id":401,"method":"tools/call","params":{"name":"http.get","arguments":{"url":"https://evil.example.com/x"}}}""";
@@ -103,7 +103,7 @@ public class HostArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -125,7 +125,7 @@ public class HostArgumentRuleIntegrationTests
             dbPath,
             allow: [],
             blockPrivateNetworks: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var resolver = new StubHostResolver().WithHost("internal.svc", IPAddress.Parse("10.0.0.5"));
         var body = """{"jsonrpc":"2.0","id":402,"method":"tools/call","params":{"name":"http.get","arguments":{"url":"https://internal.svc/api"}}}""";
@@ -148,7 +148,7 @@ public class HostArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -171,7 +171,7 @@ public class HostArgumentRuleIntegrationTests
             dbPath,
             allow: ["api.github.com"],
             blockPrivateNetworks: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var resolver = new StubHostResolver().WithHost("api.github.com", IPAddress.Parse("140.82.121.6"));
         var body = """{"jsonrpc":"2.0","id":403,"method":"tools/call","params":{"name":"http.get","arguments":{"url":"https://api.github.com/repos/foo/bar"}}}""";
@@ -190,7 +190,7 @@ public class HostArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -213,7 +213,7 @@ public class HostArgumentRuleIntegrationTests
             blockPrivateNetworks: true,
             allowedRoots: ["/workspace"],
             blockTraversal: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var resolver = new StubHostResolver().WithHost("internal.svc", IPAddress.Parse("10.0.0.5"));
         var body = """{"jsonrpc":"2.0","id":404,"method":"tools/call","params":{"name":"fs.fetch","arguments":{"path":"/etc/passwd","url":"https://internal.svc/api"}}}""";
@@ -244,7 +244,7 @@ public class HostArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -268,7 +268,7 @@ public class HostArgumentRuleIntegrationTests
             blockTool: "http.get",
             allow: [],
             blockPrivateNetworks: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var resolver = new StubHostResolver().WithHost("internal.svc", IPAddress.Parse("10.0.0.5"));
         var body = """{"jsonrpc":"2.0","id":405,"method":"tools/call","params":{"name":"http.get","arguments":{"url":"https://internal.svc/api"}}}""";
@@ -300,7 +300,7 @@ public class HostArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         Assert.Equal(0, resolver.CallCount);
@@ -325,7 +325,7 @@ public class HostArgumentRuleIntegrationTests
             dbPath,
             allow: ["API.GitHub.com"],
             blockPrivateNetworks: false));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var resolver = new StubHostResolver();
         var body = """{"jsonrpc":"2.0","id":407,"method":"tools/call","params":{"name":"http.get","arguments":{"url":"https://api.github.com/repos/foo/bar"}}}""";
@@ -344,7 +344,7 @@ public class HostArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -365,7 +365,7 @@ public class HostArgumentRuleIntegrationTests
             dbPath,
             allow: [],
             blockPrivateNetworks: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var resolver = new StubHostResolver().WithFailingHost("unresolvable.example");
         var body = """{"jsonrpc":"2.0","id":406,"method":"tools/call","params":{"name":"http.get","arguments":{"url":"https://unresolvable.example/x"}}}""";
@@ -392,7 +392,7 @@ public class HostArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -447,7 +447,7 @@ public class HostArgumentRuleIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 

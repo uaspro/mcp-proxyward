@@ -5,10 +5,34 @@ namespace ProxyWard.Api.Yarp;
 
 public static class ProxyWardYarpConfig
 {
+    private static readonly string[] WellKnownMetadataPrefixes =
+    [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/openid-configuration"
+    ];
+
     public static IReadOnlyList<RouteConfig> CreateRoutes(ProxyWardPolicy policy) =>
-        policy.Servers.Values
-            .SelectMany(CreateRoutes)
+        CreateRoutes(policy.Servers.Values)
             .ToArray();
+
+    private static IEnumerable<RouteConfig> CreateRoutes(IEnumerable<ServerPolicy> servers)
+    {
+        var serverList = servers.ToArray();
+
+        foreach (var route in serverList.SelectMany(CreateRoutes))
+        {
+            yield return route;
+        }
+
+        if (serverList.Length == 1)
+        {
+            foreach (var route in CreateOriginWellKnownRoutes(serverList[0]))
+            {
+                yield return route;
+            }
+        }
+    }
 
     public static IReadOnlyList<ClusterConfig> CreateClusters(ProxyWardPolicy policy) =>
         policy.Servers.Values
@@ -16,6 +40,19 @@ public static class ProxyWardYarpConfig
             .ToArray();
 
     private static IEnumerable<RouteConfig> CreateRoutes(ServerPolicy server)
+    {
+        foreach (var route in CreateMcpRoutes(server))
+        {
+            yield return route;
+        }
+
+        foreach (var route in CreateRouteScopedWellKnownRoutes(server))
+        {
+            yield return route;
+        }
+    }
+
+    private static IEnumerable<RouteConfig> CreateMcpRoutes(ServerPolicy server)
     {
         var routePrefix = NormalizeRoutePrefix(server.Route);
         var transforms = CreatePathTransforms(routePrefix, server.Upstream.AbsolutePath);
@@ -43,6 +80,53 @@ public static class ProxyWardYarpConfig
             },
             Transforms = transforms
         };
+    }
+
+    private static IEnumerable<RouteConfig> CreateRouteScopedWellKnownRoutes(ServerPolicy server) =>
+        WellKnownMetadataPrefixes.Select((metadataPrefix, index) =>
+            CreateWellKnownRoute(
+                server,
+                routeId: $"{server.Id}-well-known-{index}",
+                sourcePrefix: $"{metadataPrefix}{NormalizeRoutePrefix(server.Route)}",
+                metadataPrefix,
+                order: -100 + index));
+
+    private static IEnumerable<RouteConfig> CreateOriginWellKnownRoutes(ServerPolicy server) =>
+        WellKnownMetadataPrefixes.Select((metadataPrefix, index) =>
+            CreateWellKnownRoute(
+                server,
+                routeId: $"{server.Id}-origin-well-known-{index}",
+                sourcePrefix: metadataPrefix,
+                metadataPrefix,
+                order: -200 + index));
+
+    private static RouteConfig CreateWellKnownRoute(
+        ServerPolicy server,
+        string routeId,
+        string sourcePrefix,
+        string metadataPrefix,
+        int order) =>
+        new()
+        {
+            RouteId = routeId,
+            ClusterId = server.Id,
+            Order = order,
+            Match = new RouteMatch
+            {
+                Path = sourcePrefix
+            },
+            Transforms = CreatePathTransforms(
+                sourcePrefix,
+                JoinPath(metadataPrefix, server.Upstream.AbsolutePath))
+        };
+
+    private static string JoinPath(string prefix, string suffix)
+    {
+        var normalizedPrefix = prefix.TrimEnd('/');
+        var normalizedSuffix = NormalizeRoutePrefix(suffix);
+        return normalizedSuffix == "/"
+            ? normalizedPrefix
+            : $"{normalizedPrefix}{normalizedSuffix}";
     }
 
     private static ClusterConfig CreateCluster(ServerPolicy server) =>

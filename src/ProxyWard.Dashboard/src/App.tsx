@@ -15,11 +15,13 @@ import {
   Moon,
   Pause,
   Play,
+  Plus,
   RefreshCw,
   Search,
   Settings,
   Shield,
   Sun,
+  Trash2,
   XCircle,
   type LucideIcon,
 } from 'lucide-react'
@@ -84,23 +86,72 @@ type Theme = 'light' | 'dark'
 type Mode = 'audit' | 'enforce'
 type DriftTab = 'diff' | 'before' | 'after' | 'history'
 
+type NewServerPolicyForm = {
+  id: string
+  route: string
+  upstream: string
+}
+
 type NavItem = {
   id: RouteId
   label: string
   icon: LucideIcon
-  badge?: string
-  dot?: boolean
 }
 
 const navItems: NavItem[] = [
   { id: 'overview', label: 'Overview', icon: Activity },
-  { id: 'audit', label: 'Audit log', icon: List, badge: '412k' },
-  { id: 'drift', label: 'Schema drift', icon: GitBranch, dot: true },
+  { id: 'audit', label: 'Audit log', icon: List },
+  { id: 'drift', label: 'Schema drift', icon: GitBranch },
   { id: 'policy', label: 'Policy', icon: FileCode2 },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
 
+const routePathById: Record<RouteId, string> = {
+  overview: '/',
+  audit: '/audit',
+  drift: '/schema-drift',
+  policy: '/policy',
+  settings: '/settings',
+}
+
+const routeIdByPath: Record<string, RouteId> = {
+  '/': 'overview',
+  '/overview': 'overview',
+  '/audit': 'audit',
+  '/audit-log': 'audit',
+  '/schema-drift': 'drift',
+  '/drift': 'drift',
+  '/policy': 'policy',
+  '/settings': 'settings',
+}
+
 const storageKey = 'proxyward.dashboard.theme'
+
+function normalizeRoutePath(pathname: string): string {
+  const path = pathname.toLowerCase().replace(/\/+$/, '')
+  return path === '' ? '/' : path
+}
+
+function routeFromLocation(): RouteId {
+  if (typeof window === 'undefined') {
+    return 'overview'
+  }
+
+  return routeIdByPath[normalizeRoutePath(window.location.pathname)] ?? 'overview'
+}
+
+function normalizeRuntimeMode(value: unknown): Mode | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const normalized = value.trim().toLowerCase()
+  return normalized === 'audit' || normalized === 'enforce' ? normalized : null
+}
+
+function runtimeModeFromStatus(status: StatusResponse): Mode | null {
+  return normalizeRuntimeMode(status.components.proxyControl.details?.mode)
+}
 
 function readStoredTheme(): Theme {
   try {
@@ -126,15 +177,128 @@ function usePersistedTheme() {
   return [theme, setTheme] as const
 }
 
+function useNavMetrics() {
+  const [metrics, setMetrics] = useState<{
+    auditTotal: number | null
+    pendingDriftTotal: number | null
+  }>({ auditTotal: null, pendingDriftTotal: null })
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    Promise.allSettled([
+      getAuditEvents({ offset: 0, pageSize: 1 }, controller.signal),
+      getSchemaDrifts({ status: 'pending', offset: 0, pageSize: 1 }, controller.signal),
+    ]).then(([auditResult, driftResult]) => {
+      if (controller.signal.aborted) {
+        return
+      }
+
+      setMetrics({
+        auditTotal: auditResult.status === 'fulfilled' ? auditResult.value.totalCount : null,
+        pendingDriftTotal: driftResult.status === 'fulfilled' ? driftResult.value.totalCount : null,
+      })
+    })
+
+    return () => controller.abort()
+  }, [])
+
+  return metrics
+}
+
+function formatNavCount(count: number | null): string | null {
+  if (count === null) {
+    return null
+  }
+
+  return new Intl.NumberFormat(undefined, {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(count)
+}
+
 function App() {
-  const [route, setRoute] = useState<RouteId>('overview')
+  const [route, setRoute] = useState<RouteId>(() => routeFromLocation())
   const [theme, setTheme] = usePersistedTheme()
   const [mode, setMode] = useState<Mode>('audit')
+  const [modeRefreshing, setModeRefreshing] = useState(true)
   const [pendingMode, setPendingMode] = useState<Mode | null>(null)
+  const navMetrics = useNavMetrics()
   const activeRoute = useMemo(
     () => navItems.find((item) => item.id === route) ?? navItems[0],
     [route],
   )
+  const readRuntimeMode = useCallback(async (signal?: AbortSignal) => {
+    const status = await getStatus(signal)
+    return runtimeModeFromStatus(status)
+  }, [])
+  const navigateToRoute = useCallback((nextRoute: RouteId) => {
+    setRoute(nextRoute)
+
+    const nextPath = routePathById[nextRoute]
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({ route: nextRoute }, '', nextPath)
+    }
+  }, [])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setRoute(routeFromLocation())
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+    const controller = new AbortController()
+
+    readRuntimeMode(controller.signal)
+      .then((nextMode) => {
+        if (mounted && nextMode) {
+          setMode(nextMode)
+        }
+      })
+      .catch(async () => {
+        try {
+          const policy = await getPolicy(controller.signal)
+          const nextMode = normalizeRuntimeMode(policy.model.mode)
+          if (mounted && nextMode) {
+            setMode(nextMode)
+          }
+        } catch {
+          // Keep the last known mode; individual screens surface API failures.
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setModeRefreshing(false)
+        }
+      })
+
+    return () => {
+      mounted = false
+      controller.abort()
+    }
+  }, [readRuntimeMode])
+
+  const openModeSwitchDialog = useCallback(() => {
+    setModeRefreshing(true)
+    readRuntimeMode()
+      .then((freshMode) => {
+        const currentMode = freshMode ?? mode
+        if (freshMode) {
+          setMode(freshMode)
+        }
+
+        setPendingMode(currentMode === 'audit' ? 'enforce' : 'audit')
+      })
+      .catch(() => {
+        setPendingMode(mode === 'audit' ? 'enforce' : 'audit')
+      })
+      .finally(() => setModeRefreshing(false))
+  }, [mode, readRuntimeMode])
 
   return (
     <div className="app-shell">
@@ -152,17 +316,19 @@ function App() {
           <div className="nav-section">Workspace</div>
           {navItems.map((item) => {
             const Icon = item.icon
+            const badge = item.id === 'audit' ? formatNavCount(navMetrics.auditTotal) : null
+            const showDriftDot = item.id === 'drift' && (navMetrics.pendingDriftTotal ?? 0) > 0
             return (
               <button
                 key={item.id}
                 type="button"
                 className={`nav-item ${route === item.id ? 'active' : ''}`}
-                onClick={() => setRoute(item.id)}
+                onClick={() => navigateToRoute(item.id)}
               >
                 <Icon size={16} />
                 <span>{item.label}</span>
-                {item.badge ? <Badge tone="neutral">{item.badge}</Badge> : null}
-                {item.dot ? <span className="nav-dot" aria-hidden="true" /> : null}
+                {badge ? <Badge tone="neutral">{badge}</Badge> : null}
+                {showDriftDot ? <span className="nav-dot" aria-label={`${navMetrics.pendingDriftTotal} pending schema drifts`} /> : null}
               </button>
             )
           })}
@@ -205,10 +371,11 @@ function App() {
             <button
               type="button"
               className={`mode-pill ${mode}`}
-              onClick={() => setPendingMode(mode === 'audit' ? 'enforce' : 'audit')}
+              onClick={openModeSwitchDialog}
+              disabled={modeRefreshing}
             >
               <span className="dot" aria-hidden="true" />
-              {mode}
+              {modeRefreshing ? 'syncing' : mode}
             </button>
             <IconButton
               label="Toggle theme"
@@ -225,7 +392,7 @@ function App() {
           {route === 'overview' ? <Overview mode={mode} /> : null}
           {route === 'audit' ? <AuditLog /> : null}
           {route === 'drift' ? <SchemaDrift /> : null}
-          {route === 'policy' ? <Policy mode={mode} /> : null}
+          {route === 'policy' ? <Policy mode={mode} onModeChanged={setMode} /> : null}
           {route === 'settings' ? <SettingsPanel /> : null}
         </main>
       </div>
@@ -235,7 +402,7 @@ function App() {
         targetMode={pendingMode}
         onClose={() => setPendingMode(null)}
         onSwitched={(response) => {
-          setMode(response.mode === 'enforce' ? 'enforce' : 'audit')
+          setMode(normalizeRuntimeMode(response.mode) ?? mode)
           setPendingMode(null)
         }}
       />
@@ -472,6 +639,141 @@ function ModeImpactPreview({ impact }: { impact: PolicyModeImpactResponse }) {
         <StatePanel state="empty" title="No affected tools in window" />
       )}
     </div>
+  )
+}
+
+function PolicyEnforceApplyDialog({
+  open,
+  currentMode,
+  applying,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean
+  currentMode: Mode
+  applying: boolean
+  onClose: () => void
+  onConfirm: () => Promise<void>
+}) {
+  const targetMode: Mode = 'enforce'
+  const [impactState, setImpactState] = useState<{
+    impact: PolicyModeImpactResponse | null
+    error: string | null
+  }>({ impact: null, error: null })
+  const [acknowledged, setAcknowledged] = useState(false)
+  const [typed, setTyped] = useState('')
+  const [confirmError, setConfirmError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const requiresTypedConfirmation = currentMode === 'audit'
+  const impactLoading = open && !impactState.impact && !impactState.error
+  const canConfirm = Boolean(
+    impactState.impact
+      && !applying
+      && (!requiresTypedConfirmation || (acknowledged && typed === 'ENFORCE')),
+  )
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    const controller = new AbortController()
+    getPolicyModeImpact(targetMode, controller.signal)
+      .then((response) => {
+        setImpactState({ impact: response, error: null })
+      })
+      .catch((ex: unknown) => {
+        if (!controller.signal.aborted) {
+          setImpactState({ impact: null, error: formatApiFailure(ex, 'Mode impact request failed') })
+        }
+      })
+
+    return () => controller.abort()
+  }, [open, reloadKey])
+
+  if (!open) {
+    return null
+  }
+
+  function closeDialog() {
+    if (applying) {
+      return
+    }
+
+    setAcknowledged(false)
+    setTyped('')
+    setConfirmError(null)
+    setImpactState({ impact: null, error: null })
+    onClose()
+  }
+
+  async function confirmApply() {
+    setConfirmError(null)
+    try {
+      await onConfirm()
+      setAcknowledged(false)
+      setTyped('')
+    } catch (ex) {
+      setConfirmError(formatApiFailure(ex, 'Policy apply failed'))
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      title="Switch to enforce mode"
+      tone="warn"
+      onClose={closeDialog}
+      footer={
+        <>
+          <Button variant="ghost" onClick={closeDialog} disabled={applying}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={confirmApply} disabled={!canConfirm}>
+            {applying ? 'Applying' : 'Apply'}
+          </Button>
+        </>
+      }
+    >
+      <div className="mode-shift">
+        <span className={`mode-pill ${currentMode}`}>{currentMode}</span>
+        <ChevronRight size={16} className="muted-icon" />
+        <span className={`mode-pill ${targetMode}`}>{targetMode}</span>
+      </div>
+      {impactLoading ? <StatePanel state="loading" title="Loading impact preview" detail="management API" /> : null}
+      {impactState.error ? (
+        <StatePanel
+          state="error"
+          title="Impact preview unavailable"
+          detail={impactState.error}
+          onRetry={() => setReloadKey((current) => current + 1)}
+        />
+      ) : null}
+      {confirmError ? <StatePanel state="error" title="Policy apply failed" detail={confirmError} /> : null}
+      {impactState.impact ? <ModeImpactPreview impact={impactState.impact} /> : null}
+      {requiresTypedConfirmation ? (
+        <div className="confirmation-stack">
+          <label className="dialog-check">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+            />
+            <span>I have reviewed the impact preview.</span>
+          </label>
+          <label className="dialog-field">
+            <span>Type ENFORCE to confirm</span>
+            <input
+              className="dialog-input"
+              value={typed}
+              onChange={(event) => setTyped(event.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </label>
+        </div>
+      ) : null}
+    </Dialog>
   )
 }
 
@@ -1987,7 +2289,102 @@ function formatApiFailure(ex: unknown, fallback: string): string {
   return ex instanceof Error ? ex.message : fallback
 }
 
-function Policy({ mode }: { mode: Mode }) {
+function formatServerCount(count: number): string {
+  return `${count.toLocaleString()} ${count === 1 ? 'server' : 'servers'}`
+}
+
+function createNextServerId(servers: Record<string, ServerPolicyModel>): string {
+  if (!servers.server) {
+    return 'server'
+  }
+
+  for (let index = 2; ; index += 1) {
+    const candidate = `server-${index}`
+    if (!servers[candidate]) {
+      return candidate
+    }
+  }
+}
+
+function createNewServerForm(serverId: string): NewServerPolicyForm {
+  return {
+    id: serverId,
+    route: `/${serverId}/mcp`,
+    upstream: 'http://localhost:8080/mcp',
+  }
+}
+
+function normalizeNewServerForm(form: NewServerPolicyForm): NewServerPolicyForm {
+  return {
+    id: form.id.trim(),
+    route: form.route.trim(),
+    upstream: form.upstream.trim(),
+  }
+}
+
+function validateNewServerForm(
+  form: NewServerPolicyForm,
+  existingServers: Record<string, ServerPolicyModel>,
+): string | null {
+  if (!form.id) {
+    return 'Server id is required.'
+  }
+
+  if (existingServers[form.id]) {
+    return `Server ${form.id} already exists.`
+  }
+
+  if (!form.route.startsWith('/')) {
+    return 'Route must start with /.'
+  }
+
+  try {
+    const url = new URL(form.upstream)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return 'Upstream must be an absolute HTTP or HTTPS URL.'
+    }
+  } catch {
+    return 'Upstream must be an absolute HTTP or HTTPS URL.'
+  }
+
+  return null
+}
+
+function createServerPolicyModel(form: NewServerPolicyForm): ServerPolicyModel {
+  return {
+    id: form.id,
+    route: form.route,
+    upstream: form.upstream,
+    allowed: true,
+    secrets: {
+      redactInLogs: true,
+      blockReturn: false,
+      patterns: [],
+    },
+    tools: {
+      default: 'deny',
+      allow: [],
+      block: [],
+    },
+    arguments: {
+      paths: {
+        allowedRoots: [],
+        blockTraversal: true,
+      },
+      hosts: {
+        allow: [],
+        blockPrivateNetworks: true,
+      },
+      commands: {
+        blockShell: true,
+        dangerous: [],
+      },
+      overrides: {},
+    },
+  }
+}
+
+function Policy({ mode, onModeChanged }: { mode: Mode; onModeChanged: (mode: Mode) => void }) {
   const [policy, setPolicy] = useState<PolicyResponse | null>(null)
   const [draft, setDraft] = useState<PolicyModel | null>(null)
   const [selectedKey, setSelectedKey] = useState<string>('global')
@@ -1999,6 +2396,10 @@ function Policy({ mode }: { mode: Mode }) {
   const [applyLoading, setApplyLoading] = useState(false)
   const [applyError, setApplyError] = useState<string | null>(null)
   const [applyResult, setApplyResult] = useState<PolicyApplyResponse | null>(null)
+  const [newServerForm, setNewServerForm] = useState<NewServerPolicyForm | null>(null)
+  const [newServerError, setNewServerError] = useState<string | null>(null)
+  const [pendingDeleteServer, setPendingDeleteServer] = useState<ServerPolicyModel | null>(null)
+  const [pendingEnforceApply, setPendingEnforceApply] = useState<PolicyModel | null>(null)
 
   const serverEntries = useMemo(() => Object.entries(draft?.servers ?? {}), [draft])
   const selectedServer = draft && selectedKey !== 'global' ? draft.servers[selectedKey] ?? null : null
@@ -2019,7 +2420,11 @@ function Policy({ mode }: { mode: Mode }) {
 
       return Object.keys(nextDraft.servers)[0] ?? 'global'
     })
-  }, [])
+    const loadedMode = normalizeRuntimeMode(response.model.mode)
+    if (loadedMode) {
+      onModeChanged(loadedMode)
+    }
+  }, [onModeChanged])
 
   const loadPolicy = useCallback(() => {
     const controller = new AbortController()
@@ -2082,6 +2487,65 @@ function Policy({ mode }: { mode: Mode }) {
     })
   }
 
+  function openAddServerDialog() {
+    if (!draft) {
+      return
+    }
+
+    setNewServerForm(createNewServerForm(createNextServerId(draft.servers)))
+    setNewServerError(null)
+  }
+
+  function updateNewServerForm(update: Partial<NewServerPolicyForm>) {
+    setNewServerError(null)
+    setNewServerForm((current) => (current ? { ...current, ...update } : current))
+  }
+
+  function confirmAddServer() {
+    if (!draft || !newServerForm) {
+      return
+    }
+
+    const normalized = normalizeNewServerForm(newServerForm)
+    const formError = validateNewServerForm(normalized, draft.servers)
+    if (formError) {
+      setNewServerError(formError)
+      return
+    }
+
+    setValidation(null)
+    updateDraft((current) => ({
+      ...current,
+      servers: {
+        ...current.servers,
+        [normalized.id]: createServerPolicyModel(normalized),
+      },
+    }))
+    setSelectedKey(normalized.id)
+    setNewServerForm(null)
+  }
+
+  function confirmDeleteServer() {
+    if (!pendingDeleteServer) {
+      return
+    }
+
+    const serverId = pendingDeleteServer.id
+    markDirty()
+    setValidation(null)
+    setDraft((current) => {
+      if (!current || !current.servers[serverId]) {
+        return current
+      }
+
+      const servers = { ...current.servers }
+      delete servers[serverId]
+      return { ...current, servers }
+    })
+    setSelectedKey((current) => (current === serverId ? 'global' : current))
+    setPendingDeleteServer(null)
+  }
+
   async function runValidation() {
     if (!draft) {
       return null
@@ -2141,31 +2605,62 @@ function Policy({ mode }: { mode: Mode }) {
       }
 
       const modelToApply = validationResponse.normalizedModel ?? draft
-      const response = await applyPolicy({
-        model: modelToApply,
-        requestedBy: 'dashboard',
-        note: 'dashboard apply',
-      })
-      setApplyResult(response)
-      setDirty(false)
-      setDraft(clonePolicyModel(modelToApply))
-      setPolicy((current) =>
-        current
-          ? {
-              ...current,
-              policyHash: response.policyHash,
-              model: clonePolicyModel(modelToApply),
-              readOnly: {
-                ...current.readOnly,
-                policyHash: response.policyHash,
-                serverCount: response.serverCount,
-                loadedAtUtc: new Date().toISOString(),
-              },
-            }
-          : current,
-      )
+      if (mode === 'audit' && normalizeRuntimeMode(modelToApply.mode) === 'enforce') {
+        setPendingEnforceApply(clonePolicyModel(modelToApply))
+        return
+      }
+
+      await applyValidatedPolicy(modelToApply)
     } catch (ex) {
       setApplyError(formatApiFailure(ex, 'Policy apply failed'))
+    } finally {
+      setApplyLoading(false)
+    }
+  }
+
+  async function applyValidatedPolicy(modelToApply: PolicyModel) {
+    const response = await applyPolicy({
+      model: modelToApply,
+      requestedBy: 'dashboard',
+      note: 'dashboard apply',
+    })
+    const appliedMode = normalizeRuntimeMode(response.mode)
+    if (appliedMode) {
+      onModeChanged(appliedMode)
+    }
+    setApplyResult(response)
+    setDirty(false)
+    setDraft(clonePolicyModel(modelToApply))
+    setPolicy((current) =>
+      current
+        ? {
+            ...current,
+            policyHash: response.policyHash,
+            model: clonePolicyModel(modelToApply),
+            readOnly: {
+              ...current.readOnly,
+              policyHash: response.policyHash,
+              serverCount: response.serverCount,
+              loadedAtUtc: new Date().toISOString(),
+            },
+          }
+        : current,
+    )
+  }
+
+  async function confirmEnforceApply() {
+    if (!pendingEnforceApply) {
+      return
+    }
+
+    setApplyLoading(true)
+    setApplyError(null)
+    try {
+      await applyValidatedPolicy(pendingEnforceApply)
+      setPendingEnforceApply(null)
+    } catch (ex) {
+      setApplyError(formatApiFailure(ex, 'Policy apply failed'))
+      throw ex
     } finally {
       setApplyLoading(false)
     }
@@ -2197,10 +2692,13 @@ function Policy({ mode }: { mode: Mode }) {
     <section className="page">
       <PageHeader
         title="Policy"
-        subtitle={`${serverEntries.length.toLocaleString()} servers - ${policy?.policyHash ?? 'draft'} - ${dirty ? 'unsaved changes' : `loaded ${formatAuditTime(policy?.readOnly.loadedAtUtc ?? '')}`}`}
+        subtitle={`${formatServerCount(serverEntries.length)} - ${policy?.policyHash ?? 'draft'} - ${dirty ? 'unsaved changes' : `loaded ${formatAuditTime(policy?.readOnly.loadedAtUtc ?? '')}`}`}
         action={
           <div className="row-actions">
             <Badge tone={dirty ? 'warn' : 'allow'}>{dirty ? 'dirty' : 'clean'}</Badge>
+            <Button icon={Plus} onClick={openAddServerDialog} disabled={loading || validationLoading || applyLoading}>
+              Add server
+            </Button>
             <Button icon={RefreshCw} variant="ghost" onClick={loadPolicy} disabled={loading || validationLoading || applyLoading}>
               Reload
             </Button>
@@ -2226,7 +2724,10 @@ function Policy({ mode }: { mode: Mode }) {
       ) : null}
       <PolicyIssueList validation={validation} loading={validationLoading} />
       <div className="policy-layout">
-        <Card title="Policy scope" action={<Badge tone="neutral">{serverEntries.length} servers</Badge>}>
+        <Card
+          title="Policy scope"
+          action={<Badge tone="neutral">{formatServerCount(serverEntries.length)}</Badge>}
+        >
           <div className="policy-server-list">
             <button
               type="button"
@@ -2249,18 +2750,102 @@ function Policy({ mode }: { mode: Mode }) {
                 <Badge tone={server.allowed ? 'allow' : 'block'}>{server.allowed ? 'on' : 'off'}</Badge>
               </button>
             ))}
+            {serverEntries.length === 0 ? (
+              <StatePanel state="empty" title="No server policies" detail="Add a server policy before validating or applying." />
+            ) : null}
           </div>
         </Card>
         <div className="policy-editor-stack">
           {selectedKey === 'global' ? (
             <GlobalPolicyEditor draft={draft} onChange={updateDraft} />
           ) : selectedServer ? (
-            <ServerPolicyEditor server={selectedServer} onChange={(updater) => updateServer(selectedServer.id, updater)} />
+            <ServerPolicyEditor
+              server={selectedServer}
+              onChange={(updater) => updateServer(selectedServer.id, updater)}
+              onDelete={() => setPendingDeleteServer(selectedServer)}
+            />
           ) : (
             <StatePanel state="empty" title="Select a policy scope" />
           )}
         </div>
       </div>
+      <Dialog
+        open={pendingDeleteServer !== null}
+        title={`Delete ${pendingDeleteServer?.id ?? 'server'}`}
+        tone="warn"
+        onClose={() => setPendingDeleteServer(null)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPendingDeleteServer(null)}>
+              Cancel
+            </Button>
+            <Button icon={Trash2} variant="danger" onClick={confirmDeleteServer}>
+              Delete server
+            </Button>
+          </>
+        }
+      >
+        <div className="confirmation-stack">
+          <p>
+            Remove <strong className="mono">{pendingDeleteServer?.id}</strong> from the draft policy.
+          </p>
+          <div className="kv-grid">
+            <span>route</span>
+            <strong className="mono truncate">{pendingDeleteServer?.route ?? '-'}</strong>
+            <span>upstream</span>
+            <strong className="mono truncate">{pendingDeleteServer?.upstream ?? '-'}</strong>
+          </div>
+        </div>
+      </Dialog>
+      <Dialog
+        open={newServerForm !== null}
+        title="Add server policy"
+        onClose={() => setNewServerForm(null)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setNewServerForm(null)}>
+              Cancel
+            </Button>
+            <Button icon={Plus} variant="primary" onClick={confirmAddServer}>
+              Add server
+            </Button>
+          </>
+        }
+      >
+        <div className="confirmation-stack">
+          {newServerError ? <StatePanel state="error" title="Server policy invalid" detail={newServerError} /> : null}
+          <div className="form-grid">
+            <PolicyField label="id">
+              <input
+                className="form-input"
+                value={newServerForm?.id ?? ''}
+                onChange={(event) => updateNewServerForm({ id: event.target.value })}
+              />
+            </PolicyField>
+            <PolicyField label="route">
+              <input
+                className="form-input"
+                value={newServerForm?.route ?? ''}
+                onChange={(event) => updateNewServerForm({ route: event.target.value })}
+              />
+            </PolicyField>
+            <PolicyField label="upstream">
+              <input
+                className="form-input"
+                value={newServerForm?.upstream ?? ''}
+                onChange={(event) => updateNewServerForm({ upstream: event.target.value })}
+              />
+            </PolicyField>
+          </div>
+        </div>
+      </Dialog>
+      <PolicyEnforceApplyDialog
+        open={pendingEnforceApply !== null}
+        currentMode={mode}
+        applying={applyLoading}
+        onClose={() => setPendingEnforceApply(null)}
+        onConfirm={confirmEnforceApply}
+      />
     </section>
   )
 }
@@ -2432,15 +3017,27 @@ function GlobalPolicyEditor({
 function ServerPolicyEditor({
   server,
   onChange,
+  onDelete,
 }: {
   server: ServerPolicyModel
   onChange: (updater: (server: ServerPolicyModel) => ServerPolicyModel) => void
+  onDelete: () => void
 }) {
   const secrets = server.secrets ?? { redactInLogs: true, blockReturn: false, patterns: [] }
 
   return (
     <>
-      <Card title={server.id} action={<Badge tone={server.allowed ? 'allow' : 'block'}>{server.allowed ? 'allowed' : 'blocked'}</Badge>}>
+      <Card
+        title={server.id}
+        action={
+          <div className="row-actions">
+            <Badge tone={server.allowed ? 'allow' : 'block'}>{server.allowed ? 'allowed' : 'blocked'}</Badge>
+            <Button icon={Trash2} size="sm" variant="danger" onClick={onDelete}>
+              Delete
+            </Button>
+          </div>
+        }
+      >
         <div className="form-grid">
           <PolicyField label="route">
             <input
@@ -2734,8 +3331,16 @@ function formatLines(values: string[]): string {
 }
 
 function findClientPolicyIssues(model: PolicyModel): PolicyValidationIssue[] {
-  return Object.values(model.servers).flatMap((server) => {
-    const issues: PolicyValidationIssue[] = []
+  const issues: PolicyValidationIssue[] = []
+  if (Object.keys(model.servers).length === 0) {
+    issues.push({
+      field: 'servers',
+      code: 'policy_validation_error',
+      message: 'servers must contain at least one server',
+    })
+  }
+
+  for (const server of Object.values(model.servers)) {
     if (server.upstream?.includes('***@') || server.upstream?.includes('[masked]')) {
       issues.push({
         field: `servers.${server.id}.upstream`,
@@ -2743,9 +3348,9 @@ function findClientPolicyIssues(model: PolicyModel): PolicyValidationIssue[] {
         message: 'Masked upstream credentials cannot be applied. Replace the upstream URL explicitly before applying.',
       })
     }
+  }
 
-    return issues
-  })
+  return issues
 }
 
 function createClientValidationResponse(errors: PolicyValidationIssue[]): PolicyValidationResponse {

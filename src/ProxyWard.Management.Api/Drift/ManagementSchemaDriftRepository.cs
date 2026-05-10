@@ -115,6 +115,16 @@ public sealed class ManagementSchemaDriftRepository
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await ConfigureConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
 
+        if (!await TableExistsAsync(connection, "schema_drift_reviews", cancellationToken).ConfigureAwait(false))
+        {
+            return new ManagementSchemaDriftPage(
+                offset,
+                pageSize,
+                TotalCount: 0,
+                new ManagementSchemaDriftWindow(normalizedQuery.FromUtc, normalizedQuery.ToUtc),
+                Items: []);
+        }
+
         var diffMetadataTableExists = await TableExistsAsync(
             connection,
             "tool_schema_diff_metadata",
@@ -154,6 +164,12 @@ public sealed class ManagementSchemaDriftRepository
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await ConfigureConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+
+        if (!await TableExistsAsync(connection, "schema_drift_reviews", cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
         var diffMetadataTableExists = await TableExistsAsync(
             connection,
             "tool_schema_diff_metadata",

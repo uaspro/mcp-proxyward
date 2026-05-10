@@ -26,7 +26,7 @@ public class PathArgumentRuleIntegrationTests
             block: [],
             allowedRoots: ["/workspace"],
             blockTraversal: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":100,"method":"tools/call","params":{"name":"fs.read","arguments":{"path":"/etc/passwd"}}}""";
 
@@ -56,7 +56,7 @@ public class PathArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -83,7 +83,7 @@ public class PathArgumentRuleIntegrationTests
             block: [],
             allowedRoots: [],
             blockTraversal: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":101,"method":"tools/call","params":{"name":"fs.read","arguments":{"path":"../escape"}}}""";
 
@@ -109,7 +109,7 @@ public class PathArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -134,7 +134,7 @@ public class PathArgumentRuleIntegrationTests
             block: [],
             allowedRoots: ["/workspace"],
             blockTraversal: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":102,"method":"tools/call","params":{"name":"fs.read","arguments":{"path":"../escape"}}}""";
 
@@ -156,7 +156,7 @@ public class PathArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -183,7 +183,7 @@ public class PathArgumentRuleIntegrationTests
             block: [],
             allowedRoots: ["/workspace"],
             blockTraversal: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":103,"method":"tools/call","params":{"name":"fs.read","arguments":{"path":"/workspace/src/file.cs"}}}""";
 
@@ -201,7 +201,7 @@ public class PathArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -226,7 +226,7 @@ public class PathArgumentRuleIntegrationTests
             block: [],
             allowedRoots: ["/workspace"],
             blockTraversal: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """
             [{"jsonrpc":"2.0","id":200,"method":"tools/call","params":{"name":"fs.read","arguments":{"path":"/workspace/clean.cs"}}},{"jsonrpc":"2.0","id":201,"method":"tools/call","params":{"name":"fs.read","arguments":{"path":"/etc/shadow"}}}]
@@ -257,7 +257,7 @@ public class PathArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var toolRows = ReadAuditEvents(dbPath)
@@ -287,7 +287,7 @@ public class PathArgumentRuleIntegrationTests
             block: ["fs.read"],
             allowedRoots: ["/workspace"],
             blockTraversal: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":300,"method":"tools/call","params":{"name":"fs.read","arguments":{"path":"/etc/shadow"}}}""";
 
@@ -319,7 +319,7 @@ public class PathArgumentRuleIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -366,7 +366,7 @@ public class PathArgumentRuleIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 

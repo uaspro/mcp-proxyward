@@ -18,7 +18,7 @@ public class RequestInspectionIntegrationTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", maxBodyBytes: 1024, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         var body = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":"abc"}}""";
 
         try
@@ -41,7 +41,7 @@ public class RequestInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -51,7 +51,7 @@ public class RequestInspectionIntegrationTests
         await using var upstream = await StartUpstreamAsync();
         var logs = new CapturingLoggerProvider();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", maxBodyBytes: 1024, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         var body = "not-json-but-should-pass";
 
         try
@@ -85,7 +85,7 @@ public class RequestInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -94,7 +94,7 @@ public class RequestInspectionIntegrationTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", maxBodyBytes: 10, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         var body = """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""";
 
         try
@@ -114,7 +114,7 @@ public class RequestInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -123,7 +123,7 @@ public class RequestInspectionIntegrationTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", maxBodyBytes: 10, upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         var body = """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""";
 
         try
@@ -143,7 +143,7 @@ public class RequestInspectionIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -187,7 +187,7 @@ public class RequestInspectionIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 

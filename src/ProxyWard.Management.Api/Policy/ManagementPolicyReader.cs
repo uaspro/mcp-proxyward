@@ -1,5 +1,6 @@
 using System.Text;
 using ProxyWard.Policy.Configuration;
+using ProxyWard.Policy.Persistence;
 using YamlDotNet.RepresentationModel;
 
 namespace ProxyWard.Management.Api.Policy;
@@ -21,41 +22,42 @@ public sealed class ManagementPolicyReader
     ];
 
     private readonly ManagementApiOptions _options;
+    private readonly SqlitePolicyStore _policyStore;
 
-    public ManagementPolicyReader(ManagementApiOptions options)
+    public ManagementPolicyReader(
+        ManagementApiOptions options,
+        SqlitePolicyStore policyStore)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _policyStore = policyStore ?? throw new ArgumentNullException(nameof(policyStore));
     }
 
     public async Task<ManagementPolicyResponse> ReadAsync(CancellationToken cancellationToken)
     {
-        var policyPath = _options.PolicyPath;
-        if (!File.Exists(policyPath))
-        {
-            throw new FileNotFoundException($"ProxyWard policy file not found: {policyPath}", policyPath);
-        }
-
-        var yaml = await File.ReadAllTextAsync(policyPath, cancellationToken).ConfigureAwait(false);
-        var policy = ProxyWardPolicyLoader.Load(yaml);
-        var fileInfo = new FileInfo(policyPath);
-        var loadedAtUtc = DateTimeOffset.UtcNow;
+        var snapshot = await _policyStore.InitializeAndReadCurrentAsync(
+            ProxyWardDefaultPolicy.CreateYaml(_options.AuditDatabasePath),
+            cancellationToken).ConfigureAwait(false);
+        var source = FormatSource(_policyStore.DatabasePath);
 
         return new ManagementPolicyResponse(
-            Yaml: MaskYaml(yaml),
-            PolicyHash: policy.VersionHash,
+            Yaml: MaskYaml(snapshot.Yaml),
+            PolicyHash: snapshot.Policy.VersionHash,
             Source: new ManagementPolicySource(
-                Path: policyPath,
-                Format: "yaml",
+                Path: source,
+                Format: "sqlite",
                 Exists: true,
-                LastModifiedUtc: new DateTimeOffset(fileInfo.LastWriteTimeUtc),
-                SizeBytes: fileInfo.Length),
-            Model: CreateModel(policy),
+                LastModifiedUtc: snapshot.CreatedAtUtc,
+                SizeBytes: null),
+            Model: CreateModel(snapshot.Policy),
             ReadOnly: new ManagementPolicyReadOnlyFields(
-                PolicyHash: policy.VersionHash,
-                SourcePath: policyPath,
-                ServerCount: policy.Servers.Count,
-                LoadedAtUtc: loadedAtUtc));
+                PolicyHash: snapshot.Policy.VersionHash,
+                SourcePath: source,
+                ServerCount: snapshot.Policy.Servers.Count,
+                LoadedAtUtc: DateTimeOffset.UtcNow));
     }
+
+    private static string FormatSource(string databasePath) =>
+        $"sqlite:{databasePath}#policy_snapshots";
 
     public static ManagementPolicyModel CreateModel(ProxyWardPolicy policy) =>
         new(

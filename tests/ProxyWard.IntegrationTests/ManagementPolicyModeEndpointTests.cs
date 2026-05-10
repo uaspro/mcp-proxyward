@@ -195,6 +195,53 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
         Assert.DoesNotContain(token, audit.PayloadJson, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ConfirmedModeSwitchWritesAuditWhenReadOnlySharedCacheConnectionExists()
+    {
+        await CreateEmptyDatabaseAsync();
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
+
+        await using var readOnlyConnection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _databasePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Cache = SqliteCacheMode.Shared
+        }.ToString());
+        await readOnlyConnection.OpenAsync();
+
+        var stub = new StubProxyControlClient
+        {
+            Status = new ProxyControlStatus("audit", "sha256:old", 1, 1),
+            ApplyResult = new ProxyControlStatus("enforce", "sha256:new", 1, 1)
+        };
+
+        await using var factory = CreateFactory(stub);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-admin-token");
+
+        var token = await ReadConfirmationTokenAsync(client);
+
+        using var response = await client.PatchAsync(
+            "/api/policy/mode",
+            JsonBody($$"""
+            {
+              "mode": "enforce",
+              "confirmationToken": "{{token}}",
+              "impactFromUtc": "{{WindowFrom.UtcDateTime:o}}",
+              "impactToUtc": "{{WindowTo.UtcDateTime:o}}",
+              "requestedBy": "alice"
+            }
+            """));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["enforce"], stub.AppliedModes);
+
+        var audit = Assert.Single(await ReadModeSwitchAuditRowsAsync());
+        Assert.Equal("policy_mode_switch", audit.EventType);
+        Assert.Equal("mode_switch_enforce", audit.Reasons);
+    }
+
     private async Task<string> ReadConfirmationTokenAsync(HttpClient client)
     {
         using var impactResponse = await client.GetAsync(
@@ -352,6 +399,16 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
                 services.AddSingleton(stub);
                 services.AddSingleton<IProxyControlClient>(stub);
             }));
+
+    private async Task CreateEmptyDatabaseAsync()
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _databasePath,
+            Mode = SqliteOpenMode.ReadWriteCreate
+        }.ToString());
+        await connection.OpenAsync();
+    }
 
     private static void DeleteDbFiles(string databasePath)
     {

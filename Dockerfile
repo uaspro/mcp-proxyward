@@ -20,7 +20,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
 ENV ASPNETCORE_URLS=http://+:8080 \
-    PROXYWARD_POLICY_PATH=/app/config/proxyward.yaml
+    PROXYWARD_DB_PATH=/app/data/proxyward.db
 
 RUN mkdir -p /app/config /app/data
 

@@ -31,7 +31,7 @@ public class ToolArgumentOverrideIntegrationTests
                   allowedRoots: []
                   blockTraversal: false
             """));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":600,"method":"tools/call","params":{"name":"fs.safe-read","arguments":{"path":"/etc/passwd"}}}""";
 
@@ -49,7 +49,7 @@ public class ToolArgumentOverrideIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
@@ -80,7 +80,7 @@ public class ToolArgumentOverrideIntegrationTests
                   allowedRoots: []
                   blockTraversal: false
             """));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":601,"method":"tools/call","params":{"name":"fs.other-read","arguments":{"path":"/etc/passwd"}}}""";
 
@@ -107,7 +107,7 @@ public class ToolArgumentOverrideIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
@@ -140,7 +140,7 @@ public class ToolArgumentOverrideIntegrationTests
                     - /workspace
                   blockTraversal: true
             """));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":602,"method":"tools/call","params":{"name":"fs.strict-read","arguments":{"path":"/etc/passwd"}}}""";
 
@@ -167,7 +167,7 @@ public class ToolArgumentOverrideIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
@@ -184,7 +184,7 @@ public class ToolArgumentOverrideIntegrationTests
     [Fact]
     public void InvalidToolOverridePreventsHostStartup()
     {
-        var policyPath = WriteTempPolicy(CreatePolicy(
+        var policyPath = WriteRawTempPolicy(CreatePolicy(
             upstreamBaseAddress: "http://127.0.0.1:8080",
             sqlitePath: NewTempSqlitePath(),
             serverAllowedRoots: ["/workspace"],
@@ -195,7 +195,7 @@ public class ToolArgumentOverrideIntegrationTests
               fs.safe-read:
                 paths: {}
             """));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -208,7 +208,7 @@ public class ToolArgumentOverrideIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -247,7 +247,44 @@ public class ToolArgumentOverrideIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
+        return path;
+    }
+
+    private static string WriteRawTempPolicy(string yaml)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.db");
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Mode = SqliteOpenMode.ReadWriteCreate
+        }.ToString());
+        connection.Open();
+
+        using (var schema = connection.CreateCommand())
+        {
+            schema.CommandText = """
+                CREATE TABLE policy_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at_utc TEXT NOT NULL,
+                    policy_hash TEXT NOT NULL,
+                    yaml TEXT NOT NULL,
+                    requested_by TEXT NULL,
+                    note TEXT NULL
+                );
+                """;
+            schema.ExecuteNonQuery();
+        }
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO policy_snapshots (created_at_utc, policy_hash, yaml)
+            VALUES ($created_at_utc, $policy_hash, $yaml);
+            """;
+        command.Parameters.AddWithValue("$created_at_utc", DateTimeOffset.UtcNow.UtcDateTime.ToString("o"));
+        command.Parameters.AddWithValue("$policy_hash", "sha256:invalid");
+        command.Parameters.AddWithValue("$yaml", yaml);
+        command.ExecuteNonQuery();
         return path;
     }
 

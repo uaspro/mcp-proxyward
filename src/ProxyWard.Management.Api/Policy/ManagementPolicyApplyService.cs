@@ -4,11 +4,19 @@ using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
 using ProxyWard.Management.Api.Status;
 using ProxyWard.Policy.Configuration;
+using ProxyWard.Policy.Persistence;
 
 namespace ProxyWard.Management.Api.Policy;
 
 public sealed class ManagementPolicyApplyService
 {
+    private static readonly string[] WellKnownMetadataPrefixes =
+    [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/openid-configuration"
+    ];
+
     private static readonly JsonSerializerOptions CompactJsonOptions = new()
     {
         WriteIndented = false
@@ -16,25 +24,26 @@ public sealed class ManagementPolicyApplyService
 
     private readonly ManagementPolicyValidationService _validationService;
     private readonly IProxyControlClient _proxyControlClient;
-    private readonly ManagementApiOptions _options;
+    private readonly SqlitePolicyStore _policyStore;
     private readonly string _databasePath;
     private readonly string _connectionString;
 
     public ManagementPolicyApplyService(
         ManagementApiOptions options,
         ManagementPolicyValidationService validationService,
-        IProxyControlClient proxyControlClient)
+        IProxyControlClient proxyControlClient,
+        SqlitePolicyStore policyStore)
     {
-        _options = options ?? throw new ArgumentNullException(nameof(options));
+        ArgumentNullException.ThrowIfNull(options);
         _validationService = validationService ?? throw new ArgumentNullException(nameof(validationService));
         _proxyControlClient = proxyControlClient ?? throw new ArgumentNullException(nameof(proxyControlClient));
+        _policyStore = policyStore ?? throw new ArgumentNullException(nameof(policyStore));
 
         _databasePath = Path.GetFullPath(options.AuditDatabasePath);
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = _databasePath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared
+            Mode = SqliteOpenMode.ReadWriteCreate
         }.ToString();
     }
 
@@ -50,10 +59,19 @@ public sealed class ManagementPolicyApplyService
             return ManagementPolicyApplyOutcome.ValidationFailed(proposal.Response);
         }
 
+        var previousSnapshot = await _policyStore.InitializeAndReadCurrentAsync(
+            ProxyWardDefaultPolicy.CreateYaml(_databasePath),
+            cancellationToken).ConfigureAwait(false);
         var yarpConfig = CreateYarpConfig(proposal.Policy);
         var previousStatus = await ReadCurrentStatusAsync(cancellationToken).ConfigureAwait(false);
         var yarpStatus = await ApplyYarpConfigAsync(yarpConfig, cancellationToken).ConfigureAwait(false);
         var appliedStatus = await ApplyPolicySnapshotAsync(proposal.Yaml, cancellationToken).ConfigureAwait(false);
+
+        await PersistPolicySnapshotAsync(
+            proposal.Yaml,
+            previousSnapshot.Yaml,
+            proposal,
+            cancellationToken).ConfigureAwait(false);
 
         await WritePolicyApplyAuditAsync(
             previousStatus,
@@ -132,19 +150,67 @@ public sealed class ManagementPolicyApplyService
         }
     }
 
+    private async Task PersistPolicySnapshotAsync(
+        string yaml,
+        string? rollbackYaml,
+        ManagementPolicyValidationOutcome proposal,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _policyStore.SaveAsync(
+                yaml,
+                proposal.RequestedBy,
+                proposal.Note,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var rollback = await TryRollbackRuntimePolicyAsync(rollbackYaml, cancellationToken).ConfigureAwait(false);
+            throw new ManagementPolicyApplyException(
+                "policy_db",
+                $"Policy applied to runtime but could not save policy snapshot: {ex.Message}",
+                rollback.Attempted,
+                rollback.Applied,
+                ex);
+        }
+    }
+
     private async Task<(bool Attempted, bool Applied)> TryRollbackYarpAsync(CancellationToken cancellationToken)
     {
-        if (!File.Exists(_options.PolicyPath))
+        var snapshot = await _policyStore.ReadCurrentAsync(cancellationToken).ConfigureAwait(false);
+        if (snapshot is null)
         {
             return (Attempted: false, Applied: false);
         }
 
         try
         {
-            var yaml = await File.ReadAllTextAsync(_options.PolicyPath, cancellationToken).ConfigureAwait(false);
-            var currentPolicy = ProxyWardPolicyLoader.Load(yaml);
-            var rollbackConfig = CreateYarpConfig(currentPolicy);
+            var rollbackConfig = CreateYarpConfig(snapshot.Policy);
             await _proxyControlClient.ApplyYarpConfigAsync(rollbackConfig, cancellationToken).ConfigureAwait(false);
+            return (Attempted: true, Applied: true);
+        }
+        catch
+        {
+            return (Attempted: true, Applied: false);
+        }
+    }
+
+    private async Task<(bool Attempted, bool Applied)> TryRollbackRuntimePolicyAsync(
+        string? rollbackYaml,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(rollbackYaml))
+        {
+            return (Attempted: false, Applied: false);
+        }
+
+        try
+        {
+            var rollbackPolicy = ProxyWardPolicyLoader.Load(rollbackYaml);
+            var rollbackConfig = CreateYarpConfig(rollbackPolicy);
+            await _proxyControlClient.ApplyYarpConfigAsync(rollbackConfig, cancellationToken).ConfigureAwait(false);
+            await _proxyControlClient.ApplyPolicySnapshotAsync(rollbackYaml, cancellationToken).ConfigureAwait(false);
             return (Attempted: true, Applied: true);
         }
         catch
@@ -282,14 +348,44 @@ public sealed class ManagementPolicyApplyService
 
     private static ProxyControlYarpConfigRequest CreateYarpConfig(ProxyWardPolicy policy) =>
         new(
-            Routes: policy.Servers.Values
-                .SelectMany(CreateRoutes)
-                .ToArray(),
+            Routes: CreateRoutes(policy.Servers.Values).ToArray(),
             Clusters: policy.Servers.Values
                 .Select(CreateCluster)
                 .ToArray());
 
+    private static IEnumerable<ProxyControlYarpRouteRequest> CreateRoutes(
+        IEnumerable<ServerPolicy> servers)
+    {
+        var serverList = servers.ToArray();
+
+        foreach (var route in serverList.SelectMany(CreateRoutes))
+        {
+            yield return route;
+        }
+
+        if (serverList.Length == 1)
+        {
+            foreach (var route in CreateOriginWellKnownRoutes(serverList[0]))
+            {
+                yield return route;
+            }
+        }
+    }
+
     private static IEnumerable<ProxyControlYarpRouteRequest> CreateRoutes(ServerPolicy server)
+    {
+        foreach (var route in CreateMcpRoutes(server))
+        {
+            yield return route;
+        }
+
+        foreach (var route in CreateRouteScopedWellKnownRoutes(server))
+        {
+            yield return route;
+        }
+    }
+
+    private static IEnumerable<ProxyControlYarpRouteRequest> CreateMcpRoutes(ServerPolicy server)
     {
         var routePrefix = NormalizeRoutePrefix(server.Route);
         var transforms = CreatePathTransforms(routePrefix, server.Upstream.AbsolutePath);
@@ -307,6 +403,48 @@ public sealed class ManagementPolicyApplyService
             Order: 1,
             Match: new ProxyControlYarpRouteMatchRequest($"{routePrefix}/{{**catchAll}}"),
             Transforms: transforms);
+    }
+
+    private static IEnumerable<ProxyControlYarpRouteRequest> CreateRouteScopedWellKnownRoutes(ServerPolicy server) =>
+        WellKnownMetadataPrefixes.Select((metadataPrefix, index) =>
+            CreateWellKnownRoute(
+                server,
+                routeId: $"{server.Id}-well-known-{index}",
+                sourcePrefix: $"{metadataPrefix}{NormalizeRoutePrefix(server.Route)}",
+                metadataPrefix,
+                order: -100 + index));
+
+    private static IEnumerable<ProxyControlYarpRouteRequest> CreateOriginWellKnownRoutes(ServerPolicy server) =>
+        WellKnownMetadataPrefixes.Select((metadataPrefix, index) =>
+            CreateWellKnownRoute(
+                server,
+                routeId: $"{server.Id}-origin-well-known-{index}",
+                sourcePrefix: metadataPrefix,
+                metadataPrefix,
+                order: -200 + index));
+
+    private static ProxyControlYarpRouteRequest CreateWellKnownRoute(
+        ServerPolicy server,
+        string routeId,
+        string sourcePrefix,
+        string metadataPrefix,
+        int order) =>
+        new(
+            RouteId: routeId,
+            ClusterId: server.Id,
+            Order: order,
+            Match: new ProxyControlYarpRouteMatchRequest(sourcePrefix),
+            Transforms: CreatePathTransforms(
+                sourcePrefix,
+                JoinPath(metadataPrefix, server.Upstream.AbsolutePath)));
+
+    private static string JoinPath(string prefix, string suffix)
+    {
+        var normalizedPrefix = prefix.TrimEnd('/');
+        var normalizedSuffix = NormalizeRoutePrefix(suffix);
+        return normalizedSuffix == "/"
+            ? normalizedPrefix
+            : $"{normalizedPrefix}{normalizedSuffix}";
     }
 
     private static ProxyControlYarpClusterRequest CreateCluster(ServerPolicy server) =>

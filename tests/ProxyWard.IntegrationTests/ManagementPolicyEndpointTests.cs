@@ -1,28 +1,25 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using ProxyWard.Policy.Persistence;
 using ManagementProgram = ProxyWard.Management.Api.Program;
 
 namespace ProxyWard.IntegrationTests;
 
 public class ManagementPolicyEndpointTests : IAsyncLifetime
 {
-    private const string PolicyPathEnv = "PROXYWARD_MANAGEMENT_POLICY_PATH";
+    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
 
-    private readonly string _policyPath = Path.Combine(
+    private readonly string _databasePath = Path.Combine(
         Path.GetTempPath(),
-        $"proxyward-management-policy-{Guid.NewGuid():N}.yaml");
+        $"proxyward-management-policy-{Guid.NewGuid():N}.db");
 
     public Task InitializeAsync() => Task.CompletedTask;
 
     public Task DisposeAsync()
     {
-        Environment.SetEnvironmentVariable(PolicyPathEnv, null);
-
-        if (File.Exists(_policyPath))
-        {
-            File.Delete(_policyPath);
-        }
+        Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        DeleteDbFiles(_databasePath);
 
         return Task.CompletedTask;
     }
@@ -30,8 +27,8 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
     [Fact]
     public async Task PolicyEndpointReturnsYamlModelHashSourceAndReadOnlyFields()
     {
-        await File.WriteAllTextAsync(_policyPath, PolicyYaml());
-        Environment.SetEnvironmentVariable(PolicyPathEnv, _policyPath);
+        await SeedPolicyAsync(PolicyYaml());
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
@@ -54,15 +51,15 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
         Assert.DoesNotContain("top-level-secret", yaml, StringComparison.Ordinal);
 
         var source = root.GetProperty("source");
-        Assert.Equal(_policyPath, source.GetProperty("path").GetString());
-        Assert.Equal("yaml", source.GetProperty("format").GetString());
+        Assert.Equal($"sqlite:{Path.GetFullPath(_databasePath)}#policy_snapshots", source.GetProperty("path").GetString());
+        Assert.Equal("sqlite", source.GetProperty("format").GetString());
         Assert.True(source.GetProperty("exists").GetBoolean());
-        Assert.True(source.GetProperty("sizeBytes").GetInt64() > 0);
+        Assert.Equal(JsonValueKind.Null, source.GetProperty("sizeBytes").ValueKind);
         Assert.False(string.IsNullOrWhiteSpace(source.GetProperty("lastModifiedUtc").GetString()));
 
         var readOnly = root.GetProperty("readOnly");
         Assert.Equal(root.GetProperty("policyHash").GetString(), readOnly.GetProperty("policyHash").GetString());
-        Assert.Equal(_policyPath, readOnly.GetProperty("sourcePath").GetString());
+        Assert.Equal($"sqlite:{Path.GetFullPath(_databasePath)}#policy_snapshots", readOnly.GetProperty("sourcePath").GetString());
         Assert.Equal(2, readOnly.GetProperty("serverCount").GetInt32());
         Assert.False(string.IsNullOrWhiteSpace(readOnly.GetProperty("loadedAtUtc").GetString()));
 
@@ -135,21 +132,38 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PolicyEndpointReturnsNotFoundForMissingPolicy()
+    public async Task PolicyEndpointBootstrapsDefaultPolicyWhenDatabaseIsEmpty()
     {
-        Environment.SetEnvironmentVariable(PolicyPathEnv, _policyPath);
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync("/api/policy");
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         await using var stream = await response.Content.ReadAsStreamAsync();
         using var payload = await JsonDocument.ParseAsync(stream);
-        Assert.Equal("policy_not_found", payload.RootElement.GetProperty("error").GetString());
-        Assert.Equal(_policyPath, payload.RootElement.GetProperty("path").GetString());
+        Assert.True(payload.RootElement.GetProperty("model").GetProperty("servers").TryGetProperty("sample", out _));
+    }
+
+    private async Task SeedPolicyAsync(string yaml)
+    {
+        var store = new SqlitePolicyStore(_databasePath);
+        await store.SaveAsync(yaml);
+    }
+
+    private static void DeleteDbFiles(string databasePath)
+    {
+        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
+        {
+            if (File.Exists(path))
+            {
+                try { File.Delete(path); }
+                catch { /* best-effort cleanup */ }
+            }
+        }
     }
 
     private static string PolicyYaml() =>

@@ -5,6 +5,7 @@ using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Sinks;
 using ProxyWard.Locking.Persistence;
 using ProxyWard.Locking.Tools;
+using ProxyWard.Policy.Persistence;
 using ManagementProgram = ProxyWard.Management.Api.Program;
 
 namespace ProxyWard.IntegrationTests;
@@ -12,26 +13,17 @@ namespace ProxyWard.IntegrationTests;
 public class ManagementToolInventoryEndpointTests : IAsyncLifetime
 {
     private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
-    private const string PolicyPathEnv = "PROXYWARD_MANAGEMENT_POLICY_PATH";
 
     private readonly string _databasePath = Path.Combine(
         Path.GetTempPath(),
         $"proxyward-management-tools-{Guid.NewGuid():N}.db");
-    private readonly string _policyPath = Path.Combine(
-        Path.GetTempPath(),
-        $"proxyward-management-tools-policy-{Guid.NewGuid():N}.yaml");
 
     public Task InitializeAsync() => Task.CompletedTask;
 
     public Task DisposeAsync()
     {
         Environment.SetEnvironmentVariable(AuditDbEnv, null);
-        Environment.SetEnvironmentVariable(PolicyPathEnv, null);
         DeleteFiles(_databasePath);
-        if (File.Exists(_policyPath))
-        {
-            File.Delete(_policyPath);
-        }
 
         return Task.CompletedTask;
     }
@@ -77,9 +69,8 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
     public async Task ToolsEndpointIncludesConfiguredServersWithoutSchemaHistory()
     {
         await SeedSchemaHistoryAsync();
-        await File.WriteAllTextAsync(_policyPath, PolicyYamlWithUnobservedServer());
+        await new SqlitePolicyStore(_databasePath).SaveAsync(PolicyYamlWithUnobservedServer());
         Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
-        Environment.SetEnvironmentVariable(PolicyPathEnv, _policyPath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();

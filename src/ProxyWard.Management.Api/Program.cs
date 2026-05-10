@@ -13,6 +13,7 @@ using ProxyWard.Management.Api.Settings;
 using ProxyWard.Management.Api.Status;
 using ProxyWard.Management.Api.Tools;
 using ProxyWard.Policy.Configuration;
+using ProxyWard.Policy.Persistence;
 
 namespace ProxyWard.Management.Api;
 
@@ -79,6 +80,7 @@ public partial class Program
             services.GetRequiredService<ManagementApiOptions>().AuditDatabasePath,
             services.GetRequiredService<ManagementAuditReadOptions>()));
         builder.Services.AddScoped<ManagementToolInventoryRepository>();
+        builder.Services.AddSingleton(_ => new SqlitePolicyStore(options.AuditDatabasePath));
         builder.Services.AddScoped<ManagementPolicyReader>();
         builder.Services.AddScoped<ManagementPolicyValidationService>();
         builder.Services.AddScoped<ManagementPolicyApplyService>();
@@ -120,11 +122,7 @@ public partial class Program
             }
             catch (FileNotFoundException ex)
             {
-                return Results.NotFound(new
-                {
-                    error = "policy_not_found",
-                    path = ex.FileName
-                });
+                return Results.NotFound(new { error = "policy_not_found", path = ex.FileName });
             }
             catch (PolicyValidationException ex)
             {
@@ -141,7 +139,7 @@ public partial class Program
             catch (IOException ex)
             {
                 return Results.Problem(
-                    title: "Policy file could not be read",
+                    title: "Policy database could not be read",
                     detail: ex.Message,
                     statusCode: StatusCodes.Status500InternalServerError,
                     extensions: new Dictionary<string, object?>
@@ -162,11 +160,7 @@ public partial class Program
             }
             catch (FileNotFoundException ex)
             {
-                return Results.NotFound(new
-                {
-                    error = "policy_not_found",
-                    path = ex.FileName
-                });
+                return Results.NotFound(new { error = "policy_not_found", path = ex.FileName });
             }
             catch (PolicyValidationException ex)
             {
@@ -183,7 +177,7 @@ public partial class Program
             catch (IOException ex)
             {
                 return Results.Problem(
-                    title: "Policy file could not be read",
+                    title: "Policy database could not be read",
                     detail: ex.Message,
                     statusCode: StatusCodes.Status500InternalServerError,
                     extensions: new Dictionary<string, object?>
@@ -855,13 +849,9 @@ public partial class Program
     private static ManagementApiOptions LoadOptions(IConfiguration configuration)
     {
         var auditDatabasePath = Environment.GetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH")
+            ?? Environment.GetEnvironmentVariable("PROXYWARD_DB_PATH")
             ?? configuration["Management:Audit:SqlitePath"]
             ?? "./data/proxyward.db";
-
-        var policyPath = Environment.GetEnvironmentVariable("PROXYWARD_MANAGEMENT_POLICY_PATH")
-            ?? configuration["Management:Policy:Path"]
-            ?? Environment.GetEnvironmentVariable("PROXYWARD_POLICY_PATH")
-            ?? "proxyward.yaml";
 
         var proxyControlBaseUrlValue = Environment.GetEnvironmentVariable("PROXYWARD_PROXY_CONTROL_URL")
             ?? configuration["Management:ProxyControl:BaseUrl"]
@@ -896,7 +886,6 @@ public partial class Program
 
         return new ManagementApiOptions(
             auditDatabasePath,
-            policyPath,
             proxyControlBaseUrl,
             proxyControlToken,
             adminToken,

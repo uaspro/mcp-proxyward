@@ -15,7 +15,7 @@ public class YarpProxyTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -45,7 +45,49 @@ public class YarpProxyTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+    }
+
+    [Theory]
+    [InlineData(
+        "/.well-known/oauth-protected-resource/github/mcp?resource=http%3A%2F%2F127.0.0.1%3A8080%2Fgithub%2Fmcp",
+        "/.well-known/oauth-protected-resource/mcp")]
+    [InlineData(
+        "/.well-known/oauth-authorization-server/github/mcp",
+        "/.well-known/oauth-authorization-server/mcp")]
+    [InlineData(
+        "/.well-known/openid-configuration/github/mcp",
+        "/.well-known/openid-configuration/mcp")]
+    [InlineData(
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp")]
+    public async Task WellKnownMetadataRoutesProxyToConfiguredUpstreamMetadataPath(
+        string requestPath,
+        string expectedUpstreamPath)
+    {
+        await using var upstream = await StartUpstreamAsync();
+        var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.GetAsync(requestPath);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+
+            Assert.Equal(expectedUpstreamPath, payload.RootElement.GetProperty("path").GetString());
+            Assert.Equal("GET", payload.RootElement.GetProperty("method").GetString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -54,7 +96,7 @@ public class YarpProxyTests
     {
         await using var upstream = await StartUpstreamAsync();
         var policyPath = WriteTempPolicy(CreatePolicy(upstream.BaseAddress));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -70,7 +112,7 @@ public class YarpProxyTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -103,7 +145,7 @@ public class YarpProxyTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 

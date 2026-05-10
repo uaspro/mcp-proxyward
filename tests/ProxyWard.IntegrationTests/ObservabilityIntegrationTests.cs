@@ -29,7 +29,7 @@ public class ObservabilityIntegrationTests
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, """{"jsonrpc":"2.0","id":1,"result":{}}"""));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         var body = """{"jsonrpc":"2.0","id":700,"method":"tools/call","params":{"name":"shell.exec","arguments":{"command":"rm -rf /tmp/build","path":"/etc/passwd","token":"api-token"}}}""";
 
@@ -48,7 +48,7 @@ public class ObservabilityIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
             DeleteIfExists(dbPath);
         }
 
@@ -91,7 +91,7 @@ public class ObservabilityIntegrationTests
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, """{"ok":true}"""));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -114,7 +114,7 @@ public class ObservabilityIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
             DeleteIfExists(dbPath);
         }
 
@@ -140,7 +140,7 @@ public class ObservabilityIntegrationTests
             upstream.BaseAddress,
             dbPath,
             blockTool: "shell.exec"));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         const string secretToken = "api-token-very-secret";
         const string rawPath = "/etc/passwd";
@@ -207,7 +207,7 @@ public class ObservabilityIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
             DeleteIfExists(dbPath);
         }
     }
@@ -232,7 +232,7 @@ public class ObservabilityIntegrationTests
                 - ghp_
                 - /github_pat_[A-Za-z0-9_]+/
             """));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         const string literalSecret = "ghp_literal_secret";
         const string regexSecret = "github_pat_regex_secret_123";
@@ -287,7 +287,7 @@ public class ObservabilityIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
             DeleteIfExists(dbPath);
         }
     }
@@ -307,7 +307,7 @@ public class ObservabilityIntegrationTests
                 upstream.BaseAddress,
                 dbPath,
                 blockTool: "shell.exec"));
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
             try
             {
@@ -323,7 +323,7 @@ public class ObservabilityIntegrationTests
             }
             finally
             {
-                Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+                Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
                 DeleteIfExists(dbPath);
             }
         }
@@ -338,7 +338,7 @@ public class ObservabilityIntegrationTests
                 upstream.BaseAddress,
                 dbPath,
                 blockTool: "shell.exec"));
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
             try
             {
@@ -354,7 +354,7 @@ public class ObservabilityIntegrationTests
             }
             finally
             {
-                Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+                Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
                 DeleteIfExists(dbPath);
             }
         }
@@ -388,7 +388,7 @@ public class ObservabilityIntegrationTests
                 JsonNode.Parse("""{"type":"object","properties":{"q":{"type":"string"}}}"""),
                 null));
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -404,7 +404,7 @@ public class ObservabilityIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
             DeleteIfExists(dbPath);
         }
 
@@ -444,7 +444,7 @@ public class ObservabilityIntegrationTests
                 JsonNode.Parse("""{"type":"object"}"""),
                 null));
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -459,7 +459,7 @@ public class ObservabilityIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
             DeleteIfExists(dbPath);
         }
 
@@ -512,7 +512,7 @@ public class ObservabilityIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 

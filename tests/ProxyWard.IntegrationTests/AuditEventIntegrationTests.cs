@@ -24,7 +24,7 @@ public class AuditEventIntegrationTests
             upstream.BaseAddress,
             sqlitePath: dbPath,
             serverAllowed: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         var body = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":"abc"}}""";
 
         try
@@ -41,7 +41,7 @@ public class AuditEventIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -71,7 +71,7 @@ public class AuditEventIntegrationTests
             upstream.BaseAddress,
             sqlitePath: dbPath,
             serverAllowed: true));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
         const string secretToken = "very-secret-token-abc123";
         var body = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"fs.read\",\"arguments\":{\"path\":\"/etc/passwd\",\"token\":\""
             + secretToken
@@ -91,7 +91,7 @@ public class AuditEventIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -122,7 +122,7 @@ public class AuditEventIntegrationTests
             upstream.BaseAddress,
             sqlitePath: dbPath,
             serverAllowed: false));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
         try
         {
@@ -136,7 +136,7 @@ public class AuditEventIntegrationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
         var rows = ReadAuditEvents(dbPath);
@@ -186,7 +186,7 @@ public class AuditEventIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
+        new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 

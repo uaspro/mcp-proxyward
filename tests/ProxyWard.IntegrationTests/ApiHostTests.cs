@@ -1,17 +1,22 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
 using ProxyWard.Policy.Configuration;
+using ProxyWard.Policy.Persistence;
 
 namespace ProxyWard.IntegrationTests;
 
 public class ApiHostTests
 {
+    private const string DbEnv = "PROXYWARD_DB_PATH";
+
     [Fact]
     public async Task HealthEndpointIncludesLoadedPolicyMetadata()
     {
-        var policyPath = WriteTempPolicy(ValidYaml);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        var databasePath = CreateTempDbPath();
+        await new SqlitePolicyStore(databasePath).SaveAsync(ValidYaml);
+        Environment.SetEnvironmentVariable(DbEnv, databasePath);
 
         try
         {
@@ -32,17 +37,19 @@ public class ApiHostTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable(DbEnv, null);
+            DeleteDbFiles(databasePath);
         }
     }
 
     [Fact]
     public void InvalidPolicyPreventsHostStartup()
     {
-        var policyPath = WriteTempPolicy("""
+        var databasePath = CreateTempDbPath();
+        InsertRawPolicy(databasePath, """
             mode: audit
             """);
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable(DbEnv, databasePath);
 
         try
         {
@@ -53,18 +60,20 @@ public class ApiHostTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable(DbEnv, null);
+            DeleteDbFiles(databasePath);
         }
     }
 
     [Fact]
     public void RemovedLockfileKeyPreventsHostStartup()
     {
-        var policyPath = WriteTempPolicy(ValidYaml.Replace(
+        var databasePath = CreateTempDbPath();
+        InsertRawPolicy(databasePath, ValidYaml.Replace(
             "servers:",
             "lockfile: ./proxyward.lock.yaml\nservers:",
             StringComparison.Ordinal));
-        Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", policyPath);
+        Environment.SetEnvironmentVariable(DbEnv, databasePath);
 
         try
         {
@@ -75,15 +84,58 @@ public class ApiHostTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_POLICY_PATH", null);
+            Environment.SetEnvironmentVariable(DbEnv, null);
+            DeleteDbFiles(databasePath);
         }
     }
 
-    private static string WriteTempPolicy(string yaml)
+    private static string CreateTempDbPath() =>
+        Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.db");
+
+    private static void InsertRawPolicy(string databasePath, string yaml)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
-        File.WriteAllText(path, yaml);
-        return path;
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadWriteCreate
+        }.ToString());
+        connection.Open();
+        using (var schema = connection.CreateCommand())
+        {
+            schema.CommandText = """
+                CREATE TABLE policy_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at_utc TEXT NOT NULL,
+                    policy_hash TEXT NOT NULL,
+                    yaml TEXT NOT NULL,
+                    requested_by TEXT NULL,
+                    note TEXT NULL
+                );
+                """;
+            schema.ExecuteNonQuery();
+        }
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO policy_snapshots (created_at_utc, policy_hash, yaml)
+            VALUES ($created_at_utc, $policy_hash, $yaml);
+            """;
+        command.Parameters.AddWithValue("$created_at_utc", DateTimeOffset.UtcNow.UtcDateTime.ToString("o"));
+        command.Parameters.AddWithValue("$policy_hash", "sha256:invalid");
+        command.Parameters.AddWithValue("$yaml", yaml);
+        command.ExecuteNonQuery();
+    }
+
+    private static void DeleteDbFiles(string databasePath)
+    {
+        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
+        {
+            if (File.Exists(path))
+            {
+                try { File.Delete(path); }
+                catch { /* best-effort cleanup */ }
+            }
+        }
     }
 
     private const string ValidYaml = """

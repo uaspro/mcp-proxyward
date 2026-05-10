@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using ProxyWard.Management.Api.Status;
+using ProxyWard.Policy.Persistence;
 using ManagementProgram = ProxyWard.Management.Api.Program;
 
 namespace ProxyWard.IntegrationTests;
@@ -27,6 +28,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
         Environment.SetEnvironmentVariable(AuditDbEnv, null);
         Environment.SetEnvironmentVariable(AdminTokenEnv, null);
         DeleteDbFiles(_databasePath);
+
         return Task.CompletedTask;
     }
 
@@ -54,12 +56,13 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     {
         Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
+        await SeedPolicyAsync(CurrentPolicyYaml());
 
         var stub = new StubProxyControlClient
         {
             Status = new ProxyControlStatus("audit", "sha256:old", 1, 1),
             PolicySnapshotResult = new ProxyControlStatus("enforce", "sha256:new", 2, 4),
-            YarpResult = new ProxyControlYarpConfigStatus(4, 4, 2)
+            YarpResult = new ProxyControlYarpConfigStatus(4, 10, 2)
         };
         await using var factory = CreateFactory(stub);
         using var client = factory.CreateClient();
@@ -74,9 +77,13 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
         Assert.Single(stub.PolicySnapshots);
 
         var yarp = Assert.Single(stub.YarpConfigs);
-        Assert.Equal(4, yarp.Routes.Count);
+        Assert.Equal(10, yarp.Routes.Count);
         Assert.Equal(2, yarp.Clusters.Count);
         Assert.Contains(yarp.Routes, route => route.RouteId == "github-exact" && route.Match.Path == "/github/mcp");
+        Assert.Contains(
+            yarp.Routes,
+            route => route.RouteId == "github-well-known-0"
+                && route.Match.Path == "/.well-known/oauth-protected-resource/github/mcp");
         Assert.Contains(yarp.Clusters, cluster => cluster.ClusterId == "filesystem");
 
         using var payload = await ReadJsonAsync(response);
@@ -85,7 +92,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
         Assert.Equal("enforce", root.GetProperty("mode").GetString());
         Assert.Equal("sha256:old", root.GetProperty("previousPolicyHash").GetString());
         Assert.Equal("sha256:new", root.GetProperty("policyHash").GetString());
-        Assert.Equal(4, root.GetProperty("yarp").GetProperty("routeCount").GetInt32());
+        Assert.Equal(10, root.GetProperty("yarp").GetProperty("routeCount").GetInt32());
         Assert.Equal(2, root.GetProperty("yarp").GetProperty("clusterCount").GetInt32());
 
         var audit = Assert.Single(await ReadPolicyApplyAuditRowsAsync());
@@ -99,6 +106,11 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
         Assert.Contains("\"policyHash\":\"sha256:new\"", audit.PayloadJson, StringComparison.Ordinal);
         Assert.Contains("\"requestedBy\":\"alice\"", audit.PayloadJson, StringComparison.Ordinal);
         Assert.DoesNotContain("mode: enforce", audit.PayloadJson, StringComparison.Ordinal);
+
+        var persistedYaml = (await new SqlitePolicyStore(_databasePath).ReadCurrentAsync())!.Yaml;
+        Assert.Contains("mode: enforce", persistedYaml, StringComparison.Ordinal);
+        Assert.Contains("filesystem:", persistedYaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("current:", persistedYaml, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -106,6 +118,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     {
         Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
+        await SeedPolicyAsync(CurrentPolicyYaml());
 
         var stub = new StubProxyControlClient();
         await using var factory = CreateFactory(stub);
@@ -120,6 +133,37 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
         Assert.Equal(["yarp", "policy"], stub.CallOrder);
         Assert.Single(stub.PolicySnapshots);
         Assert.Single(stub.YarpConfigs);
+
+        var persistedYaml = (await new SqlitePolicyStore(_databasePath).ReadCurrentAsync())!.Yaml;
+        Assert.Contains("github:", persistedYaml, StringComparison.Ordinal);
+        Assert.Contains("route: /github/mcp", persistedYaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PolicyApplyPersistsSourceForSubsequentRead()
+    {
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
+        await SeedPolicyAsync(CurrentPolicyYaml());
+
+        var stub = new StubProxyControlClient();
+        await using var factory = CreateFactory(stub);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-admin-token");
+
+        using var applyResponse = await client.PutAsync(
+            "/api/policy",
+            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
+
+        Assert.Equal(HttpStatusCode.OK, applyResponse.StatusCode);
+
+        using var readResponse = await client.GetAsync("/api/policy");
+
+        Assert.Equal(HttpStatusCode.OK, readResponse.StatusCode);
+        using var payload = await ReadJsonAsync(readResponse);
+        var servers = payload.RootElement.GetProperty("model").GetProperty("servers");
+        Assert.True(servers.TryGetProperty("filesystem", out _));
+        Assert.False(servers.TryGetProperty("current", out _));
     }
 
     [Fact]
@@ -183,11 +227,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     [Fact]
     public async Task PolicyApplyPolicySnapshotFailureAttemptsYarpRollback()
     {
-        var currentPolicyPath = Path.Combine(
-            Path.GetTempPath(),
-            $"proxyward-current-policy-{Guid.NewGuid():N}.yaml");
-        await File.WriteAllTextAsync(currentPolicyPath, CurrentPolicyYaml());
-        Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_POLICY_PATH", currentPolicyPath);
+        await SeedPolicyAsync(CurrentPolicyYaml());
         Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
@@ -202,32 +242,21 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-admin-token");
 
-        try
-        {
-            using var response = await client.PutAsync(
-                "/api/policy",
-                JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
+        using var response = await client.PutAsync(
+            "/api/policy",
+            JsonBody($$"""{"yaml":{{JsonSerializer.Serialize(ValidPolicyYaml())}}}"""));
 
-            Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
-            Assert.Equal(["yarp", "policy", "yarp"], stub.CallOrder);
-            Assert.Equal(2, stub.YarpConfigs.Count);
-            Assert.Single(stub.PolicySnapshots);
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Equal(["yarp", "policy", "yarp"], stub.CallOrder);
+        Assert.Equal(2, stub.YarpConfigs.Count);
+        Assert.Single(stub.PolicySnapshots);
 
-            using var payload = await ReadJsonAsync(response);
-            var root = payload.RootElement;
-            Assert.Equal("policy_apply_failed", root.GetProperty("error").GetString());
-            Assert.Equal("policy_snapshot", root.GetProperty("phase").GetString());
-            Assert.True(root.GetProperty("rollbackAttempted").GetBoolean());
-            Assert.True(root.GetProperty("rollbackApplied").GetBoolean());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_POLICY_PATH", null);
-            if (File.Exists(currentPolicyPath))
-            {
-                File.Delete(currentPolicyPath);
-            }
-        }
+        using var payload = await ReadJsonAsync(response);
+        var root = payload.RootElement;
+        Assert.Equal("policy_apply_failed", root.GetProperty("error").GetString());
+        Assert.Equal("policy_snapshot", root.GetProperty("phase").GetString());
+        Assert.True(root.GetProperty("rollbackAttempted").GetBoolean());
+        Assert.True(root.GetProperty("rollbackApplied").GetBoolean());
     }
 
     private async Task<IReadOnlyList<PolicyApplyAuditRow>> ReadPolicyApplyAuditRowsAsync()
@@ -276,6 +305,9 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 
     private static StringContent JsonBody(string json) =>
         new(json, Encoding.UTF8, "application/json");
+
+    private async Task SeedPolicyAsync(string yaml) =>
+        await new SqlitePolicyStore(_databasePath).SaveAsync(yaml);
 
     private static async Task<JsonDocument> ReadJsonAsync(HttpResponseMessage response)
     {

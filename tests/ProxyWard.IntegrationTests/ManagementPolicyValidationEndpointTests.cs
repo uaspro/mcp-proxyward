@@ -2,28 +2,25 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using ProxyWard.Policy.Persistence;
 using ManagementProgram = ProxyWard.Management.Api.Program;
 
 namespace ProxyWard.IntegrationTests;
 
 public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 {
-    private const string PolicyPathEnv = "PROXYWARD_MANAGEMENT_POLICY_PATH";
+    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
 
-    private readonly string _activePolicyPath = Path.Combine(
+    private readonly string _databasePath = Path.Combine(
         Path.GetTempPath(),
-        $"proxyward-management-policy-validation-active-{Guid.NewGuid():N}.yaml");
+        $"proxyward-management-policy-validation-active-{Guid.NewGuid():N}.db");
 
     public Task InitializeAsync() => Task.CompletedTask;
 
     public Task DisposeAsync()
     {
-        Environment.SetEnvironmentVariable(PolicyPathEnv, null);
-
-        if (File.Exists(_activePolicyPath))
-        {
-            File.Delete(_activePolicyPath);
-        }
+        Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        DeleteDbFiles(_databasePath);
 
         return Task.CompletedTask;
     }
@@ -31,9 +28,6 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
     [Fact]
     public async Task ValidateEndpointAcceptsYamlRequestAndReturnsNormalizedModelAndHash()
     {
-        await File.WriteAllTextAsync(_activePolicyPath, ActivePolicyYaml());
-        Environment.SetEnvironmentVariable(PolicyPathEnv, _activePolicyPath);
-
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
 
@@ -204,11 +198,11 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ValidateEndpointDoesNotModifyActivePolicyFile()
+    public async Task ValidateEndpointDoesNotModifyActivePolicySnapshot()
     {
         var activePolicy = ActivePolicyYaml();
-        await File.WriteAllTextAsync(_activePolicyPath, activePolicy);
-        Environment.SetEnvironmentVariable(PolicyPathEnv, _activePolicyPath);
+        await new SqlitePolicyStore(_databasePath).SaveAsync(activePolicy);
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
@@ -221,7 +215,22 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 
         using var payload = await ReadJsonAsync(response);
         Assert.True(payload.RootElement.GetProperty("valid").GetBoolean());
-        Assert.Equal(activePolicy, await File.ReadAllTextAsync(_activePolicyPath));
+        var snapshot = await new SqlitePolicyStore(_databasePath).ReadCurrentAsync();
+        Assert.NotNull(snapshot);
+        Assert.Contains("active:", snapshot.Yaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("github:", snapshot.Yaml, StringComparison.Ordinal);
+    }
+
+    private static void DeleteDbFiles(string databasePath)
+    {
+        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
+        {
+            if (File.Exists(path))
+            {
+                try { File.Delete(path); }
+                catch { /* best-effort cleanup */ }
+            }
+        }
     }
 
     private static StringContent JsonBody(string json) =>

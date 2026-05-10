@@ -1,28 +1,25 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using ProxyWard.Policy.Persistence;
 using ManagementProgram = ProxyWard.Management.Api.Program;
 
 namespace ProxyWard.IntegrationTests;
 
 public class ManagementSettingsEndpointTests : IAsyncLifetime
 {
-    private const string PolicyPathEnv = "PROXYWARD_MANAGEMENT_POLICY_PATH";
+    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
 
-    private readonly string _policyPath = Path.Combine(
+    private readonly string _databasePath = Path.Combine(
         Path.GetTempPath(),
-        $"proxyward-management-settings-{Guid.NewGuid():N}.yaml");
+        $"proxyward-management-settings-{Guid.NewGuid():N}.db");
 
     public Task InitializeAsync() => Task.CompletedTask;
 
     public Task DisposeAsync()
     {
-        Environment.SetEnvironmentVariable(PolicyPathEnv, null);
-
-        if (File.Exists(_policyPath))
-        {
-            File.Delete(_policyPath);
-        }
+        Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        DeleteDbFiles(_databasePath);
 
         return Task.CompletedTask;
     }
@@ -30,8 +27,8 @@ public class ManagementSettingsEndpointTests : IAsyncLifetime
     [Fact]
     public async Task SettingsEndpointReturnsReadOnlyPolicyBackedSettings()
     {
-        await File.WriteAllTextAsync(_policyPath, PolicyYaml());
-        Environment.SetEnvironmentVariable(PolicyPathEnv, _policyPath);
+        await new SqlitePolicyStore(_databasePath).SaveAsync(PolicyYaml());
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
@@ -63,13 +60,25 @@ public class ManagementSettingsEndpointTests : IAsyncLifetime
 
         var service = root.GetProperty("service");
         Assert.StartsWith("sha256:", service.GetProperty("policyHash").GetString(), StringComparison.Ordinal);
-        Assert.Equal(_policyPath, service.GetProperty("sourcePath").GetString());
+        Assert.Equal($"sqlite:{Path.GetFullPath(_databasePath)}#policy_snapshots", service.GetProperty("sourcePath").GetString());
         Assert.Equal(1, service.GetProperty("serverCount").GetInt32());
-        Assert.True(service.GetProperty("sourceSizeBytes").GetInt64() > 0);
+        Assert.Equal(JsonValueKind.Null, service.GetProperty("sourceSizeBytes").ValueKind);
 
         var runtime = root.GetProperty("runtime");
-        Assert.False(runtime.GetProperty("editingSupported").GetBoolean());
-        Assert.False(runtime.GetProperty("settingsWritable").GetBoolean());
+        Assert.True(runtime.GetProperty("editingSupported").GetBoolean());
+        Assert.True(runtime.GetProperty("settingsWritable").GetBoolean());
+    }
+
+    private static void DeleteDbFiles(string databasePath)
+    {
+        foreach (var path in new[] { databasePath, $"{databasePath}-shm", $"{databasePath}-wal" })
+        {
+            if (File.Exists(path))
+            {
+                try { File.Delete(path); }
+                catch { /* best-effort cleanup */ }
+            }
+        }
     }
 
     private static string PolicyYaml() =>

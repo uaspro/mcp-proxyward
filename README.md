@@ -83,7 +83,7 @@ This brings up five services:
 | `sample-mcp`     | A tiny MCP echo server used as upstream | (internal) |
 | `otel-collector` | Receives OTLP logs / traces / metrics   | 4317 / 4318 |
 
-The compose file mounts [`samples/compose/proxyward.yaml`](samples/compose/proxyward.yaml) into the proxy and management containers at `/app/config/proxyward.yaml`. SQLite audit data and schema-lock history live in the named `proxyward-data` volume at `/app/data/`. The stack binds published ports to `127.0.0.1`, uses a local compose admin token for management writes and proxy runtime control, and serves dashboard same-origin `/api/*` requests through its web server.
+The compose stack stores policy snapshots, audit data, and schema-lock history in the named `proxyward-data` volume at `/app/data/proxyward.db`. The proxy boots from that SQLite policy snapshot table and keeps the active policy cached in memory; the management API persists policy edits to the same DB and immediately pushes the accepted snapshot to the proxy runtime-control API. The stack binds published ports to `127.0.0.1`, uses a local compose admin token for management writes and proxy runtime control, and serves dashboard same-origin `/api/*` requests through its web server.
 
 ### 3. Verify the proxy is healthy
 
@@ -112,7 +112,7 @@ curl http://localhost:8082/
 
 ### 4. Point your MCP client at ProxyWard
 
-Replace your client's MCP server URL with the route configured in `proxyward.yaml`. The bundled sample exposes the `sample-mcp` upstream at:
+Replace your client's MCP server URL with the route configured in the active DB-backed policy. The default bootstrap policy exposes the bundled `sample-mcp` upstream at:
 
 ```text
 http://localhost:8080/sample/mcp
@@ -127,14 +127,14 @@ If you prefer to run the services directly, use three terminals. PowerShell uses
 dotnet build McpProxyWard.slnx
 
 # 2. Terminal 1: proxy
-export PROXYWARD_POLICY_PATH=./samples/compose/proxyward.yaml
+export PROXYWARD_DB_PATH=./data/proxyward.db
+export PROXYWARD_BOOTSTRAP_SAMPLE_UPSTREAM=http://localhost:8080/mcp
 export PROXYWARD_CONTROL_ENABLED=true
 export PROXYWARD_ADMIN_TOKEN=local-dev-token
 dotnet run --project src/ProxyWard.Api --urls http://localhost:8080
 
 # 3. Terminal 2: management API
 export PROXYWARD_MANAGEMENT_AUDIT_DB_PATH=./data/proxyward.db
-export PROXYWARD_MANAGEMENT_POLICY_PATH=./samples/compose/proxyward.yaml
 export PROXYWARD_PROXY_CONTROL_URL=http://localhost:8080
 export PROXYWARD_ADMIN_TOKEN=local-dev-token
 export PROXYWARD_MANAGEMENT_CORS_ALLOWED_ORIGINS=http://localhost:5173
@@ -173,12 +173,12 @@ Compose binds published ports to `127.0.0.1` and wires the dashboard through Ngi
 
 | Variable | Service | Purpose |
 | -------- | ------- | ------- |
-| `PROXYWARD_POLICY_PATH` | Proxy | YAML policy file path loaded by the MCP proxy. |
+| `PROXYWARD_DB_PATH` | Proxy | SQLite DB path containing `policy_snapshots`, audit rows, and schema-lock tables. |
+| `PROXYWARD_BOOTSTRAP_SAMPLE_UPSTREAM` | Proxy | Upstream URL used only when an empty policy DB is first bootstrapped. |
 | `PROXYWARD_CONTROL_ENABLED` | Proxy | Enables the minimal `/control/*` runtime-control endpoints. |
 | `PROXYWARD_CONTROL_TOKEN` | Proxy | Bearer token for proxy control endpoints. Falls back to `PROXYWARD_ADMIN_TOKEN`. |
 | `PROXYWARD_ADMIN_TOKEN` | Proxy and management | Shared local admin-token fallback used by Compose. Prefer secret injection outside local development. |
-| `PROXYWARD_MANAGEMENT_AUDIT_DB_PATH` | Management API | SQLite audit/schema-lock DB path mounted from the proxy data volume. |
-| `PROXYWARD_MANAGEMENT_POLICY_PATH` | Management API | Policy file path used for read/validate/apply workflows. |
+| `PROXYWARD_MANAGEMENT_AUDIT_DB_PATH` | Management API | SQLite DB path used for policy snapshots, audit/schema-lock data, and dashboard reads. |
 | `PROXYWARD_PROXY_CONTROL_URL` | Management API | Internal URL of the proxy control API, for example `http://proxyward:8080` in Compose. |
 | `PROXYWARD_PROXY_CONTROL_TOKEN` | Management API | Bearer token used by management API when calling proxy `/control/*`; falls back to `PROXYWARD_ADMIN_TOKEN`. |
 | `PROXYWARD_MANAGEMENT_ADMIN_TOKEN` | Management API | Bearer token required by privileged management write endpoints outside explicit local-dev mode. |
@@ -230,7 +230,7 @@ Privileged management writes require `Authorization: Bearer <admin-token>` unles
 
 You want to drop ProxyWard in front of one MCP server and just *watch* what your agent is doing. No blocking, just visibility.
 
-**`proxyward.yaml`:**
+**Policy YAML submitted through the dashboard or management API:**
 
 ```yaml
 mode: audit
@@ -285,7 +285,7 @@ You're putting ProxyWard in front of a GitHub-style MCP server. Agents should be
 - run shell-like commands such as `rm`, `curl`, `wget`, or `bash`,
 - silently keep working after the upstream changes a tool's description or schema.
 
-**`proxyward.yaml`:**
+**Policy YAML submitted through the dashboard or management API:**
 
 ```yaml
 mode: enforce
@@ -402,7 +402,7 @@ You can flip between `mode: audit` and `mode: enforce` without changing any othe
 
 ## Configuration Reference (short)
 
-A single YAML file drives the proxy. Top-level keys:
+Policy snapshots are persisted in SQLite and cached by the proxy at runtime. The dashboard and management API still accept YAML or structured JSON policy proposals with these top-level keys:
 
 | Key             | Purpose                                                           |
 | --------------- | ----------------------------------------------------------------- |
@@ -412,7 +412,7 @@ A single YAML file drives the proxy. Top-level keys:
 | `observability` | Service name, console / OTLP / Application Insights export        |
 | `servers.<id>`  | Per-server route, upstream URL, allow flag, tool rules, arg rules |
 
-See [`proxyward.yaml`](proxyward.yaml) for the canonical example and [`samples/compose/proxyward.yaml`](samples/compose/proxyward.yaml) for the compose variant.
+The Compose stack bootstraps a default sample policy into `policy_snapshots` when the DB is empty; subsequent edits are DB-backed.
 
 ---
 

@@ -40,8 +40,8 @@ public sealed class ManagementSettingsService
                 SourceLastModifiedUtc: policy.Source.LastModifiedUtc,
                 SourceSizeBytes: policy.Source.SizeBytes),
             Runtime: new ManagementSettingsRuntime(
-                EditingSupported: false,
-                SettingsWritable: false));
+                EditingSupported: true,
+                SettingsWritable: true));
     }
 }
 

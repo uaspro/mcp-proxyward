@@ -19,6 +19,40 @@ public class ManagementSchemaDriftRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task QueryAsyncReturnsEmptyPageWhenDriftTableIsNotInitialized()
+    {
+        await CreateEmptyDatabaseAsync();
+
+        var repository = new ManagementSchemaDriftRepository(_databasePath);
+        var page = await repository.QueryAsync(
+            new ManagementSchemaDriftQuery(
+                FromUtc: new DateTimeOffset(2026, 5, 10, 10, 0, 0, TimeSpan.Zero),
+                ToUtc: new DateTimeOffset(2026, 5, 10, 11, 0, 0, TimeSpan.Zero),
+                Status: "pending",
+                Offset: 5,
+                PageSize: 10),
+            CancellationToken.None);
+
+        Assert.Equal(5, page.Offset);
+        Assert.Equal(10, page.PageSize);
+        Assert.Equal(0, page.TotalCount);
+        Assert.Empty(page.Items);
+        Assert.Equal(new DateTimeOffset(2026, 5, 10, 10, 0, 0, TimeSpan.Zero), page.Window.FromUtc);
+        Assert.Equal(new DateTimeOffset(2026, 5, 10, 11, 0, 0, TimeSpan.Zero), page.Window.ToUtc);
+    }
+
+    [Fact]
+    public async Task GetByIdAsyncReturnsNullWhenDriftTableIsNotInitialized()
+    {
+        await CreateEmptyDatabaseAsync();
+
+        var repository = new ManagementSchemaDriftRepository(_databasePath);
+        var detail = await repository.GetByIdAsync(1, null, null, CancellationToken.None);
+
+        Assert.Null(detail);
+    }
+
+    [Fact]
     public async Task QueryAsyncReturnsNewestFirstWithFiltersAndImpactCount()
     {
         var first = await SeedReviewAsync(
@@ -177,6 +211,17 @@ public class ManagementSchemaDriftRepositoryTests : IAsyncLifetime
         command.Parameters.AddWithValue("$status", status);
         command.Parameters.AddWithValue("$id", id);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task CreateEmptyDatabaseAsync()
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+            {
+                DataSource = _databasePath,
+                Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadWriteCreate
+            }.ToString());
+        await connection.OpenAsync();
     }
 
     private static void DeleteDbFiles(string databasePath)

@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
-using ProxyWard.Policy.Configuration;
+using ProxyWard.Policy.Persistence;
 
 namespace ProxyWard.Management.Api.Tools;
 
@@ -19,14 +19,16 @@ public sealed class ManagementToolInventoryRepository
 
     private readonly string _databasePath;
     private readonly string _connectionString;
-    private readonly string _policyPath;
+    private readonly SqlitePolicyStore _policyStore;
 
-    public ManagementToolInventoryRepository(ManagementApiOptions options)
+    public ManagementToolInventoryRepository(
+        ManagementApiOptions options,
+        SqlitePolicyStore policyStore)
     {
         ArgumentNullException.ThrowIfNull(options);
 
         _databasePath = Path.GetFullPath(options.AuditDatabasePath);
-        _policyPath = options.PolicyPath;
+        _policyStore = policyStore ?? throw new ArgumentNullException(nameof(policyStore));
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = _databasePath,
@@ -145,20 +147,14 @@ public sealed class ManagementToolInventoryRepository
 
     private async Task<IReadOnlyCollection<string>> ReadConfiguredServerIdsAsync(CancellationToken cancellationToken)
     {
-        if (!File.Exists(_policyPath))
-        {
-            return [];
-        }
-
         try
         {
-            var yaml = await File.ReadAllTextAsync(_policyPath, cancellationToken).ConfigureAwait(false);
-            var policy = ProxyWardPolicyLoader.Load(yaml);
-            return policy.Servers.Keys
+            var snapshot = await _policyStore.ReadCurrentAsync(cancellationToken).ConfigureAwait(false);
+            return (snapshot?.Policy.Servers.Keys ?? [])
                 .OrderBy(serverId => serverId, StringComparer.Ordinal)
                 .ToArray();
         }
-        catch (Exception ex) when (ex is IOException or PolicyValidationException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
         {
             return [];
         }
