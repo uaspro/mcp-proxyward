@@ -11,6 +11,7 @@ using ProxyWard.Management.Application.Tools;
 using ProxyWard.Management.Infrastructure.Dashboard;
 using ProxyWard.Management.Infrastructure.Drift;
 using ProxyWard.Management.Infrastructure.Audit;
+using ProxyWard.Management.Infrastructure.Policy;
 using ProxyWard.Management.Infrastructure.Status;
 using ProxyWard.Management.Infrastructure.Tools;
 using ProxyWard.Policy.Persistence;
@@ -75,6 +76,10 @@ internal static class ManagementApiServiceCollectionExtensions
             AllowAutoRedirect = false
         });
         services.AddSingleton(_ => new SqlitePolicyStore(options.AuditDatabasePath));
+        services.AddSingleton<IManagementPolicySnapshotStore, SqliteManagementPolicySnapshotStore>();
+        services.AddSingleton<IManagementPolicyYamlSanitizer, YamlManagementPolicySanitizer>();
+        services.AddSingleton<IManagementPolicyModelYamlSerializer, YamlManagementPolicyModelSerializer>();
+        services.AddSingleton<IManagementPolicyAuditStore, SqliteManagementPolicyAuditStore>();
         services.AddScoped<ManagementPolicyReader>();
         services.AddScoped<ManagementPolicyValidationService>();
         services.AddScoped<ManagementPolicyApplyService>();

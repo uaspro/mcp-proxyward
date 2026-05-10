@@ -2,12 +2,14 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.7" />
+    <PackageReference Include="YamlDotNet" Version="17.1.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ProxyWard.Audit\ProxyWard.Audit.csproj" />
     <ProjectReference Include="..\ProxyWard.Locking\ProxyWard.Locking.csproj" />
     <ProjectReference Include="..\ProxyWard.Management.Application\ProxyWard.Management.Application.csproj" />
+    <ProjectReference Include="..\ProxyWard.Policy\ProxyWard.Policy.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -1,11 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.7" />
-    <PackageReference Include="YamlDotNet" Version="17.1.0" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\ProxyWard.Policy\ProxyWard.Policy.csproj" />
   </ItemGroup>
 

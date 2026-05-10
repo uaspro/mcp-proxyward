@@ -24,6 +24,7 @@
     <ProjectReference Include="..\..\src\ProxyWard.Policy\ProxyWard.Policy.csproj" />
     <ProjectReference Include="..\..\src\ProxyWard.Locking\ProxyWard.Locking.csproj" />
     <ProjectReference Include="..\..\src\ProxyWard.Audit\ProxyWard.Audit.csproj" />
+    <ProjectReference Include="..\..\src\ProxyWard.Management.Application\ProxyWard.Management.Application.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,47 +1,32 @@
 using System.Text;
-using ProxyWard.Management.Application;
 using ProxyWard.Policy.Configuration;
-using ProxyWard.Policy.Persistence;
-using YamlDotNet.RepresentationModel;
 
 namespace ProxyWard.Management.Application.Policy;
 
 public sealed class ManagementPolicyReader
 {
-    private const string MaskedScalar = "[masked]";
     private const string MaskedUserInfo = "***";
 
-    private static readonly string[] SensitiveKeyFragments =
-    [
-        "token",
-        "secret",
-        "password",
-        "apikey",
-        "authorization",
-        "connectionstring",
-        "credential"
-    ];
-
-    private readonly ManagementApiOptions _options;
-    private readonly SqlitePolicyStore _policyStore;
+    private readonly IManagementPolicySnapshotStore _policySnapshots;
+    private readonly IManagementPolicyYamlSanitizer _yamlSanitizer;
 
     public ManagementPolicyReader(
-        ManagementApiOptions options,
-        SqlitePolicyStore policyStore)
+        IManagementPolicySnapshotStore policySnapshots,
+        IManagementPolicyYamlSanitizer yamlSanitizer)
     {
-        _options = options ?? throw new ArgumentNullException(nameof(options));
-        _policyStore = policyStore ?? throw new ArgumentNullException(nameof(policyStore));
+        _policySnapshots = policySnapshots ?? throw new ArgumentNullException(nameof(policySnapshots));
+        _yamlSanitizer = yamlSanitizer ?? throw new ArgumentNullException(nameof(yamlSanitizer));
     }
 
     public async Task<ManagementPolicyResponse> ReadAsync(CancellationToken cancellationToken)
     {
-        var snapshot = await _policyStore.InitializeAndReadCurrentAsync(
-            ProxyWardDefaultPolicy.CreateYaml(_options.AuditDatabasePath),
+        var snapshot = await _policySnapshots.InitializeAndReadCurrentAsync(
+            ProxyWardDefaultPolicy.CreateYaml(_policySnapshots.DatabasePath),
             cancellationToken).ConfigureAwait(false);
-        var source = FormatSource(_policyStore.DatabasePath);
+        var source = FormatSource(_policySnapshots.DatabasePath);
 
         return new ManagementPolicyResponse(
-            Yaml: MaskYaml(snapshot.Yaml),
+            Yaml: _yamlSanitizer.MaskSensitiveValues(snapshot.Yaml),
             PolicyHash: snapshot.Policy.VersionHash,
             Source: new ManagementPolicySource(
                 Path: source,
@@ -133,99 +118,6 @@ public sealed class ManagementPolicyReader
                 : new ManagementCommandArgumentPolicyOverrideModel(
                     overridePolicy.Commands.BlockShell,
                     overridePolicy.Commands.Dangerous));
-
-    private static string MaskYaml(string yaml)
-    {
-        var stream = new YamlStream();
-        using (var reader = new StringReader(yaml))
-        {
-            stream.Load(reader);
-        }
-
-        var changed = false;
-        foreach (var document in stream.Documents)
-        {
-            changed |= MaskYamlNode(document.RootNode);
-        }
-
-        if (!changed)
-        {
-            return yaml;
-        }
-
-        using var writer = new StringWriter();
-        stream.Save(writer, assignAnchors: false);
-        return writer.ToString();
-    }
-
-    private static bool MaskYamlNode(YamlNode node)
-    {
-        var changed = false;
-
-        switch (node)
-        {
-            case YamlMappingNode mapping:
-                foreach (var (keyNode, valueNode) in mapping.Children.ToArray())
-                {
-                    var key = keyNode is YamlScalarNode scalarKey ? scalarKey.Value : null;
-                    if (IsSensitiveKey(key))
-                    {
-                        mapping.Children[keyNode] = new YamlScalarNode(MaskedScalar);
-                        changed = true;
-                        continue;
-                    }
-
-                    changed |= MaskYamlNode(valueNode);
-                }
-
-                break;
-
-            case YamlSequenceNode sequence:
-                foreach (var child in sequence.Children)
-                {
-                    changed |= MaskYamlNode(child);
-                }
-
-                break;
-
-            case YamlScalarNode scalar:
-                var maskedValue = MaskUriUserInfo(scalar.Value);
-                if (!string.Equals(maskedValue, scalar.Value, StringComparison.Ordinal))
-                {
-                    scalar.Value = maskedValue;
-                    changed = true;
-                }
-
-                break;
-        }
-
-        return changed;
-    }
-
-    private static bool IsSensitiveKey(string? key)
-    {
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            return false;
-        }
-
-        var normalized = new StringBuilder(key.Length);
-        foreach (var character in key)
-        {
-            if (char.IsLetterOrDigit(character))
-            {
-                normalized.Append(char.ToLowerInvariant(character));
-            }
-        }
-
-        var normalizedKey = normalized.ToString();
-        if (normalizedKey.EndsWith("env", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        return SensitiveKeyFragments.Any(fragment => normalizedKey.Contains(fragment, StringComparison.Ordinal));
-    }
 
     private static string? MaskUriUserInfo(string? value)
     {
