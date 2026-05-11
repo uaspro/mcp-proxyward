@@ -6,6 +6,10 @@ ProxyWard sits between MCP clients (Claude Desktop, Cursor, agent frameworks, et
 
 It is built for individual developers, small teams, and self-hosted environments that want **visibility and control** over MCP tool usage without modifying upstream MCP servers.
 
+<img width="2544" height="1301" alt="image" src="https://github.com/user-attachments/assets/328904e0-0e61-405d-aedf-a4b290b56419" />
+</br>
+<img width="2541" height="1298" alt="image" src="https://github.com/user-attachments/assets/6a6abbe5-d32d-4d32-aba1-6b4898ece402" />
+
 ---
 
 ## The Problem
@@ -437,10 +441,4 @@ If ProxyWard is useful to you, a star helps other people find it.
 
 ## Star History
 
-<a href="https://www.star-history.com/?type=date&repos=uaspro%2Fmcp-proxyward">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=uaspro/mcp-proxyward&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=uaspro/mcp-proxyward&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=uaspro/mcp-proxyward&type=date&legend=top-left" />
- </picture>
-</a>
+[![Star History Chart](https://api.star-history.com/chart?repos=uaspro/mcp-proxyward&type=date&legend=top-left)](https://www.star-history.com/?repos=uaspro%2Fmcp-proxyward&type=date&legend=top-left)
