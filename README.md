@@ -6,6 +6,10 @@ ProxyWard sits between MCP clients (Claude Desktop, Cursor, agent frameworks, et
 
 It is built for individual developers, small teams, and self-hosted environments that want **visibility and control** over MCP tool usage without modifying upstream MCP servers.
 
+<img width="2544" height="1301" alt="image" src="https://github.com/user-attachments/assets/328904e0-0e61-405d-aedf-a4b290b56419" />
+</br>
+<img width="2541" height="1298" alt="image" src="https://github.com/user-attachments/assets/6a6abbe5-d32d-4d32-aba1-6b4898ece402" />
+
 ---
 
 ## The Problem
