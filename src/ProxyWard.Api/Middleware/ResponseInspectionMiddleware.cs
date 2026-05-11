@@ -147,6 +147,25 @@ public sealed class ResponseInspectionMiddleware(
         else
         {
             result = ExtractToolsListResponse(body, context.Response.ContentType);
+            if (result.Skipped)
+            {
+                await EmitAuditAsync(
+                    context,
+                    policy,
+                    server,
+                    ToolsListResponseInspectionEventType,
+                    "tools/list",
+                    null,
+                    AuditDecision.Allow,
+                    [],
+                    body.Length,
+                    stopwatch.ElapsedMilliseconds,
+                    CreateToolSummary([], inspectionSkipReason: result.SkipReason));
+
+                await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
+                return;
+            }
+
             if (!result.Success)
             {
                 await EmitAuditAsync(
@@ -398,55 +417,7 @@ public sealed class ResponseInspectionMiddleware(
     }
 
     private ToolListExtractionResult ExtractToolsListResponse(byte[] body, string? contentType)
-    {
-        if (!HttpContentTypes.IsStreaming(contentType))
-        {
-            return extractor.Extract(body);
-        }
-
-        var payloads = ServerSentEventDataParser.ExtractDataPayloads(body);
-        if (payloads.Count == 0)
-        {
-            return ToolListExtractionResult.Failed(PolicyReasonCodes.JsonMalformed);
-        }
-
-        var jsonMessages = new JsonArray();
-        foreach (var payload in payloads)
-        {
-            var trimmed = payload.Trim();
-            if (trimmed.Length == 0 || string.Equals(trimmed, "[DONE]", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            JsonNode? message;
-            try
-            {
-                message = JsonNode.Parse(trimmed);
-            }
-            catch (JsonException)
-            {
-                return ToolListExtractionResult.Failed(PolicyReasonCodes.JsonMalformed);
-            }
-
-            if (message is not null)
-            {
-                jsonMessages.Add(message);
-            }
-        }
-
-        if (jsonMessages.Count == 0)
-        {
-            return ToolListExtractionResult.Failed(PolicyReasonCodes.JsonMalformed);
-        }
-
-        var extractableBody = Encoding.UTF8.GetBytes(
-            jsonMessages.Count == 1
-                ? jsonMessages[0]!.ToJsonString()
-                : jsonMessages.ToJsonString());
-
-        return extractor.Extract(extractableBody);
-    }
+        => extractor.Extract(body, contentType);
 
     private async Task HandleToolCallSecretResponseAsync(
         HttpContext context,
@@ -1094,7 +1065,8 @@ public sealed class ResponseInspectionMiddleware(
     private static JsonObject CreateToolSummary(
         IReadOnlyList<DiscoveredTool> tools,
         ToolSurfaceDriftResult? driftResult = null,
-        IReadOnlyCollection<DriftReviewRecordResult>? driftReviewResults = null)
+        IReadOnlyCollection<DriftReviewRecordResult>? driftReviewResults = null,
+        string? inspectionSkipReason = null)
     {
         var summary = new JsonObject
         {
@@ -1107,6 +1079,12 @@ public sealed class ResponseInspectionMiddleware(
                     .Select(name => (JsonNode?)JsonValue.Create(name))
                     .ToArray())
         };
+
+        if (!string.IsNullOrWhiteSpace(inspectionSkipReason))
+        {
+            summary["inspectionSkipped"] = true;
+            summary["inspectionSkipReason"] = inspectionSkipReason;
+        }
 
         if (driftResult is not null)
         {

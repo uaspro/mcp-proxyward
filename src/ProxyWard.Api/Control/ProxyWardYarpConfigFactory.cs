@@ -212,20 +212,14 @@ public sealed class ProxyWardYarpConfigFactory
         List<string> validationErrors)
     {
         var transform = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!IsSupportedTransform(requestedTransform))
+        {
+            validationErrors.Add($"routes.{routeId}.transforms[{index}] contains an unsupported transform");
+            return transform;
+        }
+
         foreach (var (key, value) in requestedTransform)
         {
-            if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(value))
-            {
-                validationErrors.Add($"routes.{routeId}.transforms[{index}] contains an empty key or value");
-                continue;
-            }
-
-            if (!IsSupportedTransform(key, value))
-            {
-                validationErrors.Add($"routes.{routeId}.transforms[{index}] contains unsupported transform '{key}'");
-                continue;
-            }
-
             transform[key] = value;
         }
 
@@ -255,10 +249,58 @@ public sealed class ProxyWardYarpConfigFactory
             && path.Count(ch => ch == '}') == 1;
     }
 
-    private static bool IsSupportedTransform(string key, string value) =>
-        (key.Equals("PathRemovePrefix", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("PathPrefix", StringComparison.OrdinalIgnoreCase))
-        && value.StartsWith('/');
+    private static bool IsSupportedTransform(Dictionary<string, string> transform) =>
+        IsSupportedPathTransform(transform)
+        || IsSupportedQueryValueTransform(transform);
+
+    private static bool IsSupportedPathTransform(Dictionary<string, string> transform)
+    {
+        if (transform.Count != 1)
+        {
+            return false;
+        }
+
+        var (key, value) = transform.Single();
+        return IsPathTransformKey(key)
+            && !string.IsNullOrWhiteSpace(value)
+            && value.StartsWith('/');
+    }
+
+    private static bool IsSupportedQueryValueTransform(Dictionary<string, string> transform)
+    {
+        if (!TryGetTransformValue(transform, "QueryValueParameter", out var parameter)
+            || string.IsNullOrWhiteSpace(parameter)
+            || transform.Count != 2)
+        {
+            return false;
+        }
+
+        var hasSet = TryGetTransformValue(transform, "Set", out var setValue) && setValue is not null;
+        var hasAppend = TryGetTransformValue(transform, "Append", out var appendValue) && appendValue is not null;
+        return hasSet ^ hasAppend;
+    }
+
+    private static bool IsPathTransformKey(string key) =>
+        key.Equals("PathRemovePrefix", StringComparison.OrdinalIgnoreCase)
+        || key.Equals("PathPrefix", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryGetTransformValue(
+        Dictionary<string, string> transform,
+        string expectedKey,
+        out string? value)
+    {
+        foreach (var (key, candidateValue) in transform)
+        {
+            if (key.Equals(expectedKey, StringComparison.OrdinalIgnoreCase))
+            {
+                value = candidateValue;
+                return true;
+            }
+        }
+
+        value = null;
+        return false;
+    }
 
     private sealed record YarpClusterBuildResult(
         IReadOnlyList<ClusterConfig> Clusters,

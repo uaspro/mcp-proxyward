@@ -402,6 +402,49 @@ public class ProxyControlEndpointTests
     }
 
     [Fact]
+    public async Task ControlYarpConfigAcceptsQueryValueTransforms()
+    {
+        await using var upstream = await TestUpstream.StartEchoAsync();
+        var policyPath = TestFiles.SavePolicy(ValidYaml);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
+        Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", "test-control-token");
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-control-token");
+
+            using var applyResponse = await client.PutAsync(
+                "/control/yarp-config",
+                new StringContent(
+                    CreateYarpConfigJsonWithQueryTransforms("dynamic", "/dynamic/mcp", $"{upstream.BaseAddress}/mcp"),
+                    Encoding.UTF8,
+                    "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, applyResponse.StatusCode);
+
+            using var proxiedResponse = await client.GetAsync("/dynamic/mcp/tools/list?cursor=abc");
+
+            Assert.Equal(HttpStatusCode.OK, proxiedResponse.StatusCode);
+
+            await using var stream = await proxiedResponse.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+            var upstreamQuery = payload.RootElement.GetProperty("query").GetString();
+
+            Assert.Equal("/mcp/tools/list", payload.RootElement.GetProperty("path").GetString());
+            Assert.Contains("cursor=abc", upstreamQuery, StringComparison.Ordinal);
+            Assert.Contains("login", upstreamQuery, StringComparison.Ordinal);
+            Assert.Contains("gradio=none", upstreamQuery, StringComparison.Ordinal);
+        }
+        finally
+        {
+            ClearProxyWardEnvironment();
+        }
+    }
+
+    [Fact]
     public async Task ControlYarpConfigRemovalStopsForwardingRemovedRoute()
     {
         await using var upstream = await TestUpstream.StartEchoAsync();
@@ -584,6 +627,46 @@ public class ProxyControlEndpointTests
               "transforms": [
                 { "PathRemovePrefix": "{{routePrefix}}" },
                 { "PathPrefix": "{{new Uri(upstream).AbsolutePath.TrimEnd('/')}}" }
+              ]
+            }
+          ],
+          "clusters": [
+            {
+              "clusterId": "{{clusterId}}",
+              "destinations": {
+                "primary": { "address": "{{CreateDestinationAddress(upstream)}}" }
+              }
+            }
+          ]
+        }
+        """;
+
+    private static string CreateYarpConfigJsonWithQueryTransforms(string clusterId, string routePrefix, string upstream) =>
+        $$"""
+        {
+          "routes": [
+            {
+              "routeId": "{{clusterId}}-exact",
+              "clusterId": "{{clusterId}}",
+              "order": 0,
+              "match": { "path": "{{routePrefix}}" },
+              "transforms": [
+                { "PathRemovePrefix": "{{routePrefix}}" },
+                { "PathPrefix": "{{new Uri(upstream).AbsolutePath.TrimEnd('/')}}" },
+                { "QueryValueParameter": "login", "Set": "" },
+                { "QueryValueParameter": "gradio", "Set": "none" }
+              ]
+            },
+            {
+              "routeId": "{{clusterId}}-catch-all",
+              "clusterId": "{{clusterId}}",
+              "order": 1,
+              "match": { "path": "{{routePrefix}}/{**catchAll}" },
+              "transforms": [
+                { "PathRemovePrefix": "{{routePrefix}}" },
+                { "PathPrefix": "{{new Uri(upstream).AbsolutePath.TrimEnd('/')}}" },
+                { "QueryValueParameter": "login", "Set": "" },
+                { "QueryValueParameter": "gradio", "Set": "none" }
               ]
             }
           ],

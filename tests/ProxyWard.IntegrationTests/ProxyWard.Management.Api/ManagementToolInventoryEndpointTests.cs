@@ -150,6 +150,37 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
             .ToArray());
     }
 
+    [Fact]
+    public async Task DiscoverEndpointAcceptsEventStreamAndPreservesUpstreamQuery()
+    {
+        await using var upstream = await StartHuggingFaceStyleToolListUpstreamAsync();
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
+
+        await using var factory = new WebApplicationFactory<ManagementProgram>();
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/tools/discover")
+        {
+            Content = JsonContent.Create(new
+            {
+                serverId = "huggingface-co",
+                upstream = $"{upstream.BaseAddress}/mcp?login&gradio=none"
+            })
+        };
+        request.Headers.Authorization = new("Bearer", "test-admin-token");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var discoveryPayload = await TestJson.ReadAsync(response);
+        var tools = discoveryPayload.RootElement.GetProperty("tools").EnumerateArray().ToArray();
+
+        Assert.Equal(8, tools.Length);
+        Assert.Equal("hf.tool01", tools[0].GetProperty("name").GetString());
+        Assert.Equal("hf.tool08", tools[7].GetProperty("name").GetString());
+    }
+
     private async Task SeedSchemaHistoryAsync()
     {
         using var store = new SqliteTrackedToolSchemaStore(_databasePath);
@@ -263,6 +294,43 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
                 }
             }
         }).ExecuteAsync(context));
+
+    private static Task<TestUpstream> StartHuggingFaceStyleToolListUpstreamAsync() =>
+        TestUpstream.StartAsync(async context =>
+        {
+            if (!context.Request.Query.ContainsKey("login")
+                || context.Request.Query["gradio"] != "none")
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+
+            if (!context.Request.Headers.Accept.ToString().Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Response.StatusCode = StatusCodes.Status406NotAcceptable;
+                return;
+            }
+
+            context.Response.ContentType = "text/event-stream";
+            await context.Response.WriteAsync(CreateHuggingFaceStyleEventStream()).ConfigureAwait(false);
+        });
+
+    private static string CreateHuggingFaceStyleEventStream()
+    {
+        var toolsJson = string.Join(
+            ",",
+            Enumerable.Range(1, 8).Select(index =>
+                $"{{\"name\":\"hf.tool{index:00}\",\"title\":\"HF Tool {index}\",\"description\":\"Synthetic Hugging Face tool {index}\",\"inputSchema\":{{\"type\":\"object\"}}}}"));
+
+        return string.Join('\n', [
+            "event: endpoint",
+            "data: /mcp/messages?sessionId=huggingface-co",
+            "",
+            "event: message",
+            $"data: {{\"jsonrpc\":\"2.0\",\"id\":\"proxyward-dashboard-tools-discovery\",\"result\":{{\"tools\":[{toolsJson}]}}}}",
+            ""
+        ]);
+    }
 
     private static string PolicyYamlWithUnobservedServer() =>
         """

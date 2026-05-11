@@ -113,6 +113,43 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PolicyApplyPreservesUpstreamQueryInYarpTransforms()
+    {
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
+        await SeedPolicyAsync(CurrentPolicyYaml());
+
+        var stub = new StubProxyControlClient();
+        await using var factory = CreateFactory(stub);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-admin-token");
+        var policyYaml = ValidPolicyYaml().Replace(
+            "https://github.example/mcp",
+            "https://huggingface.co/mcp?login&gradio=none",
+            StringComparison.Ordinal);
+
+        using var response = await client.PutAsync(
+            "/api/policy",
+            TestJson.Content($$"""{"yaml":{{JsonSerializer.Serialize(policyYaml)}}}"""));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var yarp = Assert.Single(stub.YarpConfigs);
+        var githubExact = Assert.Single(yarp.Routes, route => route.RouteId == "github-exact");
+
+        Assert.Contains(githubExact.Transforms!, transform =>
+            transform.TryGetValue("QueryValueParameter", out var parameter)
+            && parameter == "login"
+            && transform.TryGetValue("Set", out var value)
+            && value == string.Empty);
+        Assert.Contains(githubExact.Transforms!, transform =>
+            transform.TryGetValue("QueryValueParameter", out var parameter)
+            && parameter == "gradio"
+            && transform.TryGetValue("Set", out var value)
+            && value == "none");
+    }
+
+    [Fact]
     public async Task PolicyApplyAcceptsStructuredModelRequest()
     {
         Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);

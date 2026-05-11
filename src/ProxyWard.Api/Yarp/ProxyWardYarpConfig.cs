@@ -55,7 +55,7 @@ public static class ProxyWardYarpConfig
     private static IEnumerable<RouteConfig> CreateMcpRoutes(ServerPolicy server)
     {
         var routePrefix = NormalizeRoutePrefix(server.Route);
-        var transforms = CreatePathTransforms(routePrefix, server.Upstream.AbsolutePath);
+        var transforms = CreatePathTransforms(routePrefix, server.Upstream.AbsolutePath, server.Upstream.Query);
 
         yield return new RouteConfig
         {
@@ -144,7 +144,8 @@ public static class ProxyWardYarpConfig
 
     private static IReadOnlyList<IReadOnlyDictionary<string, string>> CreatePathTransforms(
         string routePrefix,
-        string upstreamPath)
+        string upstreamPath,
+        string upstreamQuery = "")
     {
         var transforms = new List<IReadOnlyDictionary<string, string>>
         {
@@ -162,8 +163,42 @@ public static class ProxyWardYarpConfig
             });
         }
 
+        foreach (var (name, value) in ParseQueryParameters(upstreamQuery))
+        {
+            transforms.Add(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["QueryValueParameter"] = name,
+                ["Set"] = value
+            });
+        }
+
         return transforms;
     }
+
+    private static IEnumerable<(string Name, string Value)> ParseQueryParameters(string query)
+    {
+        var trimmed = query.TrimStart('?');
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            yield break;
+        }
+
+        foreach (var segment in trimmed.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separatorIndex = segment.IndexOf('=', StringComparison.Ordinal);
+            var name = separatorIndex < 0 ? segment : segment[..separatorIndex];
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            var value = separatorIndex < 0 ? string.Empty : segment[(separatorIndex + 1)..];
+            yield return (DecodeQueryValue(name), DecodeQueryValue(value));
+        }
+    }
+
+    private static string DecodeQueryValue(string value) =>
+        Uri.UnescapeDataString(value.Replace("+", " ", StringComparison.Ordinal));
 
     private static string CreateDestinationAddress(Uri upstream)
     {

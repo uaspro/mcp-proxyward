@@ -110,6 +110,141 @@ public class ToolsListResponseInspectionIntegrationTests
     }
 
     [Fact]
+    public async Task EventStreamToolsListResponseIgnoresEndpointEventAndInspectsMessage()
+    {
+        var toolJson = string.Join(
+            ",",
+            Enumerable.Range(1, 8).Select(index =>
+                $"{{\"name\":\"hf.tool{index:00}\",\"title\":\"HF Tool {index}\",\"description\":\"Synthetic Hugging Face tool {index}\",\"inputSchema\":{{\"type\":\"object\"}}}}"));
+        var responseBody = string.Join('\n', [
+            "event: endpoint",
+            "data: /mcp/messages?sessionId=huggingface-co",
+            "",
+            "event: message",
+            $"data: {{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"tools\":[{toolJson}]}}}}",
+            ""
+        ]);
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
+        var dbPath = NewTempSqlitePath();
+        var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 8192, upstream.BaseAddress, dbPath));
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        Assert.Equal("allow", row.Decision);
+        Assert.Equal(string.Empty, row.Reasons);
+
+        using var payload = JsonDocument.Parse(row.PayloadJson);
+        var summary = payload.RootElement.GetProperty("argumentSummary");
+        Assert.Equal(8, summary.GetProperty("toolCount").GetInt32());
+        Assert.Equal(
+            Enumerable.Range(1, 8).Select(index => $"hf.tool{index:00}").ToArray(),
+            summary.GetProperty("toolNames").EnumerateArray().Select(name => name.GetString()!).ToArray());
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task EventStreamToolsListResponseWithOnlyEndpointEventIsPassedThroughWithoutMalformedWarning()
+    {
+        const string responseBody = """
+            event: endpoint
+            data: /mcp/messages?sessionId=huggingface-co
+
+            """;
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
+        var dbPath = NewTempSqlitePath();
+        var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        Assert.Equal("allow", row.Decision);
+        Assert.Equal(string.Empty, row.Reasons);
+        Assert.DoesNotContain("json_malformed", row.PayloadJson, StringComparison.Ordinal);
+
+        using var payload = JsonDocument.Parse(row.PayloadJson);
+        var summary = payload.RootElement.GetProperty("argumentSummary");
+        Assert.True(summary.GetProperty("inspectionSkipped").GetBoolean());
+        Assert.Equal("event_stream_without_jsonrpc_message", summary.GetProperty("inspectionSkipReason").GetString());
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task EmptyToolsListResponseIsPassedThroughWithoutMalformedWarning()
+    {
+        await using var upstream = await StartUpstreamAsync(context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status202Accepted;
+            return Task.CompletedTask;
+        });
+        var dbPath = NewTempSqlitePath();
+        var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            Assert.Equal(string.Empty, await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        Assert.Equal("allow", row.Decision);
+        Assert.Equal(string.Empty, row.Reasons);
+
+        using var payload = JsonDocument.Parse(row.PayloadJson);
+        var summary = payload.RootElement.GetProperty("argumentSummary");
+        Assert.True(summary.GetProperty("inspectionSkipped").GetBoolean());
+        Assert.Equal("empty_response", summary.GetProperty("inspectionSkipReason").GetString());
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
     public async Task OversizedEventStreamToolsListResponseBlocksWhenMaxBodyBytesExceeded()
     {
         var responseBody = "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\""

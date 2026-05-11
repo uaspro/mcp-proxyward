@@ -37,8 +37,15 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
     {
         var serverId = NormalizeRequired(request?.ServerId, "serverId");
         var upstream = await ResolveUpstreamAsync(serverId, request?.Upstream, cancellationToken).ConfigureAwait(false);
-        var responseBody = await RequestToolsListAsync(upstream, cancellationToken).ConfigureAwait(false);
-        var extraction = _extractor.Extract(responseBody);
+        var toolsListResponse = await RequestToolsListAsync(upstream, cancellationToken).ConfigureAwait(false);
+        var extraction = _extractor.Extract(toolsListResponse.Body, toolsListResponse.ContentType);
+        if (extraction.Skipped)
+        {
+            throw new ManagementToolDiscoveryException(
+                "tool_discovery_response_unavailable",
+                "tools/list did not return a JSON-RPC tool result in the response body.");
+        }
+
         if (!extraction.Success)
         {
             throw new ManagementToolDiscoveryException(
@@ -121,10 +128,11 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
             $"Server '{serverId}' is not in the persisted policy and no upstream was supplied.");
     }
 
-    private async Task<byte[]> RequestToolsListAsync(Uri upstream, CancellationToken cancellationToken)
+    private async Task<ToolsListResponseBody> RequestToolsListAsync(Uri upstream, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, upstream);
         request.Headers.Accept.ParseAdd("application/json");
+        request.Headers.Accept.ParseAdd("text/event-stream");
         request.Content = new StringContent(
             JsonSerializer.Serialize(new
             {
@@ -171,7 +179,7 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
                     (int)response.StatusCode);
             }
 
-            return body;
+            return new ToolsListResponseBody(body, response.Content.Headers.ContentType?.ToString());
         }
     }
 
@@ -214,4 +222,6 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
         var normalized = value?.Trim();
         return string.IsNullOrEmpty(normalized) ? null : normalized;
     }
+
+    private sealed record ToolsListResponseBody(byte[] Body, string? ContentType);
 }

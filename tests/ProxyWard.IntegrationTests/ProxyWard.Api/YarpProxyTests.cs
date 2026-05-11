@@ -33,6 +33,28 @@ public class YarpProxyTests
         Assert.Equal("?ping=1", exactPayload.RootElement.GetProperty("query").GetString());
     }
 
+    [Fact]
+    public async Task ConfiguredRoutePreservesUpstreamQueryParameters()
+    {
+        await using var upstream = await StartUpstreamAsync();
+        using var environment = TestEnvironment
+            .Create()
+            .Set("PROXYWARD_DB_PATH", TestFiles.SavePolicy(CreatePolicy(upstream.BaseAddress, "?login&gradio=none")));
+
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/github/mcp/tools/list?cursor=abc");
+
+        using var payload = await TestJson.ReadOkAsync(response);
+        var upstreamQuery = payload.RootElement.GetProperty("query").GetString();
+
+        Assert.Equal("/mcp/tools/list", payload.RootElement.GetProperty("path").GetString());
+        Assert.Contains("cursor=abc", upstreamQuery, StringComparison.Ordinal);
+        Assert.Contains("login", upstreamQuery, StringComparison.Ordinal);
+        Assert.Contains("gradio=none", upstreamQuery, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(
         "/.well-known/oauth-protected-resource/github/mcp?resource=http%3A%2F%2F127.0.0.1%3A8080%2Fgithub%2Fmcp",
@@ -155,7 +177,7 @@ public class YarpProxyTests
                 $"{baseAddress}/.well-known/oauth-protected-resource/mcp";
         });
 
-    private static string CreatePolicy(string upstreamBaseAddress) =>
+    private static string CreatePolicy(string upstreamBaseAddress, string upstreamQuery = "") =>
         $$"""
         mode: audit
         inspection:
@@ -179,7 +201,7 @@ public class YarpProxyTests
         servers:
           github:
             route: /github/mcp
-            upstream: {{upstreamBaseAddress}}/mcp
+            upstream: {{upstreamBaseAddress}}/mcp{{upstreamQuery}}
             allowed: true
             tools:
               default: deny
