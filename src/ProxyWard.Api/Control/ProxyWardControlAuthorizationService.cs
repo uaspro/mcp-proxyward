@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using ProxyWard.Api.Runtime;
@@ -28,15 +29,19 @@ public sealed class ProxyWardControlAuthorizationService
         ProxyWardControlOptions options,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         if (IsAuthorized(context, options, out var failureReason))
         {
             return true;
         }
 
+        stopwatch.Stop();
+
         await RecordAuthorizationFailureAsync(
             context,
             _policyProvider.Current,
             failureReason,
+            stopwatch.ElapsedMilliseconds,
             cancellationToken).ConfigureAwait(false);
 
         return false;
@@ -46,6 +51,7 @@ public sealed class ProxyWardControlAuthorizationService
         HttpContext context,
         ProxyWardPolicy policy,
         string reason,
+        long durationMs,
         CancellationToken cancellationToken)
     {
         _logger.LogWarning(
@@ -70,7 +76,7 @@ public sealed class ProxyWardControlAuthorizationService
                     PolicyVersion: policy.VersionHash,
                     CorrelationId: context.TraceIdentifier,
                     RequestBytes: context.Request.ContentLength ?? 0,
-                    DurationMs: 0,
+                    DurationMs: durationMs,
                     ArgumentSummary: null,
                     BatchSize: 1),
                 cancellationToken).ConfigureAwait(false);

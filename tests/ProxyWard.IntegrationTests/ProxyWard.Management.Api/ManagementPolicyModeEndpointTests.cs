@@ -145,7 +145,8 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
         var stub = new StubProxyControlClient
         {
             Status = new ProxyControlStatus("audit", "sha256:old", 2, 3),
-            ApplyResult = new ProxyControlStatus("enforce", "sha256:new", 2, 3)
+            ApplyResult = new ProxyControlStatus("enforce", "sha256:new", 2, 3),
+            Delay = TimeSpan.FromMilliseconds(50)
         };
 
         await using var factory = CreateFactory(stub);
@@ -187,10 +188,15 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
         Assert.Null(audit.ToolName);
         Assert.Equal("mode_switch_enforce", audit.Reasons);
         Assert.Equal("sha256:new", audit.PolicyVersion);
+        Assert.True(audit.DurationMs >= 40);
         Assert.Contains("\"previousMode\":\"audit\"", audit.PayloadJson, StringComparison.Ordinal);
         Assert.Contains("\"mode\":\"enforce\"", audit.PayloadJson, StringComparison.Ordinal);
         Assert.Contains("\"requestedBy\":\"alice\"", audit.PayloadJson, StringComparison.Ordinal);
         Assert.DoesNotContain(token, audit.PayloadJson, StringComparison.Ordinal);
+        using (var auditPayload = System.Text.Json.JsonDocument.Parse(audit.PayloadJson))
+        {
+            Assert.Equal(audit.DurationMs, auditPayload.RootElement.GetProperty("durationMs").GetInt64());
+        }
     }
 
     [Fact]
@@ -357,7 +363,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT event_type, mode, decision, server_id, method, tool_name, reasons, policy_version, payload_json
+            SELECT event_type, mode, decision, server_id, method, tool_name, reasons, policy_version, duration_ms, payload_json
             FROM audit_events
             WHERE event_type = 'policy_mode_switch'
             ORDER BY id ASC;
@@ -375,7 +381,8 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
                 reader.IsDBNull(5) ? null : reader.GetString(5),
                 reader.GetString(6),
                 reader.GetString(7),
-                reader.GetString(8)));
+                reader.GetInt64(8),
+                reader.GetString(9)));
         }
 
         return rows;
@@ -409,20 +416,26 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
 
         public List<string> AppliedModes { get; } = [];
 
+        public TimeSpan Delay { get; set; }
+
         public Task<ProxyControlProbeResult> ProbeAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new ProxyControlProbeResult(
                 ComponentStatusValues.Healthy,
                 Notes: null,
                 Details: Status.ToDetails()));
 
-        public Task<ProxyControlStatus> GetStatusAsync(CancellationToken cancellationToken) =>
-            Task.FromResult(Status);
-
-        public Task<ProxyControlStatus> ApplyModeAsync(string mode, CancellationToken cancellationToken)
+        public async Task<ProxyControlStatus> GetStatusAsync(CancellationToken cancellationToken)
         {
+            await DelayIfConfiguredAsync(cancellationToken);
+            return Status;
+        }
+
+        public async Task<ProxyControlStatus> ApplyModeAsync(string mode, CancellationToken cancellationToken)
+        {
+            await DelayIfConfiguredAsync(cancellationToken);
             AppliedModes.Add(mode);
             Status = ApplyResult;
-            return Task.FromResult(ApplyResult);
+            return ApplyResult;
         }
 
         public Task<ProxyControlStatus> ApplyPolicySnapshotAsync(string yaml, CancellationToken cancellationToken) =>
@@ -435,6 +448,9 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
                 RouteVersion: Status.RouteVersion ?? 1,
                 RouteCount: 0,
                 ClusterCount: 0));
+
+        private Task DelayIfConfiguredAsync(CancellationToken cancellationToken) =>
+            Delay > TimeSpan.Zero ? Task.Delay(Delay, cancellationToken) : Task.CompletedTask;
     }
 
     private sealed record ModeSwitchAuditRow(
@@ -446,5 +462,6 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
         string? ToolName,
         string Reasons,
         string PolicyVersion,
+        long DurationMs,
         string PayloadJson);
 }

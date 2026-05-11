@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -34,6 +35,7 @@ public sealed class ManagementPolicyApplyService
         ManagementPolicyValidationRequest request,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         var proposal = await _validationService
             .ValidateProposalAsync(request, cancellationToken)
             .ConfigureAwait(false);
@@ -61,6 +63,7 @@ public sealed class ManagementPolicyApplyService
             appliedStatus,
             yarpStatus,
             proposal,
+            stopwatch.ElapsedMilliseconds,
             cancellationToken).ConfigureAwait(false);
 
         return ManagementPolicyApplyOutcome.Applied(new ManagementPolicyApplyResponse(
@@ -207,6 +210,7 @@ public sealed class ManagementPolicyApplyService
         ProxyControlStatus appliedStatus,
         ProxyControlYarpConfigStatus yarpStatus,
         ManagementPolicyValidationOutcome proposal,
+        long durationMs,
         CancellationToken cancellationToken)
     {
         var timestamp = DateTimeOffset.UtcNow;
@@ -220,7 +224,8 @@ public sealed class ManagementPolicyApplyService
             timestamp,
             requestedBy,
             note,
-            correlationId);
+            correlationId,
+            durationMs);
 
         await _auditStore.WriteAsync(
             new ManagementPolicyAuditEvent(
@@ -230,6 +235,7 @@ public sealed class ManagementPolicyApplyService
                 Reasons: "policy_apply_accepted",
                 PolicyVersion: appliedStatus.PolicyVersion,
                 CorrelationId: correlationId,
+                DurationMs: durationMs,
                 PayloadJson: payloadJson),
             cancellationToken).ConfigureAwait(false);
     }
@@ -241,7 +247,8 @@ public sealed class ManagementPolicyApplyService
         DateTimeOffset timestamp,
         string requestedBy,
         string? note,
-        string correlationId)
+        string correlationId,
+        long durationMs)
     {
         var argumentSummary = new JsonObject
         {
@@ -271,7 +278,7 @@ public sealed class ManagementPolicyApplyService
             ["policyVersion"] = appliedStatus.PolicyVersion,
             ["correlationId"] = correlationId,
             ["requestBytes"] = 0,
-            ["durationMs"] = 0,
+            ["durationMs"] = durationMs,
             ["batchSize"] = 0,
             ["batchIndex"] = null,
             ["argumentOverrideApplied"] = false,

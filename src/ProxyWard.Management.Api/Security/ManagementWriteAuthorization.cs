@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using ProxyWard.Management.Application;
@@ -25,10 +26,13 @@ public sealed class ManagementWriteAuthorization
         HttpContext context,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         if (TryAuthorize(context, out var failureReason))
         {
             return true;
         }
+
+        stopwatch.Stop();
 
         _logger.LogWarning(
             "Management write authorization failed for {Method} {Path} from {RemoteIp}. Reason: {Reason}.",
@@ -38,7 +42,7 @@ public sealed class ManagementWriteAuthorization
             failureReason);
 
         await _auditWriter
-            .WriteAuthorizationFailureAsync(CreateFailure(context, failureReason), cancellationToken)
+            .WriteAuthorizationFailureAsync(CreateFailure(context, failureReason, stopwatch.ElapsedMilliseconds), cancellationToken)
             .ConfigureAwait(false);
 
         return false;
@@ -88,7 +92,7 @@ public sealed class ManagementWriteAuthorization
         return false;
     }
 
-    private static ManagementAuthorizationFailure CreateFailure(HttpContext context, string reason) =>
+    private static ManagementAuthorizationFailure CreateFailure(HttpContext context, string reason, long durationMs) =>
         new(
             TimestampUtc: DateTimeOffset.UtcNow,
             Method: context.Request.Method,
@@ -96,5 +100,6 @@ public sealed class ManagementWriteAuthorization
             RemoteIp: context.Connection.RemoteIpAddress?.ToString(),
             Reason: reason,
             CorrelationId: context.TraceIdentifier,
-            RequestBytes: context.Request.ContentLength ?? 0);
+            RequestBytes: context.Request.ContentLength ?? 0,
+            DurationMs: durationMs);
 }

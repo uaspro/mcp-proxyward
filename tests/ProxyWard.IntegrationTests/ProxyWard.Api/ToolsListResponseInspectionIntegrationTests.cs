@@ -113,6 +113,49 @@ public class ToolsListResponseInspectionIntegrationTests
     }
 
     [Fact]
+    public async Task ToolsListResponseInspectionDurationIncludesExtractionWork()
+    {
+        const string responseBody = """
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Find repositories","inputSchema":{"type":"object"}}]}}
+            """;
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        var dbPath = NewTempSqlitePath();
+        var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>()
+                .WithWebHostBuilder(builder =>
+                {
+                    builder.ConfigureTestServices(services =>
+                    {
+                        services.RemoveAll<IToolDefinitionExtractor>();
+                        services.AddSingleton<IToolDefinitionExtractor>(
+                            new SlowToolDefinitionExtractor(TimeSpan.FromMilliseconds(50)));
+                    });
+                });
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath));
+        Assert.Equal("tools_list_response_inspection", row.EventType);
+        Assert.True(row.DurationMs >= 40);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
     public async Task GzipEncodedToolsListJsonResponseIsDecodedForInspection()
     {
         const string responseBody = """
@@ -1309,7 +1352,7 @@ public class ToolsListResponseInspectionIntegrationTests
             using var command = connection.CreateCommand();
             command.CommandText = """
                 SELECT event_type, mode, decision, server_id, method, tool_name,
-                       reasons, payload_json
+                       reasons, duration_ms, payload_json
                 FROM audit_events
                 ORDER BY id ASC;
                 """;
@@ -1325,7 +1368,8 @@ public class ToolsListResponseInspectionIntegrationTests
                     reader.IsDBNull(4) ? null : reader.GetString(4),
                     reader.IsDBNull(5) ? null : reader.GetString(5),
                     reader.GetString(6),
-                    reader.GetString(7)));
+                    reader.GetInt64(7),
+                    reader.GetString(8)));
             }
 
             return rows;
@@ -1339,7 +1383,25 @@ public class ToolsListResponseInspectionIntegrationTests
         string? Method,
         string? ToolName,
         string Reasons,
+        long DurationMs,
         string PayloadJson);
+
+    private sealed class SlowToolDefinitionExtractor(TimeSpan delay) : IToolDefinitionExtractor
+    {
+        private readonly ToolDefinitionExtractor _inner = new();
+
+        public ToolListExtractionResult Extract(ReadOnlyMemory<byte> responseBody)
+        {
+            Thread.Sleep(delay);
+            return _inner.Extract(responseBody);
+        }
+
+        public ToolListExtractionResult Extract(ReadOnlyMemory<byte> responseBody, string? contentType)
+        {
+            Thread.Sleep(delay);
+            return _inner.Extract(responseBody, contentType);
+        }
+    }
 
     private sealed record DriftReviewDbRow(
         long Id,

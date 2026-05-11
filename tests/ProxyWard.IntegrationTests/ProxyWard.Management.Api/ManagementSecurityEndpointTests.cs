@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
@@ -52,7 +53,12 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
 
         var audit = Assert.Single(await ReadAuthFailureAuditRowsAsync());
         Assert.Equal("admin_token_not_configured", audit.Reasons);
+        Assert.True(audit.DurationMs >= 0);
         Assert.DoesNotContain("Authorization", audit.PayloadJson, StringComparison.OrdinalIgnoreCase);
+        using (var auditPayload = JsonDocument.Parse(audit.PayloadJson))
+        {
+            Assert.Equal(audit.DurationMs, auditPayload.RootElement.GetProperty("durationMs").GetInt64());
+        }
     }
 
     [Fact]
@@ -146,7 +152,7 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT reasons, payload_json
+            SELECT reasons, duration_ms, payload_json
             FROM audit_events
             WHERE event_type = 'management_auth_failure'
             ORDER BY id ASC;
@@ -155,7 +161,7 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            rows.Add(new AuthFailureAuditRow(reader.GetString(0), reader.GetString(1)));
+            rows.Add(new AuthFailureAuditRow(reader.GetString(0), reader.GetInt64(1), reader.GetString(2)));
         }
 
         return rows;
@@ -201,5 +207,5 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
             Task.FromResult(new ProxyControlYarpConfigStatus(1, 1, 1));
     }
 
-    private sealed record AuthFailureAuditRow(string Reasons, string PayloadJson);
+    private sealed record AuthFailureAuditRow(string Reasons, long DurationMs, string PayloadJson);
 }

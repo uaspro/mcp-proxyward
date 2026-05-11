@@ -256,9 +256,14 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
             Assert.Equal($"schema/drifts/{action}", audit.Method);
             Assert.Equal("repos.search", audit.ToolName);
             Assert.Equal($"schema_drift_review_{expectedStatus}", audit.Reasons);
+            Assert.True(audit.DurationMs >= 0);
             Assert.Contains($"""reviewId":{review.Row.Id}""", audit.PayloadJson, StringComparison.Ordinal);
             Assert.Contains($"\"action\":\"{action}\"", audit.PayloadJson, StringComparison.Ordinal);
             Assert.Contains("alice", audit.PayloadJson, StringComparison.Ordinal);
+            using (var auditPayload = System.Text.Json.JsonDocument.Parse(audit.PayloadJson))
+            {
+                Assert.Equal(audit.DurationMs, auditPayload.RootElement.GetProperty("durationMs").GetInt64());
+            }
         }
         finally
         {
@@ -418,7 +423,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT event_type, mode, decision, server_id, method, tool_name, reasons, payload_json
+            SELECT event_type, mode, decision, server_id, method, tool_name, reasons, duration_ms, payload_json
             FROM audit_events
             WHERE event_type = 'schema_drift_review_action'
             ORDER BY id ASC;
@@ -435,7 +440,8 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
                 reader.IsDBNull(4) ? null : reader.GetString(4),
                 reader.IsDBNull(5) ? null : reader.GetString(5),
                 reader.GetString(6),
-                reader.GetString(7)));
+                reader.GetInt64(7),
+                reader.GetString(8)));
         }
 
         return rows;
@@ -449,5 +455,6 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         string? Method,
         string? ToolName,
         string Reasons,
+        long DurationMs,
         string PayloadJson);
 }

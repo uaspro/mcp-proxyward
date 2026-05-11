@@ -7,7 +7,8 @@ public sealed record ManagementAuthorizationFailure(
     string? RemoteIp,
     string Reason,
     string CorrelationId,
-    long RequestBytes);
+    long RequestBytes,
+    long DurationMs);
 
 public interface IManagementSecurityAuditWriter
 {

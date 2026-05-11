@@ -61,7 +61,8 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
         {
             Status = new ProxyControlStatus("audit", "sha256:old", 1, 1),
             PolicySnapshotResult = new ProxyControlStatus("enforce", "sha256:new", 2, 4),
-            YarpResult = new ProxyControlYarpConfigStatus(4, 10, 2)
+            YarpResult = new ProxyControlYarpConfigStatus(4, 10, 2),
+            Delay = TimeSpan.FromMilliseconds(50)
         };
         await using var factory = CreateFactory(stub);
         using var client = factory.CreateClient();
@@ -101,10 +102,15 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
         Assert.Equal("policy/apply", audit.Method);
         Assert.Equal("policy_apply_accepted", audit.Reasons);
         Assert.Equal("sha256:new", audit.PolicyVersion);
+        Assert.True(audit.DurationMs >= 40);
         Assert.Contains("\"previousPolicyHash\":\"sha256:old\"", audit.PayloadJson, StringComparison.Ordinal);
         Assert.Contains("\"policyHash\":\"sha256:new\"", audit.PayloadJson, StringComparison.Ordinal);
         Assert.Contains("\"requestedBy\":\"alice\"", audit.PayloadJson, StringComparison.Ordinal);
         Assert.DoesNotContain("mode: enforce", audit.PayloadJson, StringComparison.Ordinal);
+        using (var auditPayload = JsonDocument.Parse(audit.PayloadJson))
+        {
+            Assert.Equal(audit.DurationMs, auditPayload.RootElement.GetProperty("durationMs").GetInt64());
+        }
 
         var persistedYaml = (await new SqlitePolicyStore(_databasePath).ReadCurrentAsync())!.Yaml;
         Assert.Contains("mode: enforce", persistedYaml, StringComparison.Ordinal);
@@ -307,7 +313,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT event_type, mode, decision, server_id, method, tool_name, reasons, policy_version, payload_json
+            SELECT event_type, mode, decision, server_id, method, tool_name, reasons, policy_version, duration_ms, payload_json
             FROM audit_events
             WHERE event_type = 'policy_apply'
             ORDER BY id ASC;
@@ -325,7 +331,8 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
                 reader.IsDBNull(5) ? null : reader.GetString(5),
                 reader.GetString(6),
                 reader.GetString(7),
-                reader.GetString(8)));
+                reader.GetInt64(8),
+                reader.GetString(9)));
         }
 
         return rows;
@@ -363,24 +370,31 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 
         public List<string> PolicySnapshots { get; } = [];
 
+        public TimeSpan Delay { get; set; }
+
         public Task<ProxyControlProbeResult> ProbeAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new ProxyControlProbeResult(
                 ComponentStatusValues.Healthy,
                 Notes: null,
                 Details: Status.ToDetails()));
 
-        public Task<ProxyControlStatus> GetStatusAsync(CancellationToken cancellationToken) =>
-            Task.FromResult(Status);
-
-        public Task<ProxyControlStatus> ApplyModeAsync(string mode, CancellationToken cancellationToken)
+        public async Task<ProxyControlStatus> GetStatusAsync(CancellationToken cancellationToken)
         {
-            CallOrder.Add("mode");
-            Status = Status with { Mode = mode };
-            return Task.FromResult(Status);
+            await DelayIfConfiguredAsync(cancellationToken);
+            return Status;
         }
 
-        public Task<ProxyControlStatus> ApplyPolicySnapshotAsync(string yaml, CancellationToken cancellationToken)
+        public async Task<ProxyControlStatus> ApplyModeAsync(string mode, CancellationToken cancellationToken)
         {
+            await DelayIfConfiguredAsync(cancellationToken);
+            CallOrder.Add("mode");
+            Status = Status with { Mode = mode };
+            return Status;
+        }
+
+        public async Task<ProxyControlStatus> ApplyPolicySnapshotAsync(string yaml, CancellationToken cancellationToken)
+        {
+            await DelayIfConfiguredAsync(cancellationToken);
             CallOrder.Add("policy");
             PolicySnapshots.Add(yaml);
             if (PolicySnapshotFailure is not null)
@@ -389,13 +403,14 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
             }
 
             Status = PolicySnapshotResult;
-            return Task.FromResult(PolicySnapshotResult);
+            return PolicySnapshotResult;
         }
 
-        public Task<ProxyControlYarpConfigStatus> ApplyYarpConfigAsync(
+        public async Task<ProxyControlYarpConfigStatus> ApplyYarpConfigAsync(
             ProxyControlYarpConfigRequest request,
             CancellationToken cancellationToken)
         {
+            await DelayIfConfiguredAsync(cancellationToken);
             CallOrder.Add("yarp");
             YarpConfigs.Add(request);
             if (YarpFailure is not null)
@@ -403,8 +418,11 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
                 throw YarpFailure;
             }
 
-            return Task.FromResult(YarpResult);
+            return YarpResult;
         }
+
+        private Task DelayIfConfiguredAsync(CancellationToken cancellationToken) =>
+            Delay > TimeSpan.Zero ? Task.Delay(Delay, cancellationToken) : Task.CompletedTask;
     }
 
     private sealed record PolicyApplyAuditRow(
@@ -416,6 +434,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
         string? ToolName,
         string Reasons,
         string PolicyVersion,
+        long DurationMs,
         string PayloadJson);
 
     private static string CurrentPolicyYaml() =>

@@ -117,7 +117,7 @@ public sealed class SqliteManagementPolicyAuditStore : IManagementPolicyAuditSto
         command.Parameters.AddWithValue("$policy_version", auditEvent.PolicyVersion);
         command.Parameters.AddWithValue("$correlation_id", auditEvent.CorrelationId);
         command.Parameters.AddWithValue("$request_bytes", 0);
-        command.Parameters.AddWithValue("$duration_ms", 0);
+        command.Parameters.AddWithValue("$duration_ms", auditEvent.DurationMs);
         command.Parameters.AddWithValue("$payload_json", auditEvent.PayloadJson);
 
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);

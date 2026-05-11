@@ -105,8 +105,6 @@ public sealed class ResponseInspectionMiddleware(
             context.Response.Body = originalBody;
         }
 
-        stopwatch.Stop();
-
         if (capture.UnsupportedReason is not null)
         {
             await HandleUnsupportedAsync(
@@ -130,7 +128,7 @@ public sealed class ResponseInspectionMiddleware(
                 server,
                 target,
                 body,
-                stopwatch.ElapsedMilliseconds,
+                stopwatch,
                 capture,
                 originalBody);
             return;
@@ -524,7 +522,7 @@ public sealed class ResponseInspectionMiddleware(
         ServerPolicy server,
         ResponseInspectionTarget target,
         byte[] body,
-        long durationMs,
+        Stopwatch stopwatch,
         ResponseInspectionStream capture,
         Stream originalBody)
     {
@@ -569,7 +567,7 @@ public sealed class ResponseInspectionMiddleware(
             decision,
             reasons,
             body.Length,
-            durationMs,
+            stopwatch.ElapsedMilliseconds,
             summary,
             target.ParseResult?.Messages.Count ?? 0,
             target.ParseResult?.IsBatch == true ? target.Message?.BatchIndex : null);

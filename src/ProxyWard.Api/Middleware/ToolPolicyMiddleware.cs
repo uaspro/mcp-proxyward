@@ -56,8 +56,8 @@ public sealed class ToolPolicyMiddleware(
                 continue;
             }
 
-            var argumentSummary = redactor.Redact("params", message.Params, CreateSecretRedactionOptions(server)).Value;
             var stopwatch = Stopwatch.StartNew();
+            var argumentSummary = redactor.Redact("params", message.Params, CreateSecretRedactionOptions(server)).Value;
             ToolPolicyDecisionResult decisionResult;
             using (var activity = ProxyWardTelemetry.StartActivity(
                 ProxyWardTelemetry.PolicyEvaluationActivity,

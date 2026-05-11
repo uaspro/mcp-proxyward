@@ -56,4 +56,5 @@ public sealed record ManagementPolicyAuditEvent(
     string Reasons,
     string PolicyVersion,
     string CorrelationId,
+    long DurationMs,
     string PayloadJson);

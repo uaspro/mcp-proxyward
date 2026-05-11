@@ -40,7 +40,7 @@ public sealed class SqliteManagementSecurityAuditWriter : IManagementSecurityAud
                     PolicyVersion: "management",
                     CorrelationId: failure.CorrelationId,
                     RequestBytes: failure.RequestBytes,
-                    DurationMs: 0,
+                    DurationMs: failure.DurationMs,
                     ArgumentSummary: CreatePayload(failure),
                     BatchSize: 1),
                 cancellationToken).ConfigureAwait(false);

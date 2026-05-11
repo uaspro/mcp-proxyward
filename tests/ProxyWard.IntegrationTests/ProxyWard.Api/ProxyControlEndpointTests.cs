@@ -105,10 +105,15 @@ public class ProxyControlEndpointTests
 
             var audit = Assert.Single(await ReadControlAuthFailureAuditRowsAsync(databasePath));
             Assert.Equal("bearer_token_invalid", audit.Reasons);
+            Assert.True(audit.DurationMs >= 0);
             Assert.DoesNotContain(expectedToken, audit.PayloadJson, StringComparison.Ordinal);
             Assert.DoesNotContain(suppliedToken, audit.PayloadJson, StringComparison.Ordinal);
             Assert.DoesNotContain(expectedToken, audit.Reasons, StringComparison.Ordinal);
             Assert.DoesNotContain(suppliedToken, audit.Reasons, StringComparison.Ordinal);
+            using (var auditPayload = JsonDocument.Parse(audit.PayloadJson))
+            {
+                Assert.Equal(audit.DurationMs, auditPayload.RootElement.GetProperty("durationMs").GetInt64());
+            }
         }
         finally
         {
@@ -718,7 +723,7 @@ public class ProxyControlEndpointTests
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT reasons, payload_json
+            SELECT reasons, duration_ms, payload_json
             FROM audit_events
             WHERE event_type = 'proxy_control_auth_failure'
             ORDER BY id ASC;
@@ -727,13 +732,13 @@ public class ProxyControlEndpointTests
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            rows.Add(new ControlAuthFailureAuditRow(reader.GetString(0), reader.GetString(1)));
+            rows.Add(new ControlAuthFailureAuditRow(reader.GetString(0), reader.GetInt64(1), reader.GetString(2)));
         }
 
         return rows;
     }
 
-    private sealed record ControlAuthFailureAuditRow(string Reasons, string PayloadJson);
+    private sealed record ControlAuthFailureAuditRow(string Reasons, long DurationMs, string PayloadJson);
 
     private const string ValidYaml = """
         mode: audit

@@ -491,7 +491,7 @@ function AuditEventDrawer({
             <div>request inspection - bounded body parse</div>
             <div>policy decision - {event.decision}</div>
             <div>audit write - redacted summary persisted</div>
-            <div>response completed - {formatDuration(event.durationMs)}</div>
+            <div>event duration - {formatDuration(event.durationMs)}</div>
           </div>
         </>
       ) : null}

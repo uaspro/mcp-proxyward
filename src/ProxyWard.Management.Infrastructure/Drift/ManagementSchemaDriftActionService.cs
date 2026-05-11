@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -52,6 +53,7 @@ public sealed class ManagementSchemaDriftActionService : IManagementSchemaDriftA
             return null;
         }
 
+        var stopwatch = Stopwatch.StartNew();
         var normalizedAction = action.Trim();
         var newStatus = normalizedAction switch
         {
@@ -102,6 +104,7 @@ public sealed class ManagementSchemaDriftActionService : IManagementSchemaDriftA
             reviewedAtUtc,
             reviewedBy,
             reviewNote,
+            stopwatch.ElapsedMilliseconds,
             cancellationToken).ConfigureAwait(false);
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -253,6 +256,7 @@ public sealed class ManagementSchemaDriftActionService : IManagementSchemaDriftA
         DateTimeOffset timestamp,
         string reviewedBy,
         string? reviewNote,
+        long durationMs,
         CancellationToken cancellationToken)
     {
         var reason = $"schema_drift_review_{newStatus}";
@@ -265,7 +269,8 @@ public sealed class ManagementSchemaDriftActionService : IManagementSchemaDriftA
             reviewedBy,
             reviewNote,
             reason,
-            correlationId);
+            correlationId,
+            durationMs);
 
         await using var command = connection.CreateCommand();
         command.Transaction = (SqliteTransaction)transaction;
@@ -311,7 +316,7 @@ public sealed class ManagementSchemaDriftActionService : IManagementSchemaDriftA
         command.Parameters.AddWithValue("$policy_version", review.PolicyVersion ?? "unknown");
         command.Parameters.AddWithValue("$correlation_id", correlationId);
         command.Parameters.AddWithValue("$request_bytes", 0);
-        command.Parameters.AddWithValue("$duration_ms", 0);
+        command.Parameters.AddWithValue("$duration_ms", durationMs);
         command.Parameters.AddWithValue("$payload_json", payloadJson);
 
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -325,7 +330,8 @@ public sealed class ManagementSchemaDriftActionService : IManagementSchemaDriftA
         string reviewedBy,
         string? reviewNote,
         string reason,
-        string correlationId)
+        string correlationId,
+        long durationMs)
     {
         var argumentSummary = new JsonObject
         {
@@ -355,7 +361,7 @@ public sealed class ManagementSchemaDriftActionService : IManagementSchemaDriftA
             ["policyVersion"] = review.PolicyVersion ?? "unknown",
             ["correlationId"] = correlationId,
             ["requestBytes"] = 0,
-            ["durationMs"] = 0,
+            ["durationMs"] = durationMs,
             ["batchSize"] = 0,
             ["batchIndex"] = null,
             ["argumentOverrideApplied"] = false,
