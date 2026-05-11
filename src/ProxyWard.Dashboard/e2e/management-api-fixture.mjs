@@ -43,6 +43,45 @@ const driftItem = {
   diffMode: 'metadata',
 }
 
+const discoveredTools = [
+  {
+    name: 'hub_repo_search',
+    latestVersion: 3,
+    driftStatus: 'clean',
+    title: 'Repository search',
+    description: 'Search Hugging Face repositories',
+    nameHash: 'sha256:hub-repo-search-name',
+    titleHash: 'sha256:hub-repo-search-title',
+    descriptionHash: 'sha256:hub-repo-search-description',
+    inputSchemaHash: 'sha256:hub-repo-search-input',
+    outputSchemaHash: null,
+  },
+  {
+    name: 'model_info',
+    latestVersion: 3,
+    driftStatus: 'clean',
+    title: 'Model info',
+    description: 'Read model card metadata',
+    nameHash: 'sha256:model-info-name',
+    titleHash: 'sha256:model-info-title',
+    descriptionHash: 'sha256:model-info-description',
+    inputSchemaHash: 'sha256:model-info-input',
+    outputSchemaHash: null,
+  },
+  {
+    name: 'space_search',
+    latestVersion: 3,
+    driftStatus: 'clean',
+    title: 'Space search',
+    description: 'Search Hugging Face Spaces',
+    nameHash: 'sha256:space-search-name',
+    titleHash: 'sha256:space-search-title',
+    descriptionHash: 'sha256:space-search-description',
+    inputSchemaHash: 'sha256:space-search-input',
+    outputSchemaHash: null,
+  },
+]
+
 const policyModel = {
   mode: 'audit',
   inspection: {
@@ -376,7 +415,7 @@ const server = http.createServer((request, response) => {
         latestVersion: 3,
         snapshotHash: 'sha256:discovered-tools',
         wasNewVersion: true,
-        tools: [],
+        tools: discoveredTools,
       })
     })
     return

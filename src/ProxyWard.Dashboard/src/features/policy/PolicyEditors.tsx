@@ -1,14 +1,15 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { RefreshCw, Trash2 } from 'lucide-react'
+import { RefreshCw, Search, Trash2, X } from 'lucide-react'
 import type { PolicyModel, PolicyValidationIssue, PolicyValidationResponse, ServerPolicyModel } from '../../api/policy'
 import type { ToolInventoryServer } from '../../api/tools'
-import { Badge, Button, Card, SegmentedControl, StatePanel, Toggle } from '../../components'
+import { Badge, Button, Card, IconButton, SegmentedControl, StatePanel, Toggle } from '../../components'
 import {
   argumentPolicyPlaceholders,
   createMcpJsonSnippet,
   createToolPolicyRows,
   driftTone,
   formatLines,
+  normalizeSearchQuery,
   parseLines,
   secretPatternPlaceholder,
   toolPolicyRowMatchesSearch,
@@ -444,13 +445,16 @@ function ToolPolicySelector({
   searchQuery: string
   onChange: (updater: (server: ServerPolicyModel) => ServerPolicyModel) => void
 }) {
+  const [toolSearch, setToolSearch] = useState('')
   const rows = useMemo(
     () => createToolPolicyRows(server, inventory, baselineServer),
     [server, inventory, baselineServer],
   )
+  const normalizedToolSearch = normalizeSearchQuery(toolSearch)
+  const activeSearchQuery = normalizedToolSearch || normalizeSearchQuery(searchQuery)
   const visibleRows = useMemo(
-    () => rows.filter((row) => toolPolicyRowMatchesSearch(row, searchQuery)),
-    [rows, searchQuery],
+    () => rows.filter((row) => toolPolicyRowMatchesSearch(row, activeSearchQuery)),
+    [activeSearchQuery, rows],
   )
   const defaultDispositionTone = server.tools.default === 'allow' ? 'allow' : 'deny'
 
@@ -458,6 +462,24 @@ function ToolPolicySelector({
     <div className="tool-policy-panel">
       {loading && rows.length === 0 ? <StatePanel state="loading" title="Discovering tools" detail="tools/list" /> : null}
       {error ? <StatePanel state="error" title="Tool discovery unavailable" detail={error} /> : null}
+      {rows.length > 0 ? (
+        <div className="tool-policy-toolbar">
+          <label className="search-input tool-policy-search">
+            <Search size={14} />
+            <input
+              aria-label="Search server tools"
+              type="search"
+              placeholder="Search tools"
+              value={toolSearch}
+              onChange={(event) => setToolSearch(event.target.value)}
+            />
+          </label>
+          {toolSearch ? (
+            <IconButton label="Clear tool search" icon={X} onClick={() => setToolSearch('')} />
+          ) : null}
+          <Badge tone="neutral">{`${visibleRows.length}/${rows.length}`}</Badge>
+        </div>
+      ) : null}
       {rows.length === 0 && !loading ? (
         <StatePanel
           state="empty"
@@ -466,7 +488,7 @@ function ToolPolicySelector({
         />
       ) : null}
       {rows.length > 0 && visibleRows.length === 0 ? (
-        <StatePanel state="empty" title="No matching tools" detail="No discovered or configured tools match the top search." />
+        <StatePanel state="empty" title="No matching tools" detail="No discovered or configured tools match the active search." />
       ) : null}
       {visibleRows.length > 0 ? (
         <div className={`tool-policy-list ${loading ? 'loading' : ''}`}>

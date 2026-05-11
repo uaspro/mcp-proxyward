@@ -21,7 +21,7 @@ Teams need a small deployable guard layer that can **observe, warn, and block** 
 
 ## The Solution
 
-ProxyWard is a single ASP.NET Core service:
+ProxyWard's core data plane is an ASP.NET Core service. The bundled stack also includes a management API and a React dashboard for operations:
 
 ```text
                  ┌────────────────────────────────────────┐
@@ -59,11 +59,12 @@ The fastest way to see ProxyWard in action is the bundled Docker Compose stack, 
 
 - Docker Desktop (or any Docker engine) with Compose v2.
 - Optional, for local builds: [.NET 10 SDK](https://dotnet.microsoft.com/download).
+- Optional, for local dashboard development: Node.js 22+ and npm.
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/OWNER/mcp-proxyward.git
+git clone https://github.com/uaspro/mcp-proxyward.git
 cd mcp-proxyward
 ```
 
@@ -212,6 +213,7 @@ Management API endpoints:
 | `GET` | `/api/policy/impact` | Mode-switch impact preview. |
 | `PATCH` | `/api/policy/mode` | Privileged runtime mode switch. |
 | `GET` | `/api/tools` | Tool inventory from schema-lock history. |
+| `POST` | `/api/tools/discover` | Privileged upstream `tools/list` discovery and schema-lock snapshot capture. |
 
 Privileged management writes require `Authorization: Bearer <admin-token>` unless `PROXYWARD_MANAGEMENT_LOCAL_DEV=true` is explicitly set. Auth failures are logged and written to the audit DB without token values.
 
@@ -227,6 +229,10 @@ You want to drop ProxyWard in front of one MCP server and just *watch* what your
 
 ```yaml
 mode: audit
+inspection:
+  maxBodyBytes: 1048576
+  unsupportedStreaming: warn
+  batchToolCalls: failClosed
 audit:
   sink: sqlite
   sqlitePath: ./data/proxyward.db
@@ -261,7 +267,7 @@ curl -X POST http://localhost:8080/github/mcp \
 What you get:
 
 - The call is **proxied normally** to the upstream and the client sees the real response.
-- The proxy emits a structured log line and an OpenTelemetry trace for the request.
+- The proxy emits OpenTelemetry activities and metrics for the request, with policy failures and operational warnings written as structured logs.
 - A redacted row is written to `./data/proxyward.db` (table `audit_events`) capturing timestamp, server id, method, tool name, decision, mode, and policy version.
 - The first time `tools/list` is called, ProxyWard records each tool's hashes into the `tool_schema_versions` table in `./data/proxyward.db`. From then on, any change to a tool's description or schema becomes a versioned audit event tied to the policy hash.
 
@@ -359,7 +365,7 @@ Now consider three calls a client might make through `http://localhost:8080/gith
 }
 ```
 
-→ Two reasons fire: `tool_blocked` *and* `dangerous_command`. The upstream is **never called**. The client receives a valid JSON-RPC error response:
+→ The explicit tool block fires before argument inspection, so reason `tool_blocked` is recorded. The upstream is **never called**. The client receives a valid JSON-RPC error response:
 
 ```json
 {
@@ -368,7 +374,7 @@ Now consider three calls a client might make through `http://localhost:8080/gith
   "error": {
     "code": -32001,
     "message": "MCP ProxyWard blocked this tool call",
-    "data": { "reasons": ["tool_blocked", "dangerous_command"] }
+    "data": { "reasons": ["tool_blocked"] }
   }
 }
 ```
@@ -411,9 +417,9 @@ The Compose stack bootstraps an empty DB-backed policy into `policy_snapshots` w
 
 ## Project Status
 
-MVP-stage. Implemented today: reverse proxy via YARP, server allowlist, JSON-RPC parsing, tool allow/block, DB-backed `tools/list` schema-lock persistence and drift detection, path / host / command argument rules, redacted SQLite audit, OpenTelemetry logs / traces / metrics with optional OTLP and Application Insights export, Docker Compose stack.
+MVP-stage. Implemented: reverse proxy via YARP, server allowlist, JSON-RPC parsing, tool allow/block, DB-backed `tools/list` schema-lock persistence and drift detection, schema drift review queue and actions, management API and React dashboard, runtime policy and mode apply through the control API, path / host / command argument rules, per-server secret redaction and response blocking, redacted SQLite audit, OpenTelemetry logs / traces / metrics with optional OTLP and Application Insights export, Docker Compose stack.
 
-Deferred (designed for, not built yet): approval workflow queue, PostgreSQL audit sink, stdio sidecar transport, response mutation to hide disallowed tools from `tools/list`, remote/managed policy.
+Deferred (designed for, not built yet): PostgreSQL audit sink, stdio sidecar transport, response mutation to hide disallowed tools from `tools/list`, and a remote hosted policy service.
 
 ---
 
