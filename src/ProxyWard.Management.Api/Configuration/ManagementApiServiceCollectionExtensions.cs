@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Net.Http.Headers;
 using ProxyWard.Management.Api.Security;
 using ProxyWard.Management.Application;
@@ -112,7 +113,10 @@ internal static class ManagementApiServiceCollectionExtensions
             client.Timeout = TimeSpan.FromSeconds(15);
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
         {
-            AllowAutoRedirect = false
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.GZip
+                | DecompressionMethods.Deflate
+                | DecompressionMethods.Brotli
         });
     }
 

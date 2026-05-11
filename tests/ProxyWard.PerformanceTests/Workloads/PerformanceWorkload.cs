@@ -53,8 +53,21 @@ internal sealed record PerformanceWorkload(string Slug, byte[] PayloadBytes)
             }
         }));
 
+    private static readonly PerformanceWorkload ToolsListGzip = new(
+        "tools-list-gzip",
+        JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            jsonrpc = "2.0",
+            id = 3,
+            method = "tools/list",
+            @params = new
+            {
+                cursor = "gzip"
+            }
+        }));
+
     public static IReadOnlyList<PerformanceWorkload> CreateRunList(PerformanceOptions options) =>
         options.IncludeToolsList
-            ? [ToolsCall, ToolsList]
+            ? [ToolsCall, ToolsList, ToolsListGzip]
             : [ToolsCall];
 }

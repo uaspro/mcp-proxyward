@@ -1,6 +1,8 @@
+using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 
 namespace ProxyWard.PerformanceTests;
 
@@ -35,12 +37,22 @@ internal static class SyntheticUpstreamHost
         {
             using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
             var body = await reader.ReadToEndAsync(context.RequestAborted).ConfigureAwait(false);
-            var responseJson = body.Contains("\"tools/list\"", StringComparison.Ordinal)
-                ? toolsListJson
-                : ToolCallJson;
+            if (body.Contains("\"tools/list\"", StringComparison.Ordinal))
+            {
+                if (body.Contains("\"cursor\":\"gzip\"", StringComparison.Ordinal))
+                {
+                    await WriteGzipJsonWithContentLengthAsync(context, toolsListJson).ConfigureAwait(false);
+                    return;
+                }
+
+                await PerformanceHostFactory
+                    .WriteJsonWithContentLengthAsync(context, toolsListJson)
+                    .ConfigureAwait(false);
+                return;
+            }
 
             await PerformanceHostFactory
-                .WriteJsonWithContentLengthAsync(context, responseJson)
+                .WriteJsonWithContentLengthAsync(context, ToolCallJson)
                 .ConfigureAwait(false);
         });
 
@@ -92,5 +104,21 @@ internal static class SyntheticUpstreamHost
                 tools
             }
         });
+    }
+
+    private static async Task WriteGzipJsonWithContentLengthAsync(HttpContext context, string json)
+    {
+        var bytes = Encoding.UTF8.GetBytes(json);
+        await using var compressed = new MemoryStream();
+        await using (var gzip = new GZipStream(compressed, CompressionLevel.Fastest, leaveOpen: true))
+        {
+            await gzip.WriteAsync(bytes, context.RequestAborted).ConfigureAwait(false);
+        }
+
+        var compressedBytes = compressed.ToArray();
+        context.Response.ContentType = "application/json";
+        context.Response.Headers.ContentEncoding = "gzip";
+        context.Response.ContentLength = compressedBytes.Length;
+        await context.Response.Body.WriteAsync(compressedBytes, context.RequestAborted).ConfigureAwait(false);
     }
 }

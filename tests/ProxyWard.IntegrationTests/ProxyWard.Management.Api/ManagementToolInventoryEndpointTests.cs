@@ -181,6 +181,37 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
         Assert.Equal("hf.tool08", tools[7].GetProperty("name").GetString());
     }
 
+    [Fact]
+    public async Task DiscoverEndpointInitializesSessionBeforeToolsList()
+    {
+        await using var upstream = await StartSessionRequiredToolListUpstreamAsync();
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
+
+        await using var factory = new WebApplicationFactory<ManagementProgram>();
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/tools/discover")
+        {
+            Content = JsonContent.Create(new
+            {
+                serverId = "huggingface-co",
+                upstream = $"{upstream.BaseAddress}/mcp"
+            })
+        };
+        request.Headers.Authorization = new("Bearer", "test-admin-token");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var discoveryPayload = await TestJson.ReadAsync(response);
+        Assert.Equal(["hf_whoami", "space_search"], discoveryPayload.RootElement
+            .GetProperty("tools")
+            .EnumerateArray()
+            .Select(tool => tool.GetProperty("name").GetString()!)
+            .ToArray());
+    }
+
     private async Task SeedSchemaHistoryAsync()
     {
         using var store = new SqliteTrackedToolSchemaStore(_databasePath);
@@ -331,6 +362,77 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
             ""
         ]);
     }
+
+    private static Task<TestUpstream> StartSessionRequiredToolListUpstreamAsync() =>
+        TestUpstream.StartAsync(async context =>
+        {
+            using var requestBody = await JsonDocument.ParseAsync(context.Request.Body).ConfigureAwait(false);
+            var method = requestBody.RootElement.GetProperty("method").GetString();
+
+            switch (method)
+            {
+                case "initialize":
+                    context.Response.Headers["Mcp-Session-Id"] = "test-session";
+                    await Results.Json(new
+                    {
+                        jsonrpc = "2.0",
+                        id = requestBody.RootElement.GetProperty("id").GetString(),
+                        result = new
+                        {
+                            protocolVersion = "2025-11-25",
+                            capabilities = new { tools = new { listChanged = false } }
+                        }
+                    }).ExecuteAsync(context).ConfigureAwait(false);
+                    return;
+                case "notifications/initialized":
+                    Assert.Equal("test-session", context.Request.Headers["Mcp-Session-Id"].ToString());
+                    context.Response.StatusCode = StatusCodes.Status202Accepted;
+                    return;
+                case "tools/list":
+                    if (context.Request.Headers["Mcp-Session-Id"] != "test-session")
+                    {
+                        await Results.Json(new
+                        {
+                            jsonrpc = "2.0",
+                            id = "proxyward-dashboard-tools-discovery",
+                            error = new
+                            {
+                                code = -32600,
+                                message = "Session ID required"
+                            }
+                        }, statusCode: StatusCodes.Status400BadRequest).ExecuteAsync(context).ConfigureAwait(false);
+                        return;
+                    }
+
+                    await Results.Json(new
+                    {
+                        jsonrpc = "2.0",
+                        id = "proxyward-dashboard-tools-discovery",
+                        result = new
+                        {
+                            tools = new object[]
+                            {
+                                new
+                                {
+                                    name = "hf_whoami",
+                                    description = "Hugging Face user info",
+                                    inputSchema = new { type = "object" }
+                                },
+                                new
+                                {
+                                    name = "space_search",
+                                    description = "Find spaces",
+                                    inputSchema = new { type = "object" }
+                                }
+                            }
+                        }
+                    }).ExecuteAsync(context).ConfigureAwait(false);
+                    return;
+                default:
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    return;
+            }
+        });
 
     private static string PolicyYamlWithUnobservedServer() =>
         """

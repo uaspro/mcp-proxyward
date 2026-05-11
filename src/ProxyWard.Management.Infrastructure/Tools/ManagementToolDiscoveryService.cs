@@ -130,19 +130,40 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
 
     private async Task<ToolsListResponseBody> RequestToolsListAsync(Uri upstream, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, upstream);
-        request.Headers.Accept.ParseAdd("application/json");
-        request.Headers.Accept.ParseAdd("text/event-stream");
-        request.Content = new StringContent(
-            JsonSerializer.Serialize(new
+        string? sessionId;
+        try
+        {
+            sessionId = await StartSessionAsync(upstream, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new ManagementToolDiscoveryException(
+                "tool_discovery_timeout",
+                "MCP initialize discovery timed out.",
+                innerException: ex);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new ManagementToolDiscoveryException(
+                "tool_discovery_transport_error",
+                $"MCP initialize discovery failed: {ex.Message}",
+                innerException: ex);
+        }
+
+        using var request = CreateJsonRpcRequest(
+            upstream,
+            new
             {
                 jsonrpc = "2.0",
                 id = "proxyward-dashboard-tools-discovery",
                 method = "tools/list",
                 @params = new { }
-            }, JsonOptions),
-            Encoding.UTF8,
-            "application/json");
+            },
+            sessionId);
 
         HttpResponseMessage response;
         try
@@ -182,6 +203,84 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
             return new ToolsListResponseBody(body, response.Content.Headers.ContentType?.ToString());
         }
     }
+
+    private async Task<string?> StartSessionAsync(Uri upstream, CancellationToken cancellationToken)
+    {
+        using var request = CreateJsonRpcRequest(
+            upstream,
+            new
+            {
+                jsonrpc = "2.0",
+                id = "proxyward-dashboard-initialize",
+                method = "initialize",
+                @params = new
+                {
+                    protocolVersion = DefaultMcpProtocol,
+                    capabilities = new { },
+                    clientInfo = new
+                    {
+                        name = "proxyward-dashboard",
+                        version = "1.0.0"
+                    }
+                }
+            },
+            sessionId: null);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var sessionId = ReadMcpSessionId(response);
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            await SendInitializedNotificationAsync(upstream, sessionId, cancellationToken).ConfigureAwait(false);
+        }
+
+        return sessionId;
+    }
+
+    private async Task SendInitializedNotificationAsync(
+        Uri upstream,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        using var request = CreateJsonRpcRequest(
+            upstream,
+            new
+            {
+                jsonrpc = "2.0",
+                method = "notifications/initialized",
+                @params = new { }
+            },
+            sessionId);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static HttpRequestMessage CreateJsonRpcRequest(Uri upstream, object payload, string? sessionId)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, upstream);
+        request.Headers.Accept.ParseAdd("application/json");
+        request.Headers.Accept.ParseAdd("text/event-stream");
+        request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", DefaultMcpProtocol);
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            request.Headers.TryAddWithoutValidation("Mcp-Session-Id", sessionId);
+        }
+
+        request.Content = new StringContent(
+            JsonSerializer.Serialize(payload, JsonOptions),
+            Encoding.UTF8,
+            "application/json");
+        return request;
+    }
+
+    private static string? ReadMcpSessionId(HttpResponseMessage response) =>
+        response.Headers.TryGetValues("Mcp-Session-Id", out var values)
+            ? values.FirstOrDefault()
+            : null;
 
     private static Uri ParseUpstream(string upstream)
     {

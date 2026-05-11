@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -102,6 +103,48 @@ public class ToolsListResponseInspectionIntegrationTests
         var summary = payload.RootElement.GetProperty("argumentSummary");
         Assert.Equal(2, summary.GetProperty("toolCount").GetInt32());
         Assert.Equal(["issues.list", "repos.search"], summary.GetProperty("toolNames")
+            .EnumerateArray()
+            .Select(name => name.GetString()!)
+            .ToArray());
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task GzipEncodedToolsListJsonResponseIsDecodedForInspection()
+    {
+        const string responseBody = """
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"hf.whoami","title":"Hugging Face User Info","description":"Show user info","inputSchema":{"type":"object"}},{"name":"space.search","title":"Space Search","description":"Find spaces","inputSchema":{"type":"object"}}]}}
+            """;
+        await using var upstream = await StartUpstreamAsync(context => WriteCompressedResponseAsync(context, responseBody, "application/json", "gzip"));
+        var dbPath = NewTempSqlitePath();
+        var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        Assert.Equal("allow", row.Decision);
+        Assert.Equal(string.Empty, row.Reasons);
+
+        using var payload = JsonDocument.Parse(row.PayloadJson);
+        var summary = payload.RootElement.GetProperty("argumentSummary");
+        Assert.Equal(2, summary.GetProperty("toolCount").GetInt32());
+        Assert.Equal(["hf.whoami", "space.search"], summary.GetProperty("toolNames")
             .EnumerateArray()
             .Select(name => name.GetString()!)
             .ToArray());
@@ -870,6 +913,26 @@ public class ToolsListResponseInspectionIntegrationTests
         }
 
         await context.Response.Body.WriteAsync(bytes);
+    }
+
+    private static async Task WriteCompressedResponseAsync(
+        HttpContext context,
+        string body,
+        string contentType,
+        string contentEncoding)
+    {
+        var bytes = Encoding.UTF8.GetBytes(body);
+        await using var compressed = new MemoryStream();
+        await using (var gzip = new GZipStream(compressed, CompressionLevel.SmallestSize, leaveOpen: true))
+        {
+            await gzip.WriteAsync(bytes);
+        }
+
+        var compressedBytes = compressed.ToArray();
+        context.Response.ContentType = contentType;
+        context.Response.Headers["Content-Encoding"] = contentEncoding;
+        context.Response.ContentLength = compressedBytes.Length;
+        await context.Response.Body.WriteAsync(compressedBytes);
     }
 
     private static async Task<UpstreamApp> StartUpstreamAsync(Func<HttpContext, Task> handler)

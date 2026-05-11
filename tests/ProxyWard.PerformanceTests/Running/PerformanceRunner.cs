@@ -47,11 +47,13 @@ internal static class PerformanceRunner
 
         Console.WriteLine($"Running {scenarioName}...");
 
+        var reportFolder = Path.Combine(options.ArtifactsDirectory, scenarioName);
+
         NBomberRunner
             .RegisterScenarios(scenario)
             .WithTestSuite("mcp-proxyward")
             .WithTestName(scenarioName)
-            .WithReportFolder(options.ArtifactsDirectory)
+            .WithReportFolder(reportFolder)
             .WithReportFileName(scenarioName)
             .WithReportFormats(ReportFormat.Txt, ReportFormat.Html, ReportFormat.Csv)
             .Run();
