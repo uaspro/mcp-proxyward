@@ -423,6 +423,12 @@ Deferred (designed for, not built yet): PostgreSQL audit sink, stdio sidecar tra
 
 ---
 
+## License
+
+MCP ProxyWard is licensed under the [MIT License](LICENSE).
+
+---
+
 ## Stars
 
 If ProxyWard is useful to you, a star helps other people find it.
