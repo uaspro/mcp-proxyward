@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Sinks;
 using ProxyWard.Locking.Persistence;
@@ -212,6 +213,40 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
             .ToArray());
     }
 
+    [Fact]
+    public async Task DiscoverEndpointPersistsInventoryWhenReadOnlySharedCacheConnectionExists()
+    {
+        await EnsureAuditDbExistsWithoutSchemaLockAsync();
+        await using var readOnlyConnection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _databasePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Cache = SqliteCacheMode.Shared
+        }.ToString());
+        await readOnlyConnection.OpenAsync();
+
+        await using var upstream = await StartToolListUpstreamAsync();
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
+
+        await using var factory = new WebApplicationFactory<ManagementProgram>();
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/tools/discover")
+        {
+            Content = JsonContent.Create(new
+            {
+                serverId = "gamma",
+                upstream = $"{upstream.BaseAddress}/mcp"
+            })
+        };
+        request.Headers.Authorization = new("Bearer", "test-admin-token");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, await CountRowsForServerAsync(_databasePath, "gamma"));
+    }
+
     private async Task SeedSchemaHistoryAsync()
     {
         using var store = new SqliteTrackedToolSchemaStore(_databasePath);
@@ -274,6 +309,21 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
             DurationMs: 1,
             ArgumentSummary: null,
             BatchSize: 0), CancellationToken.None);
+    }
+
+    private static async Task<long> CountRowsForServerAsync(string databasePath, string serverId)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadOnly
+        }.ToString());
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM tool_schema_versions WHERE server_id = $server_id;";
+        command.Parameters.AddWithValue("$server_id", serverId);
+        return (long)(await command.ExecuteScalarAsync())!;
     }
 
     private static ToolSchemaSnapshotInput CreateSnapshot(

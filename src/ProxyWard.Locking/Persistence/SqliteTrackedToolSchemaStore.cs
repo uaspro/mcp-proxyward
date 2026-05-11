@@ -44,7 +44,6 @@ public sealed class SqliteTrackedToolSchemaStore : ITrackedToolSchemaStore, IDis
         {
             DataSource = fullPath,
             Mode = openMode,
-            Cache = SqliteCacheMode.Shared,
             DefaultTimeout = Math.Max(1, (int)Math.Ceiling(busyTimeoutMilliseconds / 1000.0))
         }.ToString();
     }
