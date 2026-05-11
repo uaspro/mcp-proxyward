@@ -60,7 +60,7 @@ public class AuditEventIntegrationTests
     }
 
     [Fact]
-    public async Task ToolsCallWithSensitiveArgumentsRecordsRedactedAuditEvent()
+    public async Task ToolsCallWithSensitiveArgumentsRecordsRedactedPolicyAuditEvent()
     {
         await using var upstream = await StartUpstreamAsync();
         var dbPath = NewTempSqlitePath();
@@ -95,9 +95,10 @@ public class AuditEventIntegrationTests
         }
 
         var rows = ReadAuditEvents(dbPath);
-        var row = Assert.Single(rows, r => r.EventType == "request_inspection");
+        var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("tools/call", row.Method);
         Assert.Equal("fs.read", row.ToolName);
+        Assert.Equal("would_block", row.Decision);
         Assert.DoesNotContain(secretToken, row.PayloadJson, StringComparison.Ordinal);
         Assert.DoesNotContain("/etc/passwd", row.PayloadJson, StringComparison.Ordinal);
 

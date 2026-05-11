@@ -146,21 +146,31 @@ public sealed class RequestInspectionMiddleware(
             ProxyWardTelemetry.RecordInspectionSkip(telemetry, "request", "unsupported_content_type");
         }
 
-        await EmitAuditAsync(
-            context,
-            policy,
-            server,
-            decision,
-            method,
-            toolName,
-            argumentSummary,
-            reasons,
-            batchSize,
-            requestBytes: inspectedBytes,
-            durationMs: stopwatch.ElapsedMilliseconds);
+        if (ShouldEmitAudit(result, decision))
+        {
+            await EmitAuditAsync(
+                context,
+                policy,
+                server,
+                decision,
+                method,
+                toolName,
+                argumentSummary,
+                reasons,
+                batchSize,
+                requestBytes: inspectedBytes,
+                durationMs: stopwatch.ElapsedMilliseconds);
+        }
 
         await next(context);
     }
+
+    private bool ShouldEmitAudit(JsonRpcParseResult result, AuditDecision decision) =>
+        decision != AuditDecision.Allow || !ContainsToolCall(result);
+
+    private bool ContainsToolCall(JsonRpcParseResult result) =>
+        result.Status == JsonRpcParseStatus.Parsed
+        && result.Messages.Any(message => classifier.Classify(message).Kind == McpMessageKind.ToolCall);
 
     private (string? Method, string? ToolName, System.Text.Json.Nodes.JsonNode? Summary, int BatchSize) ExtractAuditMetadata(
         JsonRpcParseResult result,

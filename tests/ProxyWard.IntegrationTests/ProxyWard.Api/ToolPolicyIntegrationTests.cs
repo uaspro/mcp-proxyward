@@ -59,6 +59,7 @@ public class ToolPolicyIntegrationTests
         }
 
         var rows = ReadAuditEvents(dbPath);
+        Assert.Single(rows);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("enforce", row.Mode);
         Assert.Equal("block", row.Decision);
