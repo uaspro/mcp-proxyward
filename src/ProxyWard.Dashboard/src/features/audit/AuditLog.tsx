@@ -5,7 +5,17 @@ import { readAuditEventRouteId, writeAuditEventRoute } from '../../app/navigatio
 import { Badge, Button, Card, Drawer, IconButton, StatePanel } from '../../components'
 import { DecisionBadge, PageHeader } from '../../components/dashboard'
 import { ReasonTags } from '../../shared/ReasonTags'
-import { describeReason, formatAsOf, formatAuditDateTime, formatAuditTime, formatBytes, formatDuration, formatJson } from '../../shared/formatters'
+import {
+  describeReason,
+  formatAsOf,
+  formatAuditDateTime,
+  formatAuditOperation,
+  formatAuditSubject,
+  formatAuditTime,
+  formatBytes,
+  formatDuration,
+  formatJson,
+} from '../../shared/formatters'
 type AuditDecisionFilter = 'all' | 'allow' | 'would_block' | 'warn' | 'block'
 type AuditTimeWindow = '15m' | '1h' | '24h' | '7d' | 'all'
 
@@ -289,7 +299,7 @@ function AuditFilterBar({
         <Search size={14} />
         <input
           type="search"
-          placeholder="Search server, tool, reason, correlation id"
+          placeholder="Search server, operation, subject, reason"
           value={filters.search}
           onChange={(event) => onChange('search', event.target.value)}
         />
@@ -350,8 +360,8 @@ function AuditEventsTable({
         <thead>
           <tr>
             <th>Time</th>
-            <th>Method</th>
-            <th>Tool</th>
+            <th>Operation</th>
+            <th>Subject</th>
             <th>Server</th>
             <th>Decision</th>
             <th>Reasons</th>
@@ -374,8 +384,8 @@ function AuditEventsTable({
               tabIndex={0}
             >
               <td className="mono">{formatAuditTime(event.timestampUtc)}</td>
-              <td className="mono">{event.method ?? '-'}</td>
-              <td className="mono strong">{event.toolName ?? '-'}</td>
+              <td className="mono">{formatAuditOperation(event)}</td>
+              <td className="mono strong">{formatAuditSubject(event)}</td>
               <td className="mono">{event.serverId}</td>
               <td>
                 <DecisionBadge decision={event.decision} />
@@ -414,7 +424,7 @@ function AuditEventDrawer({
   return (
     <Drawer
       open={open}
-      title={event?.toolName ?? event?.method ?? 'Audit event'}
+      title={event ? formatAuditTitle(event) : 'Audit event'}
       subtitle={event ? `${event.serverId} / ${formatAuditDateTime(event.timestampUtc)}` : undefined}
       onClose={onClose}
     >
@@ -446,10 +456,10 @@ function AuditEventDrawer({
             <dd className="mono">{event.correlationId}</dd>
             <dt>server</dt>
             <dd className="mono">{event.serverId}</dd>
-            <dt>method</dt>
-            <dd className="mono">{event.method ?? '-'}</dd>
-            <dt>tool</dt>
-            <dd className="mono">{event.toolName ?? '-'}</dd>
+            <dt>operation</dt>
+            <dd className="mono">{formatAuditOperation(event)}</dd>
+            <dt>subject</dt>
+            <dd className="mono">{formatAuditSubject(event)}</dd>
             <dt>policy</dt>
             <dd className="mono">{event.policyVersion}</dd>
             <dt>request bytes</dt>
@@ -504,6 +514,11 @@ function createAuditQuery(filters: AuditFilters, offset: number, now: Date): Aud
     offset,
     pageSize: auditPageSize,
   }
+}
+
+function formatAuditTitle(event: AuditEventItem): string {
+  const subject = formatAuditSubject(event)
+  return subject === '-' ? formatAuditOperation(event) : subject
 }
 
 function formatAuditSubtitle(page: AuditEventPage | null, loadedAt: Date | null): string {

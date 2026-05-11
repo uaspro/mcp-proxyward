@@ -120,7 +120,7 @@ public sealed class ServerAllowlistMiddleware(
             Mode: FormatMode(policy.Mode),
             Decision: ToAuditDecision(decision.Type),
             ServerId: server.Id,
-            Method: null,
+            Method: FormatRequestOperation(context),
             ToolName: null,
             Reasons: decision.Reasons,
             PolicyVersion: policy.VersionHash,
@@ -164,6 +164,9 @@ public sealed class ServerAllowlistMiddleware(
 
     private static string ResolveCorrelationId(HttpContext context) =>
         context.Items[AuditItems.CorrelationId] as string ?? context.TraceIdentifier;
+
+    private static string FormatRequestOperation(HttpContext context) =>
+        $"{context.Request.Method} {context.Request.Path}";
 
     private TelemetryMetadata CreateTelemetryMetadata(
         HttpContext context,

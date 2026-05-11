@@ -145,6 +145,8 @@ public class AuditEventIntegrationTests
         Assert.Equal("enforce", blockRow.Mode);
         Assert.Equal("block", blockRow.Decision);
         Assert.Equal("github", blockRow.ServerId);
+        Assert.Equal("GET /github/mcp", blockRow.Method);
+        Assert.Null(blockRow.ToolName);
         Assert.Contains("server_not_allowed", blockRow.Reasons, StringComparison.Ordinal);
         Assert.False(string.IsNullOrEmpty(blockRow.PolicyVersion));
         Assert.False(string.IsNullOrEmpty(blockRow.CorrelationId));

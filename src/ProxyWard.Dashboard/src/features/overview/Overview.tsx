@@ -7,7 +7,7 @@ import { Badge, BarChart, Button, Card, StatePanel } from '../../components'
 import { CompactList, DecisionBadge, HealthRows, PageHeader, StatCard } from '../../components/dashboard'
 import { dashboardConfig } from '../../config'
 import { ReasonTags } from '../../shared/ReasonTags'
-import { formatAuditTime, formatDuration } from '../../shared/formatters'
+import { formatAuditOperation, formatAuditSubject, formatAuditTime, formatDuration } from '../../shared/formatters'
 import type { Mode } from '../../shared/runtime'
 
 const overviewPollingIntervalMs = 3000
@@ -316,8 +316,8 @@ function LatestAuditEventsTable({
         <thead>
           <tr>
             <th>Time</th>
-            <th>Method</th>
-            <th>Tool</th>
+            <th>Operation</th>
+            <th>Subject</th>
             <th>Server</th>
             <th>Decision</th>
             <th>Reasons</th>
@@ -337,8 +337,8 @@ function LatestAuditEventsTable({
               tabIndex={0}
             >
               <td className="mono">{formatAuditTime(event.timestampUtc)}</td>
-              <td className="mono">{event.method ?? '-'}</td>
-              <td className="mono strong">{event.toolName ?? '-'}</td>
+              <td className="mono">{formatAuditOperation(event)}</td>
+              <td className="mono strong">{formatAuditSubject(event)}</td>
               <td className="mono">{event.serverId}</td>
               <td>
                 <DecisionBadge decision={event.decision} />
