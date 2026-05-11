@@ -13,7 +13,7 @@ namespace ProxyWard.IntegrationTests;
 public class AuditEventIntegrationTests
 {
     [Fact]
-    public async Task InspectableToolsListRequestRecordsAllowAuditEvent()
+    public async Task InspectableNonToolRequestRecordsAllowAuditEvent()
     {
         await using var upstream = await StartUpstreamAsync();
         var dbPath = NewTempSqlitePath();
@@ -25,7 +25,7 @@ public class AuditEventIntegrationTests
             sqlitePath: dbPath,
             serverAllowed: true));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
-        var body = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":"abc"}}""";
+        var body = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}""";
 
         try
         {
@@ -49,7 +49,7 @@ public class AuditEventIntegrationTests
         Assert.Equal("audit", row.Mode);
         Assert.Equal("allow", row.Decision);
         Assert.Equal("github", row.ServerId);
-        Assert.Equal("tools/list", row.Method);
+        Assert.Equal("initialize", row.Method);
         Assert.Null(row.ToolName);
         Assert.False(string.IsNullOrEmpty(row.PolicyVersion));
         Assert.False(string.IsNullOrEmpty(row.CorrelationId));

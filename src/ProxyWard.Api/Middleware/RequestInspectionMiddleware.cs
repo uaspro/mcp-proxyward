@@ -166,11 +166,16 @@ public sealed class RequestInspectionMiddleware(
     }
 
     private bool ShouldEmitAudit(JsonRpcParseResult result, AuditDecision decision) =>
-        decision != AuditDecision.Allow || !ContainsToolCall(result);
+        decision != AuditDecision.Allow || ContainsMessageWithoutDedicatedAudit(result);
 
-    private bool ContainsToolCall(JsonRpcParseResult result) =>
-        result.Status == JsonRpcParseStatus.Parsed
-        && result.Messages.Any(message => classifier.Classify(message).Kind == McpMessageKind.ToolCall);
+    private bool ContainsMessageWithoutDedicatedAudit(JsonRpcParseResult result) =>
+        result.Status != JsonRpcParseStatus.Parsed
+        || result.Messages.Count == 0
+        || result.Messages.Any(message =>
+        {
+            var classification = classifier.Classify(message);
+            return classification.Kind is not McpMessageKind.ToolCall and not McpMessageKind.ToolsList;
+        });
 
     private (string? Method, string? ToolName, System.Text.Json.Nodes.JsonNode? Summary, int BatchSize) ExtractAuditMetadata(
         JsonRpcParseResult result,

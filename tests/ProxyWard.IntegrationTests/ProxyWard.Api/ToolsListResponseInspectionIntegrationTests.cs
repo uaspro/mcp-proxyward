@@ -51,7 +51,9 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var rows = ReadAuditEvents(dbPath);
+        var row = Assert.Single(rows);
+        Assert.Equal("tools_list_response_inspection", row.EventType);
         Assert.Equal("allow", row.Decision);
         Assert.Equal("tools/list", row.Method);
         Assert.Equal(string.Empty, row.Reasons);
@@ -137,7 +139,8 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(ReadAuditEvents(dbPath));
+        Assert.Equal("tools_list_response_inspection", row.EventType);
         Assert.Equal("allow", row.Decision);
         Assert.Equal(string.Empty, row.Reasons);
 
@@ -233,7 +236,8 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(ReadAuditEvents(dbPath));
+        Assert.Equal("tools_list_response_inspection", row.EventType);
         Assert.Equal("allow", row.Decision);
         Assert.Equal(string.Empty, row.Reasons);
         Assert.DoesNotContain("json_malformed", row.PayloadJson, StringComparison.Ordinal);

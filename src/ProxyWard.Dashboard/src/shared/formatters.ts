@@ -84,7 +84,24 @@ export function formatAuditOperation(event: {
   eventType: string
   method: string | null
 }): string {
-  return event.method?.trim() || formatAuditEventType(event.eventType)
+  const method = event.method?.trim()
+  if (!method) {
+    return formatAuditEventType(event.eventType)
+  }
+
+  if (event.eventType === 'request_inspection') {
+    return `${method} request`
+  }
+
+  if (event.eventType === 'tools_list_response_inspection') {
+    return `${method} response`
+  }
+
+  if (event.eventType === 'tool_response_secret_inspection') {
+    return `${method} response`
+  }
+
+  return method
 }
 
 export function formatAuditSubject(event: {
@@ -99,6 +116,18 @@ export function formatAuditSubject(event: {
 
   if (event.eventType === 'server_allowlist_policy') {
     return 'server route'
+  }
+
+  if (event.eventType === 'request_inspection') {
+    return 'request'
+  }
+
+  if (event.eventType === 'tools_list_response_inspection') {
+    return 'tool schema'
+  }
+
+  if (event.eventType === 'tool_response_secret_inspection') {
+    return 'tool response'
   }
 
   if (event.eventType.startsWith('management_') || event.eventType.startsWith('policy_')) {
@@ -117,6 +146,7 @@ export function formatAuditEventType(eventType: string): string {
     request_inspection: 'request inspection',
     server_allowlist_policy: 'server allowlist',
     tool_call_policy: 'tool policy',
+    tool_response_secret_inspection: 'tool response inspection',
     tools_list_response_inspection: 'tools/list inspection',
   }
 
