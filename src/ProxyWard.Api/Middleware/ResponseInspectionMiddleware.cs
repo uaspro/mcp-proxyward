@@ -268,19 +268,29 @@ public sealed class ResponseInspectionMiddleware(
 
             if (decision == AuditDecision.Block)
             {
-                context.Response.Headers.Clear();
-                context.Response.StatusCode = StatusCodes.Status502BadGateway;
-                await context.Response.WriteAsJsonAsync(new
+                var blockedToolNames = CreateBlockedToolNameSet(
+                    driftResult.Drifts.Select(drift => drift.ToolName));
+                if (TryCreateFilteredToolsListBody(
+                    body,
+                    context.Response.ContentType,
+                    context.Response.Headers["Content-Encoding"].ToString(),
+                    policy.Inspection.MaxBodyBytes,
+                    blockedToolNames,
+                    out var filteredBody))
                 {
-                    error = "MCP tool surface drift detected.",
-                    decision = "block",
-                    reasons = driftResult.Reasons,
-                    tools = driftResult.Drifts.Select(drift => new
+                    await WriteFilteredToolsListAsync(context, originalBody, filteredBody);
+                    return;
+                }
+
+                await WriteUnfilterableToolsListBlockAsync(
+                    context,
+                    "MCP tool surface drift detected.",
+                    driftResult.Reasons,
+                    driftResult.Drifts.Select(drift => new
                     {
                         name = drift.ToolName,
                         reasons = drift.Reasons
-                    }).ToArray()
-                }, context.RequestAborted);
+                    }).ToArray());
                 return;
             }
 
@@ -329,14 +339,25 @@ public sealed class ResponseInspectionMiddleware(
 
             if (decision == AuditDecision.Block)
             {
-                context.Response.Headers.Clear();
-                context.Response.StatusCode = StatusCodes.Status502BadGateway;
-                await context.Response.WriteAsJsonAsync(new
+                var blockedToolNames = CreateBlockedToolNameSet(
+                    currentUnapprovedReviews.Select(review => review.Row.ToolName));
+                if (TryCreateFilteredToolsListBody(
+                    body,
+                    context.Response.ContentType,
+                    context.Response.Headers["Content-Encoding"].ToString(),
+                    policy.Inspection.MaxBodyBytes,
+                    blockedToolNames,
+                    out var filteredBody))
                 {
-                    error = "MCP tool surface drift review is not approved.",
-                    decision = "block",
+                    await WriteFilteredToolsListAsync(context, originalBody, filteredBody);
+                    return;
+                }
+
+                await WriteUnfilterableToolsListBlockAsync(
+                    context,
+                    "MCP tool surface drift review is not approved.",
                     reasons,
-                    tools = currentUnapprovedReviews
+                    currentUnapprovedReviews
                         .GroupBy(review => review.Row.ToolName, StringComparer.Ordinal)
                         .Select(group => new
                         {
@@ -353,8 +374,7 @@ public sealed class ResponseInspectionMiddleware(
                                 .ToArray()
                         })
                         .OrderBy(tool => tool.name, StringComparer.Ordinal)
-                        .ToArray()
-                }, context.RequestAborted);
+                        .ToArray());
                 return;
             }
 
@@ -514,6 +534,162 @@ public sealed class ResponseInspectionMiddleware(
 
             destination.Write(buffer[..bytesRead]);
         }
+    }
+
+    private static HashSet<string> CreateBlockedToolNameSet(IEnumerable<string?> toolNames)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var toolName in toolNames)
+        {
+            if (!string.IsNullOrWhiteSpace(toolName))
+            {
+                names.Add(toolName);
+            }
+        }
+
+        return names;
+    }
+
+    private static bool TryCreateFilteredToolsListBody(
+        byte[] body,
+        string? contentType,
+        string? contentEncoding,
+        int maxDecodedBytes,
+        IReadOnlySet<string> blockedToolNames,
+        out byte[] filteredBody)
+    {
+        filteredBody = [];
+        if (blockedToolNames.Count == 0 || IsEventStream(contentType))
+        {
+            return false;
+        }
+
+        if (!TryDecodeResponseBody(body, contentEncoding, maxDecodedBytes, out var decodedBody))
+        {
+            return false;
+        }
+
+        JsonNode? root;
+        try
+        {
+            var reader = new Utf8JsonReader(decodedBody);
+            root = JsonNode.Parse(ref reader);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        var foundToolsList = root switch
+        {
+            JsonObject response => FilterToolsListResponse(response, blockedToolNames),
+            JsonArray batch => FilterToolsListBatch(batch, blockedToolNames),
+            _ => false
+        };
+
+        if (!foundToolsList || root is null)
+        {
+            return false;
+        }
+
+        filteredBody = Encoding.UTF8.GetBytes(root.ToJsonString());
+        return true;
+    }
+
+    private static bool FilterToolsListBatch(JsonArray batch, IReadOnlySet<string> blockedToolNames)
+    {
+        var foundToolsList = false;
+        foreach (var item in batch)
+        {
+            if (item is JsonObject response)
+            {
+                foundToolsList |= FilterToolsListResponse(response, blockedToolNames);
+            }
+        }
+
+        return foundToolsList;
+    }
+
+    private static bool FilterToolsListResponse(JsonObject response, IReadOnlySet<string> blockedToolNames)
+    {
+        if (response["result"] is not JsonObject result
+            || result["tools"] is not JsonArray tools)
+        {
+            return false;
+        }
+
+        for (var index = tools.Count - 1; index >= 0; index--)
+        {
+            if (tools[index] is JsonObject tool
+                && TryGetString(tool, "name", out var toolName)
+                && blockedToolNames.Contains(toolName))
+            {
+                tools.RemoveAt(index);
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryGetString(JsonObject jsonObject, string propertyName, out string value)
+    {
+        value = string.Empty;
+        if (!jsonObject.TryGetPropertyValue(propertyName, out var node)
+            || node is not JsonValue jsonValue
+            || !jsonValue.TryGetValue<string>(out var text)
+            || string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        value = text;
+        return true;
+    }
+
+    private static bool IsEventStream(string? contentType)
+    {
+        if (string.IsNullOrWhiteSpace(contentType))
+        {
+            return false;
+        }
+
+        var delimiterIndex = contentType.IndexOf(';', StringComparison.Ordinal);
+        var mediaType = delimiterIndex >= 0
+            ? contentType[..delimiterIndex]
+            : contentType;
+
+        return string.Equals(mediaType.Trim(), "text/event-stream", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task WriteFilteredToolsListAsync(
+        HttpContext context,
+        Stream destination,
+        byte[] body)
+    {
+        context.Response.ContentType = "application/json";
+        context.Response.ContentLength = body.Length;
+        context.Response.Headers.Remove("Content-Encoding");
+        context.Response.Headers.Remove("ETag");
+        context.Response.Headers.Remove("Content-MD5");
+
+        await destination.WriteAsync(body, context.RequestAborted);
+    }
+
+    private static async Task WriteUnfilterableToolsListBlockAsync(
+        HttpContext context,
+        string error,
+        IReadOnlyCollection<string> reasons,
+        object tools)
+    {
+        context.Response.Headers.Clear();
+        context.Response.StatusCode = StatusCodes.Status502BadGateway;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error,
+            decision = "block",
+            reasons,
+            tools
+        }, context.RequestAborted);
     }
 
     private async Task HandleToolCallSecretResponseAsync(

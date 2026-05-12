@@ -20,6 +20,14 @@ public sealed record ManagementSchemaDriftPage(
     ManagementSchemaDriftWindow Window,
     IReadOnlyList<ManagementSchemaDriftItem> Items);
 
+public sealed record ManagementSchemaDriftFilterOption(
+    string Value,
+    long Count);
+
+public sealed record ManagementSchemaDriftFilterOptions(
+    IReadOnlyList<ManagementSchemaDriftFilterOption> Servers,
+    IReadOnlyList<ManagementSchemaDriftFilterOption> Tools);
+
 public sealed record ManagementSchemaDriftItem(
     long Id,
     string ServerId,
@@ -73,6 +81,9 @@ public interface IManagementSchemaDriftRepository
 {
     Task<ManagementSchemaDriftPage> QueryAsync(
         ManagementSchemaDriftQuery query,
+        CancellationToken cancellationToken);
+
+    Task<ManagementSchemaDriftFilterOptions> GetFilterOptionsAsync(
         CancellationToken cancellationToken);
 
     Task<ManagementSchemaDriftDetail?> GetByIdAsync(

@@ -100,6 +100,46 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DriftFilterEndpointReturnsDistinctServerAndToolValues()
+    {
+        await SeedReviewAsync(
+            "beta", "repos.search", "schema", "pending",
+            new DateTimeOffset(2026, 5, 10, 10, 0, 0, TimeSpan.Zero));
+        await SeedReviewAsync(
+            "alpha", "repos.search", "description", "pending",
+            new DateTimeOffset(2026, 5, 10, 10, 1, 0, TimeSpan.Zero));
+        await SeedReviewAsync(
+            "alpha", "issues.list", "schema", "blocked",
+            new DateTimeOffset(2026, 5, 10, 10, 2, 0, TimeSpan.Zero));
+
+        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        try
+        {
+            await using var factory = new WebApplicationFactory<ManagementProgram>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.GetAsync("/api/schema/drifts/filters");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            using var payload = await TestJson.ReadAsync(response);
+            var root = payload.RootElement;
+
+            var servers = root.GetProperty("servers").EnumerateArray().ToArray();
+            Assert.Equal(["alpha", "beta"], servers.Select(item => item.GetProperty("value").GetString()!).ToArray());
+            Assert.Equal([2, 1], servers.Select(item => item.GetProperty("count").GetInt64()).ToArray());
+
+            var tools = root.GetProperty("tools").EnumerateArray().ToArray();
+            Assert.Equal(["issues.list", "repos.search"], tools.Select(item => item.GetProperty("value").GetString()!).ToArray());
+            Assert.Equal([1, 2], tools.Select(item => item.GetProperty("count").GetInt64()).ToArray());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        }
+    }
+
+    [Fact]
     public async Task DriftDetailEndpointReturnsDiffMetadata()
     {
         var review = await SeedReviewAsync(

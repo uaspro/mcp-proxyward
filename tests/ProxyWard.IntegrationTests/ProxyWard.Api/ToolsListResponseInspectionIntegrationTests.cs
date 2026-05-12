@@ -486,10 +486,10 @@ public class ToolsListResponseInspectionIntegrationTests
     }
 
     [Fact]
-    public async Task EnforceModeSchemaDriftBlocksWithoutReturningUpstreamToolSurface()
+    public async Task EnforceModeSchemaDriftFiltersOnlyAffectedToolFromToolsList()
     {
         const string responseBody = """
-            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}}]}}
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}},{"name":"issues.list","title":"Issues","description":"List issues","inputSchema":{"type":"object","properties":{"state":{"type":"string"}}}}]}}
             """;
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
         var dbPath = NewTempSqlitePath();
@@ -497,12 +497,15 @@ public class ToolsListResponseInspectionIntegrationTests
             dbPath,
             "github",
             $"{upstream.BaseAddress}/mcp",
-            new DiscoveredTool(
-                "repos.search",
-                "Search",
-                "Description",
-                JsonNode.Parse("""{"type":"object","properties":{"q":{"type":"string"}}}"""),
-                null));
+            [
+                new DiscoveredTool(
+                    "repos.search",
+                    "Search",
+                    "Description",
+                    JsonNode.Parse("""{"type":"object","properties":{"q":{"type":"string"}}}"""),
+                    null),
+                CreateStableIssuesTool()
+            ]);
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
@@ -515,9 +518,16 @@ public class ToolsListResponseInspectionIntegrationTests
                 "/github/mcp",
                 new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
 
-            Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadAsStringAsync();
-            Assert.Contains("tool_schema_changed", body, StringComparison.Ordinal);
+            using var filtered = JsonDocument.Parse(body);
+            var tools = filtered.RootElement
+                .GetProperty("result")
+                .GetProperty("tools")
+                .EnumerateArray()
+                .ToArray();
+            Assert.DoesNotContain(tools, tool => tool.GetProperty("name").GetString() == "repos.search");
+            Assert.Contains(tools, tool => tool.GetProperty("name").GetString() == "issues.list");
             Assert.DoesNotContain("limit", body, StringComparison.Ordinal);
         }
         finally
@@ -600,14 +610,19 @@ public class ToolsListResponseInspectionIntegrationTests
     [Theory]
     [InlineData("rejected")]
     [InlineData("blocked")]
-    public async Task UnapprovedCurrentDriftReviewBlocksObservedSurfaceInEnforceMode(string reviewStatus)
+    public async Task UnapprovedCurrentDriftReviewFiltersOnlyAffectedToolInEnforceMode(string reviewStatus)
     {
         const string responseBody = """
-            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}}]}}
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}},{"name":"issues.list","title":"Issues","description":"List issues","inputSchema":{"type":"object","properties":{"state":{"type":"string"}}}}]}}
             """;
         await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
         var dbPath = NewTempSqlitePath();
-        var review = await SeedReviewedCurrentSchemaAsync(dbPath, "github", $"{upstream.BaseAddress}/mcp", reviewStatus);
+        var review = await SeedReviewedCurrentSchemaAsync(
+            dbPath,
+            "github",
+            $"{upstream.BaseAddress}/mcp",
+            reviewStatus,
+            includeStableIssuesTool: true);
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
 
@@ -620,9 +635,16 @@ public class ToolsListResponseInspectionIntegrationTests
                 "/github/mcp",
                 new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
 
-            Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadAsStringAsync();
-            Assert.Contains("tool_schema_changed", body, StringComparison.Ordinal);
+            using var filtered = JsonDocument.Parse(body);
+            var tools = filtered.RootElement
+                .GetProperty("result")
+                .GetProperty("tools")
+                .EnumerateArray()
+                .ToArray();
+            Assert.DoesNotContain(tools, tool => tool.GetProperty("name").GetString() == "repos.search");
+            Assert.Contains(tools, tool => tool.GetProperty("name").GetString() == "issues.list");
             Assert.DoesNotContain("limit", body, StringComparison.Ordinal);
         }
         finally
@@ -1023,6 +1045,14 @@ public class ToolsListResponseInspectionIntegrationTests
         string serverId,
         string upstreamUrl,
         DiscoveredTool tool,
+        bool captureMetadata = true) =>
+        await SeedSchemaVersionAsync(dbPath, serverId, upstreamUrl, [tool], captureMetadata);
+
+    private static async Task SeedSchemaVersionAsync(
+        string dbPath,
+        string serverId,
+        string upstreamUrl,
+        IReadOnlyCollection<DiscoveredTool> tools,
         bool captureMetadata = true)
     {
         using var store = new SqliteTrackedToolSchemaStore(dbPath);
@@ -1034,7 +1064,7 @@ public class ToolsListResponseInspectionIntegrationTests
             serverId,
             upstreamUrl,
             "2025-11-25",
-            [SafeToolSchemaMetadata.CreateSnapshotEntry(tool, fingerprinter, options)]);
+            tools.Select(tool => SafeToolSchemaMetadata.CreateSnapshotEntry(tool, fingerprinter, options)).ToArray());
 
         await store.RecordAsync(snapshot, new DateTimeOffset(2026, 5, 3, 12, 0, 0, TimeSpan.Zero), CancellationToken.None);
     }
@@ -1043,7 +1073,8 @@ public class ToolsListResponseInspectionIntegrationTests
         string dbPath,
         string serverId,
         string upstreamUrl,
-        string status)
+        string status,
+        bool includeStableIssuesTool = false)
     {
         var oldTool = new DiscoveredTool(
             "repos.search",
@@ -1058,8 +1089,16 @@ public class ToolsListResponseInspectionIntegrationTests
             JsonNode.Parse("""{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}"""),
             null);
 
-        await SeedSchemaVersionAsync(dbPath, serverId, upstreamUrl, oldTool);
-        await SeedSchemaVersionAsync(dbPath, serverId, upstreamUrl, currentTool);
+        if (includeStableIssuesTool)
+        {
+            await SeedSchemaVersionAsync(dbPath, serverId, upstreamUrl, [oldTool, CreateStableIssuesTool()]);
+            await SeedSchemaVersionAsync(dbPath, serverId, upstreamUrl, [currentTool, CreateStableIssuesTool()]);
+        }
+        else
+        {
+            await SeedSchemaVersionAsync(dbPath, serverId, upstreamUrl, oldTool);
+            await SeedSchemaVersionAsync(dbPath, serverId, upstreamUrl, currentTool);
+        }
 
         using var reviewStore = new SqliteSchemaDriftReviewStore(dbPath);
         var result = await reviewStore.RecordObservationAsync(
@@ -1077,6 +1116,14 @@ public class ToolsListResponseInspectionIntegrationTests
         await UpdateReviewStatusAsync(dbPath, result.Row.Id, status);
         return result;
     }
+
+    private static DiscoveredTool CreateStableIssuesTool() =>
+        new(
+            "issues.list",
+            "Issues",
+            "List issues",
+            JsonNode.Parse("""{"type":"object","properties":{"state":{"type":"string"}}}"""),
+            null);
 
     private static async Task UpdateReviewStatusAsync(string dbPath, long reviewId, string status)
     {

@@ -54,6 +54,28 @@ public class ManagementSchemaDriftRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetFilterOptionsAsyncReturnsDistinctServersAndToolsWithCounts()
+    {
+        await SeedReviewAsync(
+            "beta", "repos.search", "description", "pending",
+            new DateTimeOffset(2026, 5, 10, 10, 0, 0, TimeSpan.Zero));
+        await SeedReviewAsync(
+            "alpha", "repos.search", "schema", "pending",
+            new DateTimeOffset(2026, 5, 10, 10, 1, 0, TimeSpan.Zero));
+        await SeedReviewAsync(
+            "alpha", "issues.list", "schema", "blocked",
+            new DateTimeOffset(2026, 5, 10, 10, 2, 0, TimeSpan.Zero));
+
+        var repository = new ManagementSchemaDriftRepository(_databasePath);
+        var options = await repository.GetFilterOptionsAsync(CancellationToken.None);
+
+        Assert.Equal(["alpha", "beta"], options.Servers.Select(option => option.Value).ToArray());
+        Assert.Equal([2, 1], options.Servers.Select(option => option.Count).ToArray());
+        Assert.Equal(["issues.list", "repos.search"], options.Tools.Select(option => option.Value).ToArray());
+        Assert.Equal([1, 2], options.Tools.Select(option => option.Count).ToArray());
+    }
+
+    [Fact]
     public async Task QueryAsyncReturnsNewestFirstWithFiltersAndImpactCount()
     {
         var first = await SeedReviewAsync(

@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Ban, Check, ChevronLeft, ChevronRight, RefreshCw, XCircle } from 'lucide-react'
-import { applySchemaDriftAction, getSchemaDriftDetail, getSchemaDrifts, type SchemaDriftAction, type SchemaDriftDetail, type SchemaDriftItem, type SchemaDriftPage, type SchemaDriftQuery, type SchemaDriftStatus } from '../../api/drift'
+import { Ban, Check, ChevronLeft, ChevronRight, RefreshCw, type LucideIcon } from 'lucide-react'
+import { applySchemaDriftAction, getSchemaDriftDetail, getSchemaDriftFilterOptions, getSchemaDrifts, type SchemaDriftAction, type SchemaDriftDetail, type SchemaDriftFilterOption, type SchemaDriftFilterOptions, type SchemaDriftItem, type SchemaDriftPage, type SchemaDriftQuery, type SchemaDriftStatus } from '../../api/drift'
 import { Badge, Button, Card, IconButton, StatePanel, Tabs } from '../../components'
 import { PageHeader } from '../../components/dashboard'
 import { ReasonTags } from '../../shared/ReasonTags'
 import { formatApiFailure, formatAuditDateTime } from '../../shared/formatters'
 
 type DriftTab = 'diff' | 'before' | 'after' | 'history'
-type DriftStatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'blocked'
+type DriftStatusFilter = 'all' | 'pending' | 'approved' | 'blocked'
 type DriftTimeWindow = '24h' | '7d' | '30d' | 'all'
+type DiffLineKind = 'equal' | 'add' | 'del'
+type DiffLineRow = {
+  kind: DiffLineKind
+  beforeLine: number | null
+  afterLine: number | null
+  text: string
+}
 
 type DriftFilters = {
   status: DriftStatusFilter
@@ -23,9 +30,13 @@ const driftStatusOptions: Array<{ value: DriftStatusFilter; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'pending', label: 'Pending' },
   { value: 'approved', label: 'Approved' },
-  { value: 'rejected', label: 'Rejected' },
   { value: 'blocked', label: 'Blocked' },
 ]
+
+const emptyFilterOptions: SchemaDriftFilterOptions = {
+  servers: [],
+  tools: [],
+}
 
 const driftWindowOptions: Array<{ value: DriftTimeWindow; label: string }> = [
   { value: '24h', label: '24h' },
@@ -54,6 +65,10 @@ export function SchemaDrift() {
   const [page, setPage] = useState<SchemaDriftPage | null>(null)
   const [listLoading, setListLoading] = useState(true)
   const [listError, setListError] = useState<string | null>(null)
+  const [filterOptions, setFilterOptions] = useState<SchemaDriftFilterOptions>(emptyFilterOptions)
+  const [filterOptionsLoading, setFilterOptionsLoading] = useState(true)
+  const [filterOptionsError, setFilterOptionsError] = useState<string | null>(null)
+  const [filterOptionsReloadKey, setFilterOptionsReloadKey] = useState(0)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [selectedSummary, setSelectedSummary] = useState<SchemaDriftItem | null>(null)
   const [selectedDetail, setSelectedDetail] = useState<SchemaDriftDetail | null>(null)
@@ -73,6 +88,27 @@ export function SchemaDrift() {
   )
   const canPageBackward = page !== null && page.offset > 0
   const canPageForward = page !== null && page.offset + page.items.length < page.totalCount
+
+  useEffect(() => {
+    const controller = new AbortController()
+    getSchemaDriftFilterOptions(controller.signal)
+      .then((response) => {
+        setFilterOptions(response)
+        setFilterOptionsError(null)
+      })
+      .catch((ex: unknown) => {
+        if (!controller.signal.aborted) {
+          setFilterOptionsError(formatApiFailure(ex, 'Schema drift filters unavailable'))
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setFilterOptionsLoading(false)
+        }
+      })
+
+    return () => controller.abort()
+  }, [filterOptionsReloadKey])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -134,6 +170,8 @@ export function SchemaDrift() {
 
   function refresh() {
     setListLoading(true)
+    setFilterOptionsLoading(true)
+    setFilterOptionsReloadKey((current) => current + 1)
     bumpQueryTime()
   }
 
@@ -205,7 +243,7 @@ export function SchemaDrift() {
     <section className="page">
       <PageHeader
         title="Schema drift"
-        subtitle="Review upstream tool definition changes before they become policy baseline"
+        subtitle="Review changed tool definitions and decide whether this version may run"
         action={
           <div className="row-actions">
             <Button icon={RefreshCw} onClick={refresh} disabled={listLoading}>
@@ -224,10 +262,16 @@ export function SchemaDrift() {
       ) : null}
       <div className="drift-layout">
         <Card
-          title="Review queue"
+          title="Drift queue"
           action={<Badge tone={filters.status === 'pending' ? 'warn' : 'neutral'}>{page?.totalCount.toLocaleString() ?? '0'} items</Badge>}
         >
-          <DriftFilterBar filters={filters} onChange={updateFilter} />
+          <DriftFilterBar
+            filters={filters}
+            filterOptions={filterOptions}
+            filterOptionsLoading={filterOptionsLoading}
+            filterOptionsError={filterOptionsError}
+            onChange={updateFilter}
+          />
           {!page && listLoading ? (
             <StatePanel state="loading" title="Loading drift queue" detail="management API" />
           ) : null}
@@ -281,9 +325,15 @@ export function SchemaDrift() {
 
 function DriftFilterBar({
   filters,
+  filterOptions,
+  filterOptionsLoading,
+  filterOptionsError,
   onChange,
 }: {
   filters: DriftFilters
+  filterOptions: SchemaDriftFilterOptions
+  filterOptionsLoading: boolean
+  filterOptionsError: string | null
   onChange: <K extends keyof DriftFilters>(key: K, value: DriftFilters[K]) => void
 }) {
   return (
@@ -301,24 +351,22 @@ function DriftFilterBar({
           </button>
         ))}
       </div>
-      <label className="filter-input">
-        <span>server</span>
-        <input
-          type="text"
-          placeholder="all"
-          value={filters.serverId}
-          onChange={(event) => onChange('serverId', event.target.value)}
-        />
-      </label>
-      <label className="filter-input">
-        <span>tool</span>
-        <input
-          type="text"
-          placeholder="all"
-          value={filters.toolName}
-          onChange={(event) => onChange('toolName', event.target.value)}
-        />
-      </label>
+      <FilterValueInput
+        id="schema-drift-server-filter-options"
+        label="server"
+        value={filters.serverId}
+        options={filterOptions.servers}
+        loading={filterOptionsLoading}
+        onChange={(value) => onChange('serverId', value)}
+      />
+      <FilterValueInput
+        id="schema-drift-tool-filter-options"
+        label="tool"
+        value={filters.toolName}
+        options={filterOptions.tools}
+        loading={filterOptionsLoading}
+        onChange={(value) => onChange('toolName', value)}
+      />
       <div className="filter-group time-window">
         <span className="filter-label">time</span>
         {driftWindowOptions.map((option) => (
@@ -332,7 +380,43 @@ function DriftFilterBar({
           </button>
         ))}
       </div>
+      {filterOptionsError ? <span className="filter-error">{filterOptionsError}</span> : null}
     </div>
+  )
+}
+
+function FilterValueInput({
+  id,
+  label,
+  value,
+  options,
+  loading,
+  onChange,
+}: {
+  id: string
+  label: string
+  value: string
+  options: SchemaDriftFilterOption[]
+  loading: boolean
+  onChange: (value: string) => void
+}) {
+  return (
+    <label className="filter-input">
+      <span>{label}</span>
+      <input
+        type="search"
+        list={id}
+        placeholder={loading ? 'loading' : 'all'}
+        value={value}
+        autoComplete="off"
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <datalist id={id}>
+        {options.map((option) => (
+          <option key={option.value} value={option.value} label={`${option.count.toLocaleString()} items`} />
+        ))}
+      </datalist>
+    </label>
   )
 }
 
@@ -356,13 +440,15 @@ function DriftQueue({
           className={`drift-list-item ${selectedId === item.id ? 'selected' : ''}`}
           onClick={() => onSelect(item)}
         >
+          <div className="drift-item-server">
+            <span className="drift-server-name mono">{item.serverId}</span>
+          </div>
           <div className="drift-item-topline">
             <span className="mono strong">{item.toolName}</span>
             <DriftStatusBadge status={item.status} />
           </div>
           <div className="drift-item-meta">
-            <span>{item.serverId}</span>
-            <span>{item.fieldName}</span>
+            <span>{formatFieldLabel(item.fieldName)}</span>
             <span>
               v{item.fromVersion} to v{item.toVersion}
             </span>
@@ -413,23 +499,21 @@ function DriftDetailPane({
       ) : null}
       {item ? (
         <>
-          <div className="detail-kv drift-detail-kv">
-            <dt>server</dt>
-            <dd className="mono">{item.serverId}</dd>
-            <dt>field</dt>
-            <dd className="mono">{item.fieldName}</dd>
-            <dt>schema-lock</dt>
-            <dd>
-              v{item.fromVersion} to v{item.toVersion}
-            </dd>
-            <dt>policy</dt>
-            <dd className="mono">{item.policyVersion ?? '-'}</dd>
-            <dt>impact</dt>
-            <dd>{item.impactCount.toLocaleString()} related review events</dd>
-            <dt>diff mode</dt>
-            <dd>
-              <Badge tone={item.hasDiffMetadata ? 'info' : 'neutral'}>{item.diffMode}</Badge>
-            </dd>
+          <div className="drift-review-summary">
+            <div className="min-w-0">
+              <div className="summary-label">Changed {formatFieldLabel(item.fieldName)}</div>
+              <div className="summary-title">
+                v{item.fromVersion} to v{item.toVersion}
+              </div>
+              <div className="summary-detail">
+                {formatDecisionStatusMessage(item)}
+              </div>
+            </div>
+            <div className="summary-meta">
+              <span className="mono">{item.serverId}</span>
+              <span>{formatAuditDateTime(item.detectedAtUtc)}</span>
+              <span>{item.impactCount.toLocaleString()} related</span>
+            </div>
           </div>
           {loading && !detail ? (
             <StatePanel state="loading" title="Loading drift detail" detail="management API detail endpoint" />
@@ -450,48 +534,98 @@ function DriftDetailPane({
               value={tab}
               onChange={onTabChange}
               options={[
-                { value: 'diff', label: 'Diff' },
-                { value: 'before', label: 'Before' },
-                { value: 'after', label: 'After' },
+                { value: 'diff', label: 'Change' },
+                { value: 'before', label: 'Previous' },
+                { value: 'after', label: 'Current' },
                 { value: 'history', label: 'History' },
               ]}
             />
           </div>
           {!error || detail ? <DriftTabContent detail={detail} summary={item} tab={tab} /> : null}
-          <div className="action-bar">
-            <span>
-              {item.status === 'pending'
-                ? 'Pending review'
-                : `Reviewed as ${item.status}${item.reviewedBy ? ` by ${item.reviewedBy}` : ''}`}
-            </span>
-            <Button
-              icon={XCircle}
-              variant="ghost"
-              disabled={actionLoading !== null}
-              onClick={() => onAction('reject')}
-            >
-              Reject
-            </Button>
-            <Button
-              icon={Ban}
-              variant="danger"
-              disabled={actionLoading !== null}
-              onClick={() => onAction('block')}
-            >
-              Block
-            </Button>
-            <Button
-              icon={Check}
-              variant="primary"
-              disabled={actionLoading !== null}
-              onClick={() => onAction('approve')}
-            >
-              Approve
-            </Button>
-          </div>
+          <ReviewDecisionPanel
+            item={item}
+            actionLoading={actionLoading}
+            onAction={onAction}
+          />
         </>
       ) : null}
     </Card>
+  )
+}
+
+function ReviewDecisionPanel({
+  item,
+  actionLoading,
+  onAction,
+}: {
+  item: SchemaDriftItem
+  actionLoading: SchemaDriftAction | null
+  onAction: (action: SchemaDriftAction) => void
+}) {
+  const disabled = actionLoading !== null
+
+  return (
+    <div className="review-decision-panel">
+      <div className="review-decision-copy">
+        <div className="review-decision-title">
+          {item.status === 'pending' ? 'Choose a decision' : `Decision: ${item.status}`}
+        </div>
+        <div className="review-decision-detail">
+          {formatReviewDecisionDetail(item)}
+        </div>
+      </div>
+      <div className="decision-action-grid">
+        <DecisionActionButton
+          action="approve"
+          icon={Check}
+          title="Approve"
+          detail="Allow this tool version in enforce mode."
+          disabled={disabled || item.status === 'approved'}
+          active={item.status === 'approved'}
+          onAction={onAction}
+        />
+        <DecisionActionButton
+          action="block"
+          icon={Ban}
+          title="Block"
+          detail="Remove only this tool from discovery and mark unsafe."
+          disabled={disabled || item.status === 'blocked'}
+          active={item.status === 'blocked'}
+          onAction={onAction}
+        />
+      </div>
+    </div>
+  )
+}
+
+function DecisionActionButton({
+  action,
+  icon: Icon,
+  title,
+  detail,
+  disabled,
+  active,
+  onAction,
+}: {
+  action: SchemaDriftAction
+  icon: LucideIcon
+  title: string
+  detail: string
+  disabled: boolean
+  active: boolean
+  onAction: (action: SchemaDriftAction) => void
+}) {
+  return (
+    <button
+      type="button"
+      className={`decision-action ${action} ${active ? 'active' : ''}`}
+      disabled={disabled}
+      onClick={() => onAction(action)}
+    >
+      <Icon size={16} />
+      <span className="decision-action-label">{title}</span>
+      <span className="decision-action-detail">{active ? 'Current decision' : detail}</span>
+    </button>
   )
 }
 
@@ -511,6 +645,10 @@ function DriftTabContent({
   if (tab === 'history') {
     return (
       <div className="detail-kv">
+        <dt>status</dt>
+        <dd>
+          <DriftStatusBadge status={detail.status} />
+        </dd>
         <dt>detected</dt>
         <dd>{formatAuditDateTime(detail.detectedAtUtc)}</dd>
         <dt>reviewed</dt>
@@ -519,6 +657,12 @@ function DriftTabContent({
         <dd>{detail.reviewedBy ?? '-'}</dd>
         <dt>review note</dt>
         <dd>{detail.reviewNote ?? '-'}</dd>
+        <dt>policy</dt>
+        <dd className="mono">{detail.policyVersion ?? '-'}</dd>
+        <dt>diff mode</dt>
+        <dd>
+          <Badge tone={detail.hasDiffMetadata ? 'info' : 'neutral'}>{detail.diffMode}</Badge>
+        </dd>
         <dt>reasons</dt>
         <dd>
           <ReasonTags reasons={detail.reasons} />
@@ -575,23 +719,109 @@ function DiffBlock({
 }) {
   const beforeLines = formatDiffJson(beforeJson).split('\n')
   const afterLines = formatDiffJson(afterJson).split('\n')
+  const rows = createLineDiff(beforeLines, afterLines)
 
   return (
     <div className="diff-block" aria-label={`${fieldName} diff`}>
-      {beforeLines.map((line, index) => (
-        <div className="diff-line del" key={`before-${index}`}>
-          <span className="num">{index + 1}</span>
-          <span>- {line}</span>
-        </div>
-      ))}
-      {afterLines.map((line, index) => (
-        <div className="diff-line add" key={`after-${index}`}>
-          <span className="num">{beforeLines.length + index + 1}</span>
-          <span>+ {line}</span>
+      {rows.map((row, index) => (
+        <div className={`diff-line ${row.kind}`} key={`${row.kind}-${row.beforeLine ?? 'x'}-${row.afterLine ?? 'x'}-${index}`}>
+          <span className="num">{row.beforeLine ?? ''}</span>
+          <span className="num">{row.afterLine ?? ''}</span>
+          <span className="mark">{formatDiffMarker(row.kind)}</span>
+          <span className="text">{row.text}</span>
         </div>
       ))}
     </div>
   )
+}
+
+function createLineDiff(beforeLines: string[], afterLines: string[]): DiffLineRow[] {
+  const lengths = Array.from({ length: beforeLines.length + 1 }, () => Array(afterLines.length + 1).fill(0))
+
+  for (let beforeIndex = beforeLines.length - 1; beforeIndex >= 0; beforeIndex -= 1) {
+    for (let afterIndex = afterLines.length - 1; afterIndex >= 0; afterIndex -= 1) {
+      lengths[beforeIndex][afterIndex] = beforeLines[beforeIndex] === afterLines[afterIndex]
+        ? lengths[beforeIndex + 1][afterIndex + 1] + 1
+        : Math.max(lengths[beforeIndex + 1][afterIndex], lengths[beforeIndex][afterIndex + 1])
+    }
+  }
+
+  const rows: DiffLineRow[] = []
+  let beforeIndex = 0
+  let afterIndex = 0
+  let beforeLine = 1
+  let afterLine = 1
+
+  while (beforeIndex < beforeLines.length && afterIndex < afterLines.length) {
+    if (beforeLines[beforeIndex] === afterLines[afterIndex]) {
+      rows.push({
+        kind: 'equal',
+        beforeLine,
+        afterLine,
+        text: beforeLines[beforeIndex],
+      })
+      beforeIndex += 1
+      afterIndex += 1
+      beforeLine += 1
+      afterLine += 1
+      continue
+    }
+
+    if (lengths[beforeIndex + 1][afterIndex] >= lengths[beforeIndex][afterIndex + 1]) {
+      rows.push({
+        kind: 'del',
+        beforeLine,
+        afterLine: null,
+        text: beforeLines[beforeIndex],
+      })
+      beforeIndex += 1
+      beforeLine += 1
+    } else {
+      rows.push({
+        kind: 'add',
+        beforeLine: null,
+        afterLine,
+        text: afterLines[afterIndex],
+      })
+      afterIndex += 1
+      afterLine += 1
+    }
+  }
+
+  while (beforeIndex < beforeLines.length) {
+    rows.push({
+      kind: 'del',
+      beforeLine,
+      afterLine: null,
+      text: beforeLines[beforeIndex],
+    })
+    beforeIndex += 1
+    beforeLine += 1
+  }
+
+  while (afterIndex < afterLines.length) {
+    rows.push({
+      kind: 'add',
+      beforeLine: null,
+      afterLine,
+      text: afterLines[afterIndex],
+    })
+    afterIndex += 1
+    afterLine += 1
+  }
+
+  return rows
+}
+
+function formatDiffMarker(kind: DiffLineKind): string {
+  switch (kind) {
+    case 'add':
+      return '+'
+    case 'del':
+      return '-'
+    default:
+      return ' '
+  }
 }
 
 function DriftStatusBadge({ status }: { status: SchemaDriftStatus }) {
@@ -645,4 +875,44 @@ function formatDiffJson(value: string | null): string {
   } catch {
     return value
   }
+}
+
+function formatFieldLabel(fieldName: string): string {
+  return fieldName === 'description'
+    ? 'description'
+    : fieldName === 'schema'
+      ? 'schema'
+      : fieldName
+}
+
+function formatDecisionStatusMessage(item: SchemaDriftItem): string {
+  if (item.status === 'approved') {
+    return 'This tool version is approved and can appear in tools/list in enforce mode.'
+  }
+
+  if (item.status === 'rejected') {
+    return 'This legacy rejected item remains unapproved; enforce mode removes only this tool from matching tools/list responses.'
+  }
+
+  if (item.status === 'blocked') {
+    return 'This tool version is blocked and remains unapproved; enforce mode removes only this tool from matching tools/list responses.'
+  }
+
+  return 'This tool version is waiting for review; approve allows it, block removes only this tool from discovery.'
+}
+
+function formatReviewDecisionDetail(item: SchemaDriftItem): string {
+  if (item.status === 'approved') {
+    return 'Future matching tools/list responses may include this tool version in enforce mode.'
+  }
+
+  if (item.status === 'rejected') {
+    return 'This item was rejected before the workflow was simplified. Choose Approve to allow it or Block to keep only this tool unavailable.'
+  }
+
+  if (item.status === 'blocked') {
+    return 'Block keeps only the affected tool out of tools/list and records a stronger unsafe decision.'
+  }
+
+  return 'Approve allows this tool version. Block keeps only the affected tool out of tools/list in enforce mode.'
 }

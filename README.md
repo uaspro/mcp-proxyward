@@ -397,7 +397,7 @@ Now consider three calls a client might make through `http://localhost:8080/gith
 
 → `repos.search` is allowed, but the argument inspector resolves `10.0.0.5` and matches `blockPrivateNetworks: true`. Reason `private_network_target` is recorded; the upstream is not called and the client gets the JSON-RPC error.
 
-**Drift on top of all of the above:** if the upstream later changes the description of `repos.search`, the next `tools/list` produces a `tool_description_changed` decision. In `enforce` mode that blocks according to response-inspection policy until the change is reviewed; in `audit` mode it produces a warn event you can spot in logs and the audit DB.
+**Drift on top of all of the above:** if the upstream later changes the description of `repos.search`, the next `tools/list` produces a `tool_description_changed` decision. In `enforce` mode only the affected tool is removed from matching `tools/list` responses until the change is approved; in `audit` mode it produces a warn event you can spot in logs and the audit DB.
 
 You can flip between `mode: audit` and `mode: enforce` without changing any other rule — the same engine produces `would_block` decisions in audit and real `block` decisions in enforce.
 
@@ -423,7 +423,7 @@ The Compose stack bootstraps an empty DB-backed policy into `policy_snapshots` w
 
 MVP-stage. Implemented: reverse proxy via YARP, server allowlist, JSON-RPC parsing, tool allow/block, DB-backed `tools/list` schema-lock persistence and drift detection, schema drift review queue and actions, management API and React dashboard, runtime policy and mode apply through the control API, path / host / command argument rules, per-server secret redaction and response blocking, redacted SQLite audit, OpenTelemetry logs / traces / metrics with optional OTLP and Application Insights export, Docker Compose stack.
 
-Deferred (designed for, not built yet): PostgreSQL audit sink, stdio sidecar transport, response mutation to hide disallowed tools from `tools/list`, and a remote hosted policy service.
+Deferred (designed for, not built yet): PostgreSQL audit sink, stdio sidecar transport, policy-based `tools/list` filtering for static allow/block rules, and a remote hosted policy service.
 
 ---
 

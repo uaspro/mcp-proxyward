@@ -83,6 +83,32 @@ public sealed class ManagementSchemaDriftRepository : IManagementSchemaDriftRepo
             items);
     }
 
+    public async Task<ManagementSchemaDriftFilterOptions> GetFilterOptionsAsync(
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await ConfigureConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+
+        if (!await TableExistsAsync(connection, "schema_drift_reviews", cancellationToken).ConfigureAwait(false))
+        {
+            return new ManagementSchemaDriftFilterOptions(Servers: [], Tools: []);
+        }
+
+        var servers = await ReadFilterOptionsAsync(
+                connection,
+                "server_id",
+                cancellationToken)
+            .ConfigureAwait(false);
+        var tools = await ReadFilterOptionsAsync(
+                connection,
+                "tool_name",
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return new ManagementSchemaDriftFilterOptions(servers, tools);
+    }
+
     public async Task<ManagementSchemaDriftDetail?> GetByIdAsync(
         long id,
         DateTimeOffset? fromUtc,
@@ -306,6 +332,33 @@ public sealed class ManagementSchemaDriftRepository : IManagementSchemaDriftRepo
         }
 
         return items;
+    }
+
+    private static async Task<IReadOnlyList<ManagementSchemaDriftFilterOption>> ReadFilterOptionsAsync(
+        SqliteConnection connection,
+        string columnName,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT {columnName}, COUNT(*)
+            FROM schema_drift_reviews
+            WHERE {columnName} IS NOT NULL
+              AND TRIM({columnName}) <> ''
+            GROUP BY {columnName}
+            ORDER BY {columnName} COLLATE NOCASE ASC, {columnName} ASC;
+            """;
+
+        var options = new List<ManagementSchemaDriftFilterOption>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            options.Add(new ManagementSchemaDriftFilterOption(
+                reader.GetString(0),
+                reader.GetInt64(1)));
+        }
+
+        return options;
     }
 
     private static ManagementSchemaDriftItem ReadItem(SqliteDataReader reader)

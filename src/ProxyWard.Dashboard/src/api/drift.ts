@@ -1,7 +1,7 @@
 import { getJson, postJson } from './client'
 
 export type SchemaDriftStatus = 'pending' | 'approved' | 'rejected' | 'blocked' | string
-export type SchemaDriftAction = 'approve' | 'reject' | 'block'
+export type SchemaDriftAction = 'approve' | 'block'
 
 export type SchemaDriftWindow = {
   fromUtc: string | null
@@ -33,6 +33,16 @@ export type SchemaDriftPage = {
   totalCount: number
   window: SchemaDriftWindow
   items: SchemaDriftItem[]
+}
+
+export type SchemaDriftFilterOption = {
+  value: string
+  count: number
+}
+
+export type SchemaDriftFilterOptions = {
+  servers: SchemaDriftFilterOption[]
+  tools: SchemaDriftFilterOption[]
 }
 
 export type SchemaDriftDiff = {
@@ -81,6 +91,10 @@ export function buildSchemaDriftDetailPath(id: number, query: Pick<SchemaDriftQu
 
 export function getSchemaDrifts(query: SchemaDriftQuery = {}, signal?: AbortSignal) {
   return getJson<SchemaDriftPage>(buildSchemaDriftsPath(query), signal)
+}
+
+export function getSchemaDriftFilterOptions(signal?: AbortSignal) {
+  return getJson<SchemaDriftFilterOptions>('/api/schema/drifts/filters', signal)
 }
 
 export function getSchemaDriftDetail(

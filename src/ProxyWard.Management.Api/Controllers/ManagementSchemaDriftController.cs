@@ -55,6 +55,10 @@ public sealed class ManagementSchemaDriftController : ControllerBase
         return Ok(await _repository.QueryAsync(query, cancellationToken).ConfigureAwait(false));
     }
 
+    [HttpGet("filters")]
+    public async Task<IActionResult> GetFilters(CancellationToken cancellationToken) =>
+        Ok(await _repository.GetFilterOptionsAsync(cancellationToken).ConfigureAwait(false));
+
     [HttpGet("{id:long}")]
     public async Task<IActionResult> GetDetail(
         long id,
