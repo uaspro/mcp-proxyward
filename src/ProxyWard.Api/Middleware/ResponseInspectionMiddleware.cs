@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
-using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -268,9 +267,9 @@ public sealed class ResponseInspectionMiddleware(
 
             if (decision == AuditDecision.Block)
             {
-                var blockedToolNames = CreateBlockedToolNameSet(
+                var blockedToolNames = ToolsListResponseFilter.CreateBlockedToolNameSet(
                     driftResult.Drifts.Select(drift => drift.ToolName));
-                if (TryCreateFilteredToolsListBody(
+                if (ToolsListResponseFilter.TryCreateFilteredBody(
                     body,
                     context.Response.ContentType,
                     context.Response.Headers["Content-Encoding"].ToString(),
@@ -339,9 +338,9 @@ public sealed class ResponseInspectionMiddleware(
 
             if (decision == AuditDecision.Block)
             {
-                var blockedToolNames = CreateBlockedToolNameSet(
+                var blockedToolNames = ToolsListResponseFilter.CreateBlockedToolNameSet(
                     currentUnapprovedReviews.Select(review => review.Row.ToolName));
-                if (TryCreateFilteredToolsListBody(
+                if (ToolsListResponseFilter.TryCreateFilteredBody(
                     body,
                     context.Response.ContentType,
                     context.Response.Headers["Content-Encoding"].ToString(),
@@ -445,220 +444,9 @@ public sealed class ResponseInspectionMiddleware(
         string? contentEncoding,
         int maxDecodedBytes)
     {
-        return TryDecodeResponseBody(body, contentEncoding, maxDecodedBytes, out var decodedBody)
+        return ResponseBodyDecoder.TryDecode(body, contentEncoding, maxDecodedBytes, out var decodedBody)
             ? extractor.Extract(decodedBody, contentType)
             : ToolListExtractionResult.Failed(PolicyReasonCodes.InspectionUnsupported);
-    }
-
-    private static bool TryDecodeResponseBody(
-        byte[] body,
-        string? contentEncoding,
-        int maxDecodedBytes,
-        out byte[] decodedBody)
-    {
-        decodedBody = body;
-        if (string.IsNullOrWhiteSpace(contentEncoding))
-        {
-            return true;
-        }
-
-        var encodings = contentEncoding
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        for (var index = encodings.Length - 1; index >= 0; index--)
-        {
-            if (!TryDecodeSingleEncoding(decodedBody, encodings[index], maxDecodedBytes, out decodedBody))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool TryDecodeSingleEncoding(
-        byte[] body,
-        string encoding,
-        int maxDecodedBytes,
-        out byte[] decodedBody)
-    {
-        decodedBody = body;
-        return encoding.ToLowerInvariant() switch
-        {
-            "identity" => true,
-            "gzip" or "x-gzip" => TryDecompress(body, stream => new GZipStream(stream, CompressionMode.Decompress), maxDecodedBytes, out decodedBody),
-            "br" => TryDecompress(body, stream => new BrotliStream(stream, CompressionMode.Decompress), maxDecodedBytes, out decodedBody),
-            "deflate" => TryDecompress(body, stream => new DeflateStream(stream, CompressionMode.Decompress), maxDecodedBytes, out decodedBody),
-            _ => false
-        };
-    }
-
-    private static bool TryDecompress(
-        byte[] body,
-        Func<Stream, Stream> createDecoder,
-        int maxDecodedBytes,
-        out byte[] decodedBody)
-    {
-        decodedBody = [];
-        try
-        {
-            using var source = new MemoryStream(body);
-            using var decoder = createDecoder(source);
-            return TryReadToEnd(decoder, maxDecodedBytes, out decodedBody);
-        }
-        catch (InvalidDataException)
-        {
-            return false;
-        }
-    }
-
-    private static bool TryReadToEnd(Stream source, int maxBytes, out byte[] body)
-    {
-        body = [];
-        using var destination = new MemoryStream(Math.Min(maxBytes, 64 * 1024));
-        Span<byte> buffer = stackalloc byte[16 * 1024];
-
-        while (true)
-        {
-            var bytesRead = source.Read(buffer);
-            if (bytesRead == 0)
-            {
-                body = destination.ToArray();
-                return true;
-            }
-
-            if (destination.Length + bytesRead > maxBytes)
-            {
-                return false;
-            }
-
-            destination.Write(buffer[..bytesRead]);
-        }
-    }
-
-    private static HashSet<string> CreateBlockedToolNameSet(IEnumerable<string?> toolNames)
-    {
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var toolName in toolNames)
-        {
-            if (!string.IsNullOrWhiteSpace(toolName))
-            {
-                names.Add(toolName);
-            }
-        }
-
-        return names;
-    }
-
-    private static bool TryCreateFilteredToolsListBody(
-        byte[] body,
-        string? contentType,
-        string? contentEncoding,
-        int maxDecodedBytes,
-        IReadOnlySet<string> blockedToolNames,
-        out byte[] filteredBody)
-    {
-        filteredBody = [];
-        if (blockedToolNames.Count == 0 || IsEventStream(contentType))
-        {
-            return false;
-        }
-
-        if (!TryDecodeResponseBody(body, contentEncoding, maxDecodedBytes, out var decodedBody))
-        {
-            return false;
-        }
-
-        JsonNode? root;
-        try
-        {
-            var reader = new Utf8JsonReader(decodedBody);
-            root = JsonNode.Parse(ref reader);
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-
-        var foundToolsList = root switch
-        {
-            JsonObject response => FilterToolsListResponse(response, blockedToolNames),
-            JsonArray batch => FilterToolsListBatch(batch, blockedToolNames),
-            _ => false
-        };
-
-        if (!foundToolsList || root is null)
-        {
-            return false;
-        }
-
-        filteredBody = Encoding.UTF8.GetBytes(root.ToJsonString());
-        return true;
-    }
-
-    private static bool FilterToolsListBatch(JsonArray batch, IReadOnlySet<string> blockedToolNames)
-    {
-        var foundToolsList = false;
-        foreach (var item in batch)
-        {
-            if (item is JsonObject response)
-            {
-                foundToolsList |= FilterToolsListResponse(response, blockedToolNames);
-            }
-        }
-
-        return foundToolsList;
-    }
-
-    private static bool FilterToolsListResponse(JsonObject response, IReadOnlySet<string> blockedToolNames)
-    {
-        if (response["result"] is not JsonObject result
-            || result["tools"] is not JsonArray tools)
-        {
-            return false;
-        }
-
-        for (var index = tools.Count - 1; index >= 0; index--)
-        {
-            if (tools[index] is JsonObject tool
-                && TryGetString(tool, "name", out var toolName)
-                && blockedToolNames.Contains(toolName))
-            {
-                tools.RemoveAt(index);
-            }
-        }
-
-        return true;
-    }
-
-    private static bool TryGetString(JsonObject jsonObject, string propertyName, out string value)
-    {
-        value = string.Empty;
-        if (!jsonObject.TryGetPropertyValue(propertyName, out var node)
-            || node is not JsonValue jsonValue
-            || !jsonValue.TryGetValue<string>(out var text)
-            || string.IsNullOrWhiteSpace(text))
-        {
-            return false;
-        }
-
-        value = text;
-        return true;
-    }
-
-    private static bool IsEventStream(string? contentType)
-    {
-        if (string.IsNullOrWhiteSpace(contentType))
-        {
-            return false;
-        }
-
-        var delimiterIndex = contentType.IndexOf(';', StringComparison.Ordinal);
-        var mediaType = delimiterIndex >= 0
-            ? contentType[..delimiterIndex]
-            : contentType;
-
-        return string.Equals(mediaType.Trim(), "text/event-stream", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task WriteFilteredToolsListAsync(
