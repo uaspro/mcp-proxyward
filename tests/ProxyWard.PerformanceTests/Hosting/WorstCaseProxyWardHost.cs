@@ -43,6 +43,8 @@ internal static class WorstCaseProxyWardHost
         builder.Services.AddSingleton<IMcpMethodClassifier, McpMethodClassifier>();
         builder.Services.AddSingleton<IRedactor, Redactor>();
         builder.Services.AddSingleton<IToolDefinitionExtractor, ToolDefinitionExtractor>();
+        builder.Services.AddSingleton<ResponseInspectionTargetResolver>();
+        builder.Services.AddSingleton<ResponseInspectionDriftReviewCoordinator>();
         builder.Services.AddSingleton<IToolFingerprinter, ToolFingerprinter>();
         builder.Services.AddSingleton<ITrackedToolSchemaStore>(schemaStore);
         builder.Services.AddSingleton<ISchemaDriftReviewStore>(driftReviewStore);
