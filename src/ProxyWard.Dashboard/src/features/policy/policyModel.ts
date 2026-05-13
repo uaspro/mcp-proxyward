@@ -124,11 +124,16 @@ export function toolPolicyRowMatchesState(
   stateFilter: ToolDispositionFilter,
   defaultPolicy: ServerPolicyModel['tools']['default'],
 ): boolean {
-  if (stateFilter === 'all' || row.disposition === stateFilter) {
+  if (stateFilter === 'all') {
     return true
   }
 
-  return row.disposition === 'default' && getDefaultToolDisposition(defaultPolicy) === stateFilter
+  const defaultDisposition = getDefaultToolDisposition(defaultPolicy)
+  if (stateFilter === 'default') {
+    return row.disposition === 'default' || row.disposition === defaultDisposition
+  }
+
+  return row.disposition === stateFilter || (row.disposition === 'default' && defaultDisposition === stateFilter)
 }
 
 export function getDefaultToolDisposition(defaultPolicy: ServerPolicyModel['tools']['default']): ToolDisposition {

@@ -71,9 +71,16 @@ test('dashboard smoke covers overview, audit, drift, policy, and settings', asyn
   const toolStateFilter = page.getByRole('group', { name: 'Filter tools by state' })
   await toolStateFilter.getByRole('button', { name: 'Block', exact: true }).click()
   await expect(toolRows).toHaveCount(3)
+  await toolStateFilter.getByRole('button', { name: 'All', exact: true }).click()
+  for (let index = 0; index < 3; index += 1) {
+    await toolRows.nth(index).getByRole('button', { name: 'Allow', exact: true }).click()
+  }
+  await toolStateFilter.getByRole('button', { name: 'Default', exact: true }).click()
+  await expect(toolRows).toHaveCount(0)
   const toolsPanel = page.locator('.panel', { has: page.getByRole('heading', { name: 'Tools' }) })
   const defaultToolPolicyButtons = toolsPanel.locator('.policy-field').filter({ hasText: /^default/ }).locator('button')
   await defaultToolPolicyButtons.first().click()
+  await expect(toolRows).toHaveCount(3)
   await toolStateFilter.getByRole('button', { name: 'Allow', exact: true }).click()
   await expect(toolRows).toHaveCount(3)
   await toolStateFilter.getByRole('button', { name: 'All', exact: true }).click()
