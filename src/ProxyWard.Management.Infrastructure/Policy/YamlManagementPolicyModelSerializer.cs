@@ -72,7 +72,8 @@ public sealed class YamlManagementPolicyModelSerializer : IManagementPolicyModel
             {
                 ["allow"] = server.Tools?.Allow ?? [],
                 ["block"] = server.Tools?.Block ?? [],
-                ["default"] = server.Tools?.Default
+                ["default"] = server.Tools?.Default,
+                ["hide"] = server.Tools?.Hide ?? []
             },
             ["upstream"] = server.Upstream
         };

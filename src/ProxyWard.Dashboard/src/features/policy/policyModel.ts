@@ -8,7 +8,8 @@ export type NewServerPolicyForm = {
   upstream: string
 }
 
-export type ToolDisposition = 'default' | 'allow' | 'block'
+export type ToolDisposition = 'default' | 'allow' | 'block' | 'hide'
+export type ToolDispositionFilter = 'all' | ToolDisposition
 
 export type ToolPolicyRow = {
   name: string
@@ -62,8 +63,9 @@ export function createToolPolicyRows(
 
   const toolNames = new Set<string>([
     ...discovered.keys(),
-    ...server.tools.allow,
-    ...server.tools.block,
+    ...(server.tools.allow ?? []),
+    ...(server.tools.block ?? []),
+    ...(server.tools.hide ?? []),
   ])
 
   return [...toolNames]
@@ -117,16 +119,24 @@ export function toolPolicyRowMatchesSearch(row: ToolPolicyRow, searchQuery: stri
     || includesSearch(row.disposition, searchQuery)
 }
 
+export function toolPolicyRowMatchesState(row: ToolPolicyRow, stateFilter: ToolDispositionFilter): boolean {
+  return stateFilter === 'all' || row.disposition === stateFilter
+}
+
 export function getToolDispositionOrDefault(server: ServerPolicyModel | null, toolName: string): ToolDisposition {
   return server ? getToolDisposition(server, toolName) : 'default'
 }
 
 export function getToolDisposition(server: ServerPolicyModel, toolName: string): ToolDisposition {
-  if (server.tools.block.includes(toolName)) {
+  if ((server.tools.block ?? []).includes(toolName)) {
     return 'block'
   }
 
-  if (server.tools.allow.includes(toolName)) {
+  if ((server.tools.hide ?? []).includes(toolName)) {
+    return 'hide'
+  }
+
+  if ((server.tools.allow ?? []).includes(toolName)) {
     return 'allow'
   }
 
@@ -138,8 +148,9 @@ export function updateToolDisposition(
   toolName: string,
   disposition: ToolDisposition,
 ): ServerPolicyModel {
-  const allow = new Set(server.tools.allow.filter((name) => name !== toolName))
-  const block = new Set(server.tools.block.filter((name) => name !== toolName))
+  const allow = new Set((server.tools.allow ?? []).filter((name) => name !== toolName))
+  const block = new Set((server.tools.block ?? []).filter((name) => name !== toolName))
+  const hide = new Set((server.tools.hide ?? []).filter((name) => name !== toolName))
 
   if (disposition === 'allow') {
     allow.add(toolName)
@@ -149,12 +160,17 @@ export function updateToolDisposition(
     block.add(toolName)
   }
 
+  if (disposition === 'hide') {
+    hide.add(toolName)
+  }
+
   return {
     ...server,
     tools: {
       ...server.tools,
       allow: [...allow].sort((left, right) => left.localeCompare(right)),
       block: [...block].sort((left, right) => left.localeCompare(right)),
+      hide: [...hide].sort((left, right) => left.localeCompare(right)),
     },
   }
 }
@@ -348,6 +364,7 @@ export function createServerPolicyModel(form: NewServerPolicyForm): ServerPolicy
       default: 'deny',
       allow: [],
       block: [],
+      hide: [],
     },
     arguments: {
       paths: {

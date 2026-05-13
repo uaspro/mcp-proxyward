@@ -83,7 +83,8 @@ public sealed class ManagementPolicyReader
             Tools: new ManagementToolPolicyModel(
                 Default: FormatToolDefaultMode(server.Tools.Default),
                 Allow: server.Tools.Allow,
-                Block: server.Tools.Block),
+                Block: server.Tools.Block,
+                Hide: server.Tools.Hide),
             Arguments: new ManagementArgumentPolicyModel(
                 Paths: new ManagementPathArgumentPolicyModel(
                     AllowedRoots: server.Arguments.Paths.AllowedRoots,
@@ -145,7 +146,12 @@ public sealed class ManagementPolicyReader
         mode == ProxyWardMode.Enforce ? "enforce" : "audit";
 
     private static string FormatToolDefaultMode(ToolDefaultMode mode) =>
-        mode == ToolDefaultMode.Allow ? "allow" : "deny";
+        mode switch
+        {
+            ToolDefaultMode.Allow => "allow",
+            ToolDefaultMode.Hide => "hide",
+            _ => "deny"
+        };
 
     private static string FormatUnsupportedInspectionBehavior(UnsupportedInspectionBehavior behavior) =>
         behavior switch
@@ -234,7 +240,8 @@ public sealed record ManagementSecretsPolicyModel(
 public sealed record ManagementToolPolicyModel(
     string Default,
     IReadOnlyCollection<string> Allow,
-    IReadOnlyCollection<string> Block);
+    IReadOnlyCollection<string> Block,
+    IReadOnlyCollection<string> Hide);
 
 public sealed record ManagementArgumentPolicyModel(
     ManagementPathArgumentPolicyModel Paths,

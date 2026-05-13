@@ -3,7 +3,7 @@
 This project runs a local NBomber comparison between:
 
 - `clean-yarp-*`: a minimal ASP.NET Core + YARP reverse proxy with no ProxyWard middleware.
-- `proxyward-worst-case-*`: ProxyWard configured for audit mode, bounded JSON inspection, queued SQLite audit writes, path/host/private-network/command rules, redaction, telemetry activities/metrics, and a stale DB-backed schema version for `tools/list` drift checks.
+- `proxyward-worst-case-*`: ProxyWard configured for audit mode, bounded JSON inspection, queued SQLite audit writes, path/host/private-network/command rules, redaction, hidden and blocked tool policy states, telemetry activities/metrics, and a stale DB-backed schema version for `tools/list` drift checks.
 - `*-tools-list-gzip`: same `tools/list` schema surface with a gzip-encoded upstream response body, covering ProxyWard's response decoding path before schema inspection.
 
 Run from the repository root:

@@ -99,6 +99,10 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
             .EnumerateArray()
             .Select(value => value.GetString()!)
             .ToArray());
+        Assert.Equal(["repos.archive"], model.GetProperty("servers").GetProperty("github").GetProperty("tools").GetProperty("hide")
+            .EnumerateArray()
+            .Select(value => value.GetString()!)
+            .ToArray());
     }
 
     [Fact]
@@ -414,7 +418,8 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
                 "tools": {
                   "default": "allow",
                   "allow": [],
-                  "block": ["repos.read"]
+                  "block": ["repos.read"],
+                  "hide": ["repos.archive"]
                 },
                 "arguments": {
                   "paths": {

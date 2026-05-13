@@ -90,6 +90,78 @@ public class ToolPolicyEvaluatorTests
         Assert.Contains(PolicyReasonCodes.ToolBlocked, decision.Reasons);
     }
 
+    [Fact]
+    public void HiddenToolUnderDenyDefaultReturnsBlock()
+    {
+        var evaluator = new ToolPolicyEvaluator();
+        var tools = CreateTools(ToolDefaultMode.Deny, allow: [], block: [], hide: ["repos.search"]);
+
+        var decision = evaluator.Evaluate(ProxyWardMode.Enforce, tools, "repos.search");
+
+        Assert.Equal(PolicyDecisionType.Block, decision.Type);
+        Assert.Contains(PolicyReasonCodes.ToolBlocked, decision.Reasons);
+    }
+
+    [Fact]
+    public void HiddenToolInAuditModeReturnsWouldBlock()
+    {
+        var evaluator = new ToolPolicyEvaluator();
+        var tools = CreateTools(ToolDefaultMode.Allow, allow: [], block: [], hide: ["repos.search"]);
+
+        var decision = evaluator.Evaluate(ProxyWardMode.Audit, tools, "repos.search");
+
+        Assert.Equal(PolicyDecisionType.WouldBlock, decision.Type);
+        Assert.Contains(PolicyReasonCodes.ToolBlocked, decision.Reasons);
+    }
+
+    [Fact]
+    public void HiddenToolWinsOverAllowList()
+    {
+        var evaluator = new ToolPolicyEvaluator();
+        var tools = CreateTools(ToolDefaultMode.Deny, allow: ["repos.search"], block: [], hide: ["repos.search"]);
+
+        var decision = evaluator.Evaluate(ProxyWardMode.Enforce, tools, "repos.search");
+
+        Assert.Equal(PolicyDecisionType.Block, decision.Type);
+        Assert.Contains(PolicyReasonCodes.ToolBlocked, decision.Reasons);
+    }
+
+    [Fact]
+    public void HideDefaultWithUnlistedToolReturnsBlockToolNotAllowed()
+    {
+        var evaluator = new ToolPolicyEvaluator();
+        var tools = CreateTools(ToolDefaultMode.Hide, allow: [], block: []);
+
+        var decision = evaluator.Evaluate(ProxyWardMode.Enforce, tools, "repos.search");
+
+        Assert.Equal(PolicyDecisionType.Block, decision.Type);
+        Assert.Contains(PolicyReasonCodes.ToolNotAllowed, decision.Reasons);
+    }
+
+    [Fact]
+    public void HideDefaultWithAllowedToolReturnsAllow()
+    {
+        var evaluator = new ToolPolicyEvaluator();
+        var tools = CreateTools(ToolDefaultMode.Hide, allow: ["repos.search"], block: []);
+
+        var decision = evaluator.Evaluate(ProxyWardMode.Enforce, tools, "repos.search");
+
+        Assert.Equal(PolicyDecisionType.Allow, decision.Type);
+        Assert.Empty(decision.Reasons);
+    }
+
+    [Fact]
+    public void HideDefaultWithBlockedToolReturnsBlock()
+    {
+        var evaluator = new ToolPolicyEvaluator();
+        var tools = CreateTools(ToolDefaultMode.Hide, allow: [], block: ["repos.delete"]);
+
+        var decision = evaluator.Evaluate(ProxyWardMode.Enforce, tools, "repos.delete");
+
+        Assert.Equal(PolicyDecisionType.Block, decision.Type);
+        Assert.Contains(PolicyReasonCodes.ToolBlocked, decision.Reasons);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -147,6 +219,7 @@ public class ToolPolicyEvaluatorTests
     private static ToolPolicy CreateTools(
         ToolDefaultMode @default,
         IReadOnlyCollection<string> allow,
-        IReadOnlyCollection<string> block) =>
-        new(@default, allow, block);
+        IReadOnlyCollection<string> block,
+        IReadOnlyCollection<string>? hide = null) =>
+        new(@default, allow, block, hide ?? []);
 }

@@ -56,7 +56,8 @@ public sealed record SecretsPolicy(
 public sealed record ToolPolicy(
     ToolDefaultMode Default,
     IReadOnlyCollection<string> Allow,
-    IReadOnlyCollection<string> Block);
+    IReadOnlyCollection<string> Block,
+    IReadOnlyCollection<string> Hide);
 
 public sealed record ArgumentPolicy(
     PathArgumentPolicy Paths,

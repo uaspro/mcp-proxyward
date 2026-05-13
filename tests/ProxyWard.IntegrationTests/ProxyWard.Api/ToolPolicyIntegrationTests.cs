@@ -170,6 +170,103 @@ public class ToolPolicyIntegrationTests
     }
 
     [Fact]
+    public async Task EnforceModeHiddenToolReturnsJsonRpcErrorAndDoesNotReachUpstream()
+    {
+        await using var upstream = await StartUpstreamAsync();
+        var dbPath = NewTempSqlitePath();
+        var policyPath = WriteTempPolicy(CreatePolicy(
+            mode: "enforce",
+            upstream.BaseAddress,
+            dbPath,
+            toolDefault: "allow",
+            allow: [],
+            block: [],
+            hide: ["repos.search"]));
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        var body = """{"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"repos.search","arguments":{"q":"cached"}}}""";
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(0, upstream.RequestCount);
+
+            var responseBody = await response.Content.ReadAsStringAsync();
+            using var payload = JsonDocument.Parse(responseBody);
+            Assert.Equal(32, payload.RootElement.GetProperty("id").GetInt32());
+            Assert.Contains(
+                payload.RootElement.GetProperty("error").GetProperty("data").GetProperty("reasons").EnumerateArray(),
+                reason => reason.GetString() == "tool_blocked");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
+        Assert.Equal("block", row.Decision);
+        Assert.Equal("repos.search", row.ToolName);
+        Assert.Contains("tool_blocked", row.Reasons, StringComparison.Ordinal);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task EnforceModeHideDefaultUnlistedToolReturnsJsonRpcErrorAndDoesNotReachUpstream()
+    {
+        await using var upstream = await StartUpstreamAsync();
+        var dbPath = NewTempSqlitePath();
+        var policyPath = WriteTempPolicy(CreatePolicy(
+            mode: "enforce",
+            upstream.BaseAddress,
+            dbPath,
+            toolDefault: "hide",
+            allow: ["repos.search"],
+            block: ["shell.exec"]));
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        var body = """{"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"issues.list","arguments":{"state":"open"}}}""";
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(0, upstream.RequestCount);
+
+            var responseBody = await response.Content.ReadAsStringAsync();
+            using var payload = JsonDocument.Parse(responseBody);
+            Assert.Equal(33, payload.RootElement.GetProperty("id").GetInt32());
+            Assert.Contains(
+                payload.RootElement.GetProperty("error").GetProperty("data").GetProperty("reasons").EnumerateArray(),
+                reason => reason.GetString() == "tool_not_allowed");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
+        Assert.Equal("block", row.Decision);
+        Assert.Equal("issues.list", row.ToolName);
+        Assert.Contains("tool_not_allowed", row.Reasons, StringComparison.Ordinal);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
     public async Task EnforceModeBlockedToolPreservesStringJsonRpcId()
     {
         await using var upstream = await StartUpstreamAsync();
@@ -580,10 +677,13 @@ public class ToolPolicyIntegrationTests
         string sqlitePath,
         string toolDefault,
         IReadOnlyCollection<string> allow,
-        IReadOnlyCollection<string> block)
+        IReadOnlyCollection<string> block,
+        IReadOnlyCollection<string>? hide = null)
     {
         var allowBlock = allow.Count == 0 ? "allow: []" : "allow:\n              - " + string.Join("\n              - ", allow);
         var blockBlock = block.Count == 0 ? "block: []" : "block:\n              - " + string.Join("\n              - ", block);
+        var hiddenTools = hide ?? [];
+        var hideBlock = hiddenTools.Count == 0 ? "hide: []" : "hide:\n              - " + string.Join("\n              - ", hiddenTools);
 
         return $$"""
         mode: {{mode}}
@@ -615,6 +715,7 @@ public class ToolPolicyIntegrationTests
               default: {{toolDefault}}
               {{allowBlock}}
               {{blockBlock}}
+              {{hideBlock}}
             arguments:
               paths:
                 allowedRoots:

@@ -18,6 +18,7 @@ using ProxyWard.Api.Observability;
 using ProxyWard.Core.Policies;
 using ProxyWard.Locking.Persistence;
 using ProxyWard.Locking.Tools;
+using ProxyWard.Policy.Configuration;
 
 namespace ProxyWard.IntegrationTests;
 
@@ -63,6 +64,257 @@ public class ToolsListResponseInspectionIntegrationTests
         Assert.Equal(2, summary.GetProperty("toolCount").GetInt32());
         var toolNames = summary.GetProperty("toolNames").EnumerateArray().Select(name => name.GetString()!).ToArray();
         Assert.Equal(["issues.list", "repos.search"], toolNames);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task HiddenToolsAreRemovedFromToolsListResponseWithoutBlocking()
+    {
+        const string responseBody = """
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}}]}}
+            """;
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        var dbPath = NewTempSqlitePath();
+        var policyYaml = CreatePolicyWithHiddenTools(
+            "enforce",
+            "warn",
+            4096,
+            upstream.BaseAddress,
+            dbPath,
+            ["repos.search"]);
+        Assert.Equal(["repos.search"], ProxyWardPolicyLoader.Load(policyYaml).Servers["github"].Tools.Hide);
+        var policyPath = WriteTempPolicy(policyYaml);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync();
+            using var filtered = JsonDocument.Parse(body);
+            var tools = filtered.RootElement
+                .GetProperty("result")
+                .GetProperty("tools")
+                .EnumerateArray()
+                .Select(tool => tool.GetProperty("name").GetString()!)
+                .ToArray();
+            Assert.Equal(["issues.list"], tools);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath));
+        Assert.Equal("allow", row.Decision);
+        Assert.Equal(string.Empty, row.Reasons);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task HiddenToolsAreRemovedFromGzipToolsListResponseAndEncodingIsPreserved()
+    {
+        const string responseBody = """
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}}]}}
+            """;
+        await using var upstream = await StartUpstreamAsync(context => WriteCompressedResponseAsync(context, responseBody, "application/json", "gzip"));
+        var dbPath = NewTempSqlitePath();
+        var policyYaml = CreatePolicyWithHiddenTools(
+            "enforce",
+            "warn",
+            4096,
+            upstream.BaseAddress,
+            dbPath,
+            ["repos.search"]);
+        var policyPath = WriteTempPolicy(policyYaml);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(["gzip"], response.Content.Headers.ContentEncoding.ToArray());
+            var body = await ReadGzipStringAsync(response);
+            using var filtered = JsonDocument.Parse(body);
+            var tools = filtered.RootElement
+                .GetProperty("result")
+                .GetProperty("tools")
+                .EnumerateArray()
+                .Select(tool => tool.GetProperty("name").GetString()!)
+                .ToArray();
+            Assert.Equal(["issues.list"], tools);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath));
+        Assert.Equal("allow", row.Decision);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task HiddenToolsAreRemovedFromEventStreamToolsListResponseWithoutBlocking()
+    {
+        const string responseBody = """
+            event: endpoint
+            data: /mcp/messages?sessionId=huggingface-co
+
+            event: message
+            data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}}]}}
+
+            """;
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
+        var dbPath = NewTempSqlitePath();
+        var policyYaml = CreatePolicyWithHiddenTools(
+            "enforce",
+            "warn",
+            4096,
+            upstream.BaseAddress,
+            dbPath,
+            ["repos.search"]);
+        var policyPath = WriteTempPolicy(policyYaml);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.Contains("event: endpoint", body, StringComparison.Ordinal);
+            Assert.Contains("issues.list", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("repos.search", body, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath));
+        Assert.Equal("allow", row.Decision);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task HideDefaultRemovesDefaultToolsFromToolsListResponse()
+    {
+        const string responseBody = """
+            {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}},{"name":"repos.delete","description":"Delete repository","inputSchema":{"type":"object"}}]}}
+            """;
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        var dbPath = NewTempSqlitePath();
+        var policyYaml = CreatePolicyWithToolDefault(
+            "enforce",
+            "warn",
+            4096,
+            upstream.BaseAddress,
+            dbPath,
+            toolDefault: "hide",
+            allowedTools: ["issues.list"],
+            blockedTools: ["repos.delete"]);
+        var policyPath = WriteTempPolicy(policyYaml);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync();
+            using var filtered = JsonDocument.Parse(body);
+            var tools = filtered.RootElement
+                .GetProperty("result")
+                .GetProperty("tools")
+                .EnumerateArray()
+                .Select(tool => tool.GetProperty("name").GetString()!)
+                .ToArray();
+            Assert.Equal(["issues.list", "repos.delete"], tools);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath));
+        Assert.Equal("allow", row.Decision);
+
+        DeleteIfExists(dbPath);
+    }
+
+    [Fact]
+    public async Task HideDefaultRemovesDefaultToolsFromEventStreamToolsListResponse()
+    {
+        const string responseBody = """
+            event: message
+            data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}},{"name":"repos.delete","description":"Delete repository","inputSchema":{"type":"object"}}]}}
+
+            """;
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
+        var dbPath = NewTempSqlitePath();
+        var policyYaml = CreatePolicyWithToolDefault(
+            "enforce",
+            "warn",
+            4096,
+            upstream.BaseAddress,
+            dbPath,
+            toolDefault: "hide",
+            allowedTools: ["issues.list"],
+            blockedTools: ["repos.delete"]);
+        var policyPath = WriteTempPolicy(policyYaml);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.PostAsync(
+                "/github/mcp",
+                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.DoesNotContain("repos.search", body, StringComparison.Ordinal);
+            Assert.Contains("issues.list", body, StringComparison.Ordinal);
+            Assert.Contains("repos.delete", body, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+
+        var row = Assert.Single(ReadAuditEvents(dbPath));
+        Assert.Equal("allow", row.Decision);
 
         DeleteIfExists(dbPath);
     }
@@ -1004,6 +1256,14 @@ public class ToolsListResponseInspectionIntegrationTests
         await context.Response.Body.WriteAsync(compressedBytes);
     }
 
+    private static async Task<string> ReadGzipStringAsync(HttpResponseMessage response)
+    {
+        await using var source = await response.Content.ReadAsStreamAsync();
+        await using var gzip = new GZipStream(source, CompressionMode.Decompress);
+        using var reader = new StreamReader(gzip, Encoding.UTF8);
+        return await reader.ReadToEndAsync();
+    }
+
     private static async Task<UpstreamApp> StartUpstreamAsync(Func<HttpContext, Task> handler)
     {
         var port = GetFreePort();
@@ -1265,6 +1525,52 @@ public class ToolsListResponseInspectionIntegrationTests
                 dangerous:
                   - rm
         """;
+
+    private static string CreatePolicyWithHiddenTools(
+        string mode,
+        string unsupportedStreaming,
+        int maxBodyBytes,
+        string upstreamBaseAddress,
+        string sqlitePath,
+        IReadOnlyCollection<string> hiddenTools)
+    {
+        var hiddenToolLines = string.Join(
+            "\n",
+            hiddenTools.Select(tool => $"        - {tool}"));
+        return CreatePolicy(mode, unsupportedStreaming, maxBodyBytes, upstreamBaseAddress, sqlitePath)
+            .Replace(
+                "      block: []",
+                $"      block: []\n      hide:\n{hiddenToolLines}",
+                StringComparison.Ordinal);
+    }
+
+    private static string CreatePolicyWithToolDefault(
+        string mode,
+        string unsupportedStreaming,
+        int maxBodyBytes,
+        string upstreamBaseAddress,
+        string sqlitePath,
+        string toolDefault,
+        IReadOnlyCollection<string> allowedTools,
+        IReadOnlyCollection<string> blockedTools)
+    {
+        return CreatePolicy(mode, unsupportedStreaming, maxBodyBytes, upstreamBaseAddress, sqlitePath)
+            .Replace("      default: deny", $"      default: {toolDefault}", StringComparison.Ordinal)
+            .Replace("      allow: []", FormatToolList("allow", allowedTools), StringComparison.Ordinal)
+            .Replace("      block: []", FormatToolList("block", blockedTools), StringComparison.Ordinal);
+    }
+
+    private static string FormatToolList(string key, IReadOnlyCollection<string> tools)
+    {
+        if (tools.Count == 0)
+        {
+            return $"      {key}: []";
+        }
+
+        return $"      {key}:\n" + string.Join(
+            "\n",
+            tools.Select(tool => $"        - {tool}"));
+    }
 
     private static string CreateSingleServerPolicy(
         string serverId,

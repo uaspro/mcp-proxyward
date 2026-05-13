@@ -97,6 +97,10 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
             .EnumerateArray()
             .Select(value => value.GetString()!)
             .ToArray());
+        Assert.Equal(["repos.archive"], github.GetProperty("tools").GetProperty("hide")
+            .EnumerateArray()
+            .Select(value => value.GetString()!)
+            .ToArray());
         Assert.Equal(["/tmp", "/workspace"], github.GetProperty("arguments").GetProperty("paths").GetProperty("allowedRoots")
             .EnumerateArray()
             .Select(value => value.GetString()!)
@@ -187,6 +191,8 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
                 - repos.read
               block:
                 - repos.delete
+              hide:
+                - repos.archive
             arguments:
               paths:
                 allowedRoots:

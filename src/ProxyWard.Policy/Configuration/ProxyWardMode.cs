@@ -9,7 +9,8 @@ public enum ProxyWardMode
 public enum ToolDefaultMode
 {
     Allow,
-    Deny
+    Deny,
+    Hide
 }
 
 public enum UnsupportedInspectionBehavior

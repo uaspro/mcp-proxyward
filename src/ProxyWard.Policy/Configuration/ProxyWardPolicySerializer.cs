@@ -93,7 +93,8 @@ public static class ProxyWardPolicySerializer
             {
                 ["allow"] = server.Tools.Allow,
                 ["block"] = server.Tools.Block,
-                ["default"] = FormatToolDefault(server.Tools.Default)
+                ["default"] = FormatToolDefault(server.Tools.Default),
+                ["hide"] = server.Tools.Hide
             },
             ["upstream"] = server.Upstream.ToString()
         };
@@ -128,7 +129,12 @@ public static class ProxyWardPolicySerializer
         mode == ProxyWardMode.Enforce ? "enforce" : "audit";
 
     private static string FormatToolDefault(ToolDefaultMode mode) =>
-        mode == ToolDefaultMode.Allow ? "allow" : "deny";
+        mode switch
+        {
+            ToolDefaultMode.Allow => "allow",
+            ToolDefaultMode.Hide => "hide",
+            _ => "deny"
+        };
 
     private static string FormatUnsupportedBehavior(UnsupportedInspectionBehavior behavior) =>
         behavior switch

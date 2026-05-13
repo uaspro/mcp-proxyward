@@ -19,6 +19,9 @@ namespace ProxyWard.PerformanceTests;
 
 internal static class WorstCaseProxyWardHost
 {
+    private const string HiddenToolName = "tool_000";
+    private const string BlockedToolName = "tool_001";
+
     public static async Task<StartedHost> StartAsync(
         string upstreamBaseAddress,
         PerformanceOptions options)
@@ -112,7 +115,10 @@ internal static class WorstCaseProxyWardHost
             tools:
               default: allow
               allow: []
-              block: []
+              block:
+                - {{BlockedToolName}}
+              hide:
+                - {{HiddenToolName}}
             arguments:
               paths:
                 allowedRoots:

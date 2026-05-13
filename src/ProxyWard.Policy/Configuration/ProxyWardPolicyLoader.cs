@@ -162,7 +162,7 @@ public static class ProxyWardPolicyLoader
 
                 if (server.Tools is not null && !TryParseToolDefault(server.Tools.Default, out _))
                 {
-                    errors.Add($"{prefix}.tools.default must be 'allow' or 'deny'");
+                    errors.Add($"{prefix}.tools.default must be 'allow', 'deny', or 'hide'");
                 }
 
                 ValidateSecrets(prefix, server.Secrets, errors);
@@ -320,7 +320,8 @@ public static class ProxyWardPolicyLoader
                 new ToolPolicy(
                     ParseToolDefault(tools.Default),
                     NormalizeList(tools.Allow),
-                    NormalizeList(tools.Block)),
+                    NormalizeList(tools.Block),
+                    NormalizeList(tools.Hide)),
                 new ArgumentPolicy(
                     new PathArgumentPolicy(
                         NormalizeList(paths.AllowedRoots),
@@ -444,7 +445,8 @@ public static class ProxyWardPolicyLoader
             {
                 ["allow"] = server.Tools.Allow,
                 ["block"] = server.Tools.Block,
-                ["default"] = FormatToolDefault(server.Tools.Default)
+                ["default"] = FormatToolDefault(server.Tools.Default),
+                ["hide"] = server.Tools.Hide
             },
             ["secrets"] = new SortedDictionary<string, object?>(StringComparer.Ordinal)
             {
@@ -570,6 +572,7 @@ public static class ProxyWardPolicyLoader
         {
             "deny" => true,
             "allow" => Set(out mode, ToolDefaultMode.Allow),
+            "hide" => Set(out mode, ToolDefaultMode.Hide),
             _ => false
         };
     }
@@ -629,7 +632,12 @@ public static class ProxyWardPolicyLoader
         mode == ProxyWardMode.Audit ? "audit" : "enforce";
 
     private static string FormatToolDefault(ToolDefaultMode mode) =>
-        mode == ToolDefaultMode.Allow ? "allow" : "deny";
+        mode switch
+        {
+            ToolDefaultMode.Allow => "allow",
+            ToolDefaultMode.Hide => "hide",
+            _ => "deny"
+        };
 
     private static string FormatUnsupportedBehavior(UnsupportedInspectionBehavior behavior) =>
         behavior switch
@@ -720,6 +728,7 @@ public static class ProxyWardPolicyLoader
         public string? Default { get; set; } = "deny";
         public List<string>? Allow { get; set; }
         public List<string>? Block { get; set; }
+        public List<string>? Hide { get; set; }
     }
 
     private sealed class ArgumentPolicyYaml

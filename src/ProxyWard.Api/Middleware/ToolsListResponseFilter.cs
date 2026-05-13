@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -6,7 +7,10 @@ namespace ProxyWard.Api.Middleware;
 
 internal static class ToolsListResponseFilter
 {
-    public static HashSet<string> CreateBlockedToolNameSet(IEnumerable<string?> toolNames)
+    private const string JsonContentType = "application/json";
+    private const string EventStreamContentType = "text/event-stream";
+
+    public static HashSet<string> CreateToolNameSet(IEnumerable<string?> toolNames)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (var toolName in toolNames)
@@ -20,23 +24,47 @@ internal static class ToolsListResponseFilter
         return names;
     }
 
-    public static bool TryCreateFilteredBody(
+    public static bool TryCreateFilteredResponse(
         byte[] body,
         string? contentType,
         string? contentEncoding,
         int maxDecodedBytes,
-        IReadOnlySet<string> blockedToolNames,
-        out byte[] filteredBody)
+        IReadOnlySet<string> removedToolNames,
+        out FilteredToolsListResponse filteredResponse)
     {
-        filteredBody = [];
-        if (blockedToolNames.Count == 0 || IsEventStream(contentType))
+        filteredResponse = default!;
+        return removedToolNames.Count != 0
+            && TryCreateFilteredResponse(
+                body,
+                contentType,
+                contentEncoding,
+                maxDecodedBytes,
+                removedToolNames.Contains,
+                out filteredResponse);
+    }
+
+    public static bool TryCreateFilteredResponse(
+        byte[] body,
+        string? contentType,
+        string? contentEncoding,
+        int maxDecodedBytes,
+        Func<string, bool> shouldRemoveTool,
+        out FilteredToolsListResponse filteredResponse)
+    {
+        filteredResponse = default!;
+        if (!ResponseBodyDecoder.TryDecode(body, contentEncoding, maxDecodedBytes, out var decodedBody))
         {
             return false;
         }
 
-        if (!ResponseBodyDecoder.TryDecode(body, contentEncoding, maxDecodedBytes, out var decodedBody))
+        if (IsEventStream(contentType))
         {
-            return false;
+            return TryCreateFilteredEventStreamResponse(
+                decodedBody,
+                contentType,
+                contentEncoding,
+                shouldRemoveTool,
+                out filteredResponse);
         }
 
         JsonNode? root;
@@ -50,37 +78,112 @@ internal static class ToolsListResponseFilter
             return false;
         }
 
-        var foundToolsList = root switch
-        {
-            JsonObject response => FilterResponse(response, blockedToolNames),
-            JsonArray batch => FilterBatch(batch, blockedToolNames),
-            _ => false
-        };
+        var foundToolsList = FilterToolsListPayload(root, shouldRemoveTool);
 
         if (!foundToolsList || root is null)
         {
             return false;
         }
 
-        filteredBody = Encoding.UTF8.GetBytes(root.ToJsonString());
+        var filteredBody = Encoding.UTF8.GetBytes(root.ToJsonString());
+        filteredResponse = CreateFilteredResponse(filteredBody, JsonContentType, contentEncoding);
         return true;
     }
 
-    private static bool FilterBatch(JsonArray batch, IReadOnlySet<string> blockedToolNames)
+    private static FilteredToolsListResponse CreateFilteredResponse(
+        byte[] decodedBody,
+        string contentType,
+        string? contentEncoding)
+    {
+        if (TryCreateGzipFilteredResponse(decodedBody, contentType, contentEncoding, out var gzipResponse))
+        {
+            return gzipResponse;
+        }
+
+        return new FilteredToolsListResponse(decodedBody, contentType, ContentEncoding: null);
+    }
+
+    private static bool TryCreateGzipFilteredResponse(
+        byte[] decodedBody,
+        string contentType,
+        string? contentEncoding,
+        out FilteredToolsListResponse filteredResponse)
+    {
+        filteredResponse = default!;
+        if (string.IsNullOrWhiteSpace(contentEncoding))
+        {
+            return false;
+        }
+
+        var encodings = contentEncoding
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (encodings.Length != 1)
+        {
+            return false;
+        }
+
+        var encoding = encodings[0];
+        if (!string.Equals(encoding, "gzip", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(encoding, "x-gzip", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        using var compressed = new MemoryStream();
+        using (var gzip = new GZipStream(compressed, CompressionLevel.Fastest, leaveOpen: true))
+        {
+            gzip.Write(decodedBody);
+        }
+
+        filteredResponse = new FilteredToolsListResponse(compressed.ToArray(), contentType, encoding);
+        return true;
+    }
+
+    private static bool TryCreateFilteredEventStreamResponse(
+        byte[] decodedBody,
+        string? contentType,
+        string? contentEncoding,
+        Func<string, bool> shouldRemoveTool,
+        out FilteredToolsListResponse filteredResponse)
+    {
+        filteredResponse = default!;
+        var eventStream = Encoding.UTF8.GetString(decodedBody);
+        if (!ToolsListEventStreamFilter.TryFilter(eventStream, shouldRemoveTool, out var filteredEventStream))
+        {
+            return false;
+        }
+
+        var filteredBody = Encoding.UTF8.GetBytes(filteredEventStream);
+        filteredResponse = CreateFilteredResponse(
+            filteredBody,
+            string.IsNullOrWhiteSpace(contentType) ? EventStreamContentType : contentType,
+            contentEncoding);
+        return true;
+    }
+
+    internal static bool FilterToolsListPayload(JsonNode? root, Func<string, bool> shouldRemoveTool) =>
+        root switch
+        {
+            JsonObject response => FilterResponse(response, shouldRemoveTool),
+            JsonArray batch => FilterBatch(batch, shouldRemoveTool),
+            _ => false
+        };
+
+    private static bool FilterBatch(JsonArray batch, Func<string, bool> shouldRemoveTool)
     {
         var foundToolsList = false;
         foreach (var item in batch)
         {
             if (item is JsonObject response)
             {
-                foundToolsList |= FilterResponse(response, blockedToolNames);
+                foundToolsList |= FilterResponse(response, shouldRemoveTool);
             }
         }
 
         return foundToolsList;
     }
 
-    private static bool FilterResponse(JsonObject response, IReadOnlySet<string> blockedToolNames)
+    private static bool FilterResponse(JsonObject response, Func<string, bool> shouldRemoveTool)
     {
         if (response["result"] is not JsonObject result
             || result["tools"] is not JsonArray tools)
@@ -92,7 +195,7 @@ internal static class ToolsListResponseFilter
         {
             if (tools[index] is JsonObject tool
                 && TryGetString(tool, "name", out var toolName)
-                && blockedToolNames.Contains(toolName))
+                && shouldRemoveTool(toolName))
             {
                 tools.RemoveAt(index);
             }

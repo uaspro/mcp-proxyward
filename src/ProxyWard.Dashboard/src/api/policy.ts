@@ -67,9 +67,10 @@ export type SecretsPolicy = {
 }
 
 export type ToolPolicy = {
-  default: 'allow' | 'deny' | string
+  default: 'allow' | 'deny' | 'hide' | string
   allow: string[]
   block: string[]
+  hide: string[]
 }
 
 export type ArgumentPolicy = {

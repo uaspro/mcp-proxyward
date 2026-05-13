@@ -33,7 +33,7 @@ public sealed class ResponseInspectionMiddleware(
     private const int MaxDetailedDriftReviewsInAudit = 20;
     private const int MaxDriftReviewIdsInAudit = 20;
 
-    private static readonly TimeSpan ToolsListInspectionCacheTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ToolsListInspectionCacheTtl = TimeSpan.FromMinutes(2);
 
     private static readonly EventId ResponseInspectionEvent = new(1301, "ResponseInspection");
     private static readonly EventId AuditSinkFailureEvent = new(1302, "AuditSinkFailure");
@@ -126,11 +126,13 @@ public sealed class ResponseInspectionMiddleware(
         var toolsListCacheKey = CreateToolsListInspectionCacheKey(server, policy, context.Response.ContentType, body);
         ToolListExtractionResult result;
         ToolSurfaceDriftResult driftResult;
+        FilteredToolsListResponse? visibleToolsListBody = null;
         if (_toolsListInspectionCache.TryGetValue(toolsListCacheKey, out var cachedInspection)
             && DateTimeOffset.UtcNow - cachedInspection.CachedAtUtc <= ToolsListInspectionCacheTtl)
         {
             result = ToolListExtractionResult.Extracted(cachedInspection.Tools);
             driftResult = cachedInspection.DriftResult;
+            visibleToolsListBody = cachedInspection.VisibleToolsListBody;
         }
         else
         {
@@ -154,7 +156,7 @@ public sealed class ResponseInspectionMiddleware(
                     stopwatch.ElapsedMilliseconds,
                     CreateToolSummary([], inspectionSkipReason: result.SkipReason));
 
-                await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
+                await ToolsListResponseWriter.WriteVisibleOrOriginalAsync(context, server, policy, body, capture, originalBody);
                 return;
             }
 
@@ -173,14 +175,15 @@ public sealed class ResponseInspectionMiddleware(
                     stopwatch.ElapsedMilliseconds,
                     CreateToolSummary([]));
 
-                await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
+                await ToolsListResponseWriter.WriteVisibleOrOriginalAsync(context, server, policy, body, capture, originalBody);
                 return;
             }
 
             driftResult = await EvaluateDriftAsync(context, policy, server, result.Tools);
             if (!driftResult.Skipped && !driftResult.HasDrift)
             {
-                StoreToolsListInspectionCache(toolsListCacheKey, result.Tools, driftResult);
+                visibleToolsListBody = ToolsListResponseWriter.TryCreateVisibleResponse(context, server, policy, body);
+                StoreToolsListInspectionCache(toolsListCacheKey, result.Tools, driftResult, visibleToolsListBody);
             }
         }
 
@@ -202,7 +205,7 @@ public sealed class ResponseInspectionMiddleware(
                 stopwatch.ElapsedMilliseconds,
                 CreateToolSummary(result.Tools, driftResult));
 
-            await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
+            await ToolsListResponseWriter.WriteVisibleOrOriginalAsync(context, server, policy, body, capture, originalBody);
             return;
         }
 
@@ -225,7 +228,8 @@ public sealed class ResponseInspectionMiddleware(
             await driftReviews.RecordDiffMetadataAsync(context, server, driftResult, driftReviewResults);
             if (driftResult.WasNewVersion)
             {
-                StoreToolsListInspectionCache(toolsListCacheKey, result.Tools, driftResult);
+                visibleToolsListBody = ToolsListResponseWriter.TryCreateVisibleResponse(context, server, policy, body);
+                StoreToolsListInspectionCache(toolsListCacheKey, result.Tools, driftResult, visibleToolsListBody);
             }
 
             var decision = policy.Mode == ProxyWardMode.Enforce
@@ -257,17 +261,18 @@ public sealed class ResponseInspectionMiddleware(
 
             if (decision == AuditDecision.Block)
             {
-                var blockedToolNames = ToolsListResponseFilter.CreateBlockedToolNameSet(
+                var removedToolNames = ToolsListResponseWriter.CreateHiddenAwareToolNameSet(
+                    server,
                     driftResult.Drifts.Select(drift => drift.ToolName));
-                if (ToolsListResponseFilter.TryCreateFilteredBody(
+                if (ToolsListResponseFilter.TryCreateFilteredResponse(
                     body,
                     context.Response.ContentType,
                     context.Response.Headers["Content-Encoding"].ToString(),
                     policy.Inspection.MaxBodyBytes,
-                    blockedToolNames,
+                    removedToolNames,
                     out var filteredBody))
                 {
-                    await WriteFilteredToolsListAsync(context, originalBody, filteredBody);
+                    await ToolsListResponseWriter.WriteFilteredAsync(context, originalBody, filteredBody);
                     return;
                 }
 
@@ -283,7 +288,7 @@ public sealed class ResponseInspectionMiddleware(
                 return;
             }
 
-            await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
+            await ToolsListResponseWriter.WriteVisibleOrOriginalAsync(context, server, policy, body, capture, originalBody, visibleToolsListBody);
             return;
         }
 
@@ -328,17 +333,18 @@ public sealed class ResponseInspectionMiddleware(
 
             if (decision == AuditDecision.Block)
             {
-                var blockedToolNames = ToolsListResponseFilter.CreateBlockedToolNameSet(
+                var removedToolNames = ToolsListResponseWriter.CreateHiddenAwareToolNameSet(
+                    server,
                     currentUnapprovedReviews.Select(review => review.Row.ToolName));
-                if (ToolsListResponseFilter.TryCreateFilteredBody(
+                if (ToolsListResponseFilter.TryCreateFilteredResponse(
                     body,
                     context.Response.ContentType,
                     context.Response.Headers["Content-Encoding"].ToString(),
                     policy.Inspection.MaxBodyBytes,
-                    blockedToolNames,
+                    removedToolNames,
                     out var filteredBody))
                 {
-                    await WriteFilteredToolsListAsync(context, originalBody, filteredBody);
+                    await ToolsListResponseWriter.WriteFilteredAsync(context, originalBody, filteredBody);
                     return;
                 }
 
@@ -367,7 +373,7 @@ public sealed class ResponseInspectionMiddleware(
                 return;
             }
 
-            await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
+            await ToolsListResponseWriter.WriteVisibleOrOriginalAsync(context, server, policy, body, capture, originalBody, visibleToolsListBody);
             return;
         }
 
@@ -384,7 +390,7 @@ public sealed class ResponseInspectionMiddleware(
             stopwatch.ElapsedMilliseconds,
             CreateToolSummary(result.Tools, driftResult));
 
-        await capture.CopyBufferedBodyToAsync(originalBody, context.RequestAborted);
+        await ToolsListResponseWriter.WriteVisibleOrOriginalAsync(context, server, policy, body, capture, originalBody, visibleToolsListBody);
     }
 
     private ToolListExtractionResult ExtractToolsListResponse(
@@ -396,20 +402,6 @@ public sealed class ResponseInspectionMiddleware(
         return ResponseBodyDecoder.TryDecode(body, contentEncoding, maxDecodedBytes, out var decodedBody)
             ? extractor.Extract(decodedBody, contentType)
             : ToolListExtractionResult.Failed(PolicyReasonCodes.InspectionUnsupported);
-    }
-
-    private static async Task WriteFilteredToolsListAsync(
-        HttpContext context,
-        Stream destination,
-        byte[] body)
-    {
-        context.Response.ContentType = "application/json";
-        context.Response.ContentLength = body.Length;
-        context.Response.Headers.Remove("Content-Encoding");
-        context.Response.Headers.Remove("ETag");
-        context.Response.Headers.Remove("Content-MD5");
-
-        await destination.WriteAsync(body, context.RequestAborted);
     }
 
     private static async Task WriteUnfilterableToolsListBlockAsync(
@@ -673,7 +665,8 @@ public sealed class ResponseInspectionMiddleware(
     private void StoreToolsListInspectionCache(
         string cacheKey,
         IReadOnlyList<DiscoveredTool> tools,
-        ToolSurfaceDriftResult driftResult)
+        ToolSurfaceDriftResult driftResult,
+        FilteredToolsListResponse? visibleToolsListBody)
     {
         var cachedDriftResult = driftResult is { HasDrift: true, WasNewVersion: true }
             ? ToolSurfaceDriftResult.NoDrift(driftResult.Version, wasNewVersion: false)
@@ -682,7 +675,8 @@ public sealed class ResponseInspectionMiddleware(
         _toolsListInspectionCache[cacheKey] = new ToolsListInspectionCacheEntry(
             DateTimeOffset.UtcNow,
             tools,
-            cachedDriftResult);
+            cachedDriftResult,
+            visibleToolsListBody);
     }
 
     private static string CreateToolsListInspectionCacheKey(
@@ -1051,6 +1045,7 @@ public sealed class ResponseInspectionMiddleware(
     private sealed record ToolsListInspectionCacheEntry(
         DateTimeOffset CachedAtUtc,
         IReadOnlyList<DiscoveredTool> Tools,
-        ToolSurfaceDriftResult DriftResult);
+        ToolSurfaceDriftResult DriftResult,
+        FilteredToolsListResponse? VisibleToolsListBody);
 
 }

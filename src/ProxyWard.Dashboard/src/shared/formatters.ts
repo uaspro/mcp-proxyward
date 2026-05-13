@@ -62,7 +62,7 @@ export function formatJson(value: unknown): string {
 
 export function describeReason(reason: string): string {
   const explanations: Record<string, string> = {
-    tool_blocked: 'This tool is denied by policy or absent from an allow list while default deny is active.',
+    tool_blocked: 'This tool is denied by policy, including explicit block or hide rules.',
     tool_not_allowed: 'The server tool policy does not allow this tool.',
     dangerous_command: 'A command-like argument matched a configured dangerous command rule.',
     private_network_target: 'A URL or host argument resolved to a blocked private or local network range.',

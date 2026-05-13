@@ -94,6 +94,39 @@ public class PolicyConfigurationTests
     }
 
     [Fact]
+    public void LoadHiddenToolPolicyReturnsTypedPolicyAndAffectsVersionHash()
+    {
+        var yaml = ValidYaml.Replace(
+            "      block: []",
+            """
+                  block: []
+                  hide:
+                    - repos.archive
+            """,
+            StringComparison.Ordinal);
+
+        var baseline = ProxyWardPolicyLoader.Load(ValidYaml);
+        var policy = ProxyWardPolicyLoader.Load(yaml);
+
+        Assert.Equal(["repos.archive"], policy.Servers["sample"].Tools.Hide);
+        Assert.NotEqual(baseline.VersionHash, policy.VersionHash);
+        Assert.Contains("hide", ProxyWardPolicySerializer.ToYaml(policy), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoadHideToolDefaultReturnsTypedPolicyAndAffectsVersionHash()
+    {
+        var yaml = ValidYaml.Replace("default: deny", "default: hide", StringComparison.Ordinal);
+
+        var baseline = ProxyWardPolicyLoader.Load(ValidYaml);
+        var policy = ProxyWardPolicyLoader.Load(yaml);
+
+        Assert.Equal(ToolDefaultMode.Hide, policy.Servers["sample"].Tools.Default);
+        Assert.NotEqual(baseline.VersionHash, policy.VersionHash);
+        Assert.Contains("default: hide", ProxyWardPolicySerializer.ToYaml(policy), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PolicyVersionHashIsStableForRepeatedLoads()
     {
         var first = ProxyWardPolicyLoader.Load(ValidYaml);

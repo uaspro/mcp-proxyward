@@ -17,12 +17,17 @@ public sealed class ToolPolicyEvaluator
             return mode.AsBlockDecision(PolicyReasonCodes.ToolBlocked);
         }
 
-        if (tools.Default == ToolDefaultMode.Allow)
+        if (tools.Hide.Contains(toolName, StringComparer.Ordinal))
+        {
+            return mode.AsBlockDecision(PolicyReasonCodes.ToolBlocked);
+        }
+
+        if (tools.Allow.Contains(toolName, StringComparer.Ordinal))
         {
             return PolicyDecision.Allow();
         }
 
-        if (tools.Allow.Contains(toolName, StringComparer.Ordinal))
+        if (tools.Default == ToolDefaultMode.Allow)
         {
             return PolicyDecision.Allow();
         }

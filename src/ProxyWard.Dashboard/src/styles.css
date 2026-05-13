@@ -1010,6 +1010,7 @@ kbd {
 .tool-policy-toolbar {
   display: flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -1484,6 +1485,10 @@ kbd {
   color: var(--warn-fg);
 }
 
+.segmented button.option-info {
+  color: var(--info);
+}
+
 .segmented button.option-deny,
 .segmented button.option-block {
   color: var(--deny-fg);
@@ -1497,6 +1502,11 @@ kbd {
 .segmented button.option-warn.active {
   background: var(--warn-bg);
   color: var(--warn-fg);
+}
+
+.segmented button.option-info.active {
+  background: var(--info-bg);
+  color: var(--info);
 }
 
 .segmented button.option-deny.active,

@@ -13,8 +13,10 @@ import {
   parseLines,
   secretPatternPlaceholder,
   toolPolicyRowMatchesSearch,
+  toolPolicyRowMatchesState,
   updateToolDisposition,
   type ToolDisposition,
+  type ToolDispositionFilter,
 } from './policyModel'
 export function GlobalPolicyEditor({
   draft,
@@ -253,7 +255,8 @@ export function ServerPolicyEditor({
               }
               options={[
                 { value: 'allow', label: 'Allow' },
-                { value: 'deny', label: 'Deny' },
+                { value: 'deny', label: 'Block', tone: 'block' },
+                { value: 'hide', label: 'Hide', tone: 'info' },
               ]}
             />
           </PolicyField>
@@ -446,6 +449,7 @@ function ToolPolicySelector({
   onChange: (updater: (server: ServerPolicyModel) => ServerPolicyModel) => void
 }) {
   const [toolSearch, setToolSearch] = useState('')
+  const [stateFilter, setStateFilter] = useState<ToolDispositionFilter>('all')
   const rows = useMemo(
     () => createToolPolicyRows(server, inventory, baselineServer),
     [server, inventory, baselineServer],
@@ -453,10 +457,16 @@ function ToolPolicySelector({
   const normalizedToolSearch = normalizeSearchQuery(toolSearch)
   const activeSearchQuery = normalizedToolSearch || normalizeSearchQuery(searchQuery)
   const visibleRows = useMemo(
-    () => rows.filter((row) => toolPolicyRowMatchesSearch(row, activeSearchQuery)),
-    [activeSearchQuery, rows],
+    () => rows
+      .filter((row) => toolPolicyRowMatchesState(row, stateFilter))
+      .filter((row) => toolPolicyRowMatchesSearch(row, activeSearchQuery)),
+    [activeSearchQuery, rows, stateFilter],
   )
-  const defaultDispositionTone = server.tools.default === 'allow' ? 'allow' : 'deny'
+  const defaultDispositionTone = server.tools.default === 'allow'
+    ? 'allow'
+    : server.tools.default === 'hide'
+      ? 'info'
+      : 'deny'
 
   return (
     <div className="tool-policy-panel">
@@ -477,6 +487,18 @@ function ToolPolicySelector({
           {toolSearch ? (
             <IconButton label="Clear tool search" icon={X} onClick={() => setToolSearch('')} />
           ) : null}
+          <SegmentedControl<ToolDispositionFilter>
+            value={stateFilter}
+            ariaLabel="Filter tools by state"
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'default', label: 'Default', tone: defaultDispositionTone },
+              { value: 'allow', label: 'Allow' },
+              { value: 'block', label: 'Block' },
+              { value: 'hide', label: 'Hide', tone: 'info' },
+            ]}
+            onChange={setStateFilter}
+          />
           <Badge tone="neutral">{`${visibleRows.length}/${rows.length}`}</Badge>
         </div>
       ) : null}
@@ -488,7 +510,7 @@ function ToolPolicySelector({
         />
       ) : null}
       {rows.length > 0 && visibleRows.length === 0 ? (
-        <StatePanel state="empty" title="No matching tools" detail="No discovered or configured tools match the active search." />
+        <StatePanel state="empty" title="No matching tools" detail="No discovered or configured tools match the active filters." />
       ) : null}
       {visibleRows.length > 0 ? (
         <div className={`tool-policy-list ${loading ? 'loading' : ''}`}>
@@ -515,6 +537,7 @@ function ToolPolicySelector({
                   { value: 'default', label: 'Default', tone: defaultDispositionTone },
                   { value: 'allow', label: 'Allow' },
                   { value: 'block', label: 'Block' },
+                  { value: 'hide', label: 'Hide', tone: 'info' },
                 ]}
                 onChange={(value) =>
                   onChange((current) => updateToolDisposition(current, row.name, value))
