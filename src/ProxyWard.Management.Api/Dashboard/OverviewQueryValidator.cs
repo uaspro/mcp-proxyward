@@ -10,7 +10,7 @@ internal static class OverviewQueryValidator
     private const int MaxTopN = 50;
 
     private static readonly TimeSpan MinWindow = TimeSpan.FromMinutes(2);
-    private static readonly TimeSpan MaxWindow = TimeSpan.FromDays(7);
+    private static readonly TimeSpan MaxWindow = TimeSpan.FromDays(30);
     private static readonly TimeSpan ClockSkewTolerance = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan DefaultWindow = TimeSpan.FromHours(1);
 

@@ -241,8 +241,8 @@ public class ManagementOverviewEndpointTests
 
     [Theory]
     [InlineData("/api/overview?fromUtc=2026-05-06T10:00:00Z&toUtc=2026-05-06T09:00:00Z&bucketSeconds=60")] // toUtc < fromUtc
-    [InlineData("/api/overview?fromUtc=2026-05-06T10:00:00Z&toUtc=2026-05-13T10:00:01Z&bucketSeconds=60")] // > 7 days
-    [InlineData("/api/overview?fromUtc=2026-05-06T10:00:00Z&toUtc=2026-05-06T10:00:30Z&bucketSeconds=10")] // < 1 minute
+    [InlineData("/api/overview?fromUtc=2026-04-01T10:00:00Z&toUtc=2026-05-02T10:00:01Z&bucketSeconds=3600")] // > 30 days
+    [InlineData("/api/overview?fromUtc=2026-05-06T10:00:00Z&toUtc=2026-05-06T10:00:30Z&bucketSeconds=10")] // < 2 minutes
     [InlineData("/api/overview?fromUtc=2026-05-06T10:00:00Z&toUtc=2026-05-06T11:00:00Z&bucketSeconds=5")]   // bucket < 10s
     [InlineData("/api/overview?fromUtc=2026-05-06T10:00:00Z&toUtc=2026-05-06T11:00:00Z&bucketSeconds=2000")]// bucket > window/2
     [InlineData("/api/overview?fromUtc=2026-05-06T10:00:00Z&toUtc=2026-05-06T11:00:00Z&topReasons=0")]      // topN below 1
@@ -266,6 +266,41 @@ public class ManagementOverviewEndpointTests
             var root = payload.RootElement;
             var error = root.GetProperty("error").GetString();
             Assert.Contains(error, new[] { "window_invalid", "bucket_invalid", "topn_invalid" });
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        }
+    }
+
+    [Fact]
+    public async Task OverviewEndpointAllowsThirtyDayWindow()
+    {
+        var dbPath = TempDbPath();
+        var windowTo = DateTimeOffset.UtcNow;
+        var windowFrom = windowTo.AddDays(-30);
+
+        await SeedSingleRowAsync(dbPath, windowTo.AddDays(-1), AuditDecision.Allow);
+        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<ManagementProgram>();
+            using var client = factory.CreateClient();
+
+            var url = $"/api/overview?fromUtc={IsoZ(windowFrom)}&toUtc={IsoZ(windowTo)}&bucketSeconds=43200";
+            using var response = await client.GetAsync(url);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+            var root = payload.RootElement;
+
+            Assert.Equal(TimeSpan.FromDays(30).TotalSeconds,
+                root.GetProperty("window").GetProperty("durationSeconds").GetDouble(),
+                0);
+            Assert.Equal(43200, root.GetProperty("bucket").GetProperty("sizeSeconds").GetInt32());
         }
         finally
         {

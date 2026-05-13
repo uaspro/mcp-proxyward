@@ -1,13 +1,29 @@
 import { expect, test } from '@playwright/test'
 
+const apiBaseUrl = process.env.PROXYWARD_E2E_API_BASE_URL
+  ?? `http://127.0.0.1:${process.env.PROXYWARD_E2E_API_PORT ?? '8091'}`
+
 test.beforeEach(async ({ request }) => {
-  await request.post('http://127.0.0.1:8091/__test/reset')
+  await request.post(`${apiBaseUrl}/__test/reset`)
 })
 
 test('dashboard smoke covers overview, audit, drift, policy, and settings', async ({ page }) => {
+  const overviewRequests: string[] = []
+  page.on('request', (request) => {
+    const url = new URL(request.url())
+    if (url.pathname === '/api/overview') {
+      overviewRequests.push(request.url())
+    }
+  })
+
   await page.goto('/')
 
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+  const overviewRange = page.getByRole('group', { name: 'Overview time range' })
+  await expect(overviewRange).toBeVisible()
+  await overviewRange.getByRole('button', { name: '30d' }).click()
+  await expect(overviewRange.getByRole('button', { name: '30d' })).toHaveClass(/active/)
+  await expect.poll(() => hasOverviewRequest(overviewRequests, '43200', 30)).toBe(true)
   await expect(page.getByText('path_traversal').first()).toBeVisible()
   await expect(page.getByText('fs.read').first()).toBeVisible()
   await expect(page.getByText('Resources')).toHaveCount(0)
@@ -18,7 +34,7 @@ test('dashboard smoke covers overview, audit, drift, policy, and settings', asyn
   await topbarSearch.press('Enter')
   await expect(page).toHaveURL(/\/audit$/)
   await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible()
-  await expect(page.getByPlaceholder('Search server, tool, reason, correlation id')).toHaveValue('fs.read')
+  await expect(page.getByPlaceholder('Search server, operation, subject, reason')).toHaveValue('fs.read')
   await expect(page.getByRole('table')).toContainText('fs.read')
   await expect(page.getByRole('table')).toContainText('would block')
   await topbarSearch.fill('')
@@ -170,9 +186,27 @@ test('policy screen audit to enforce apply shows confirmation and updates topbar
 })
 
 test('navigation metrics use API counts and hide drift indicator when zero', async ({ page, request }) => {
-  await request.post('http://127.0.0.1:8091/__test/reset?audit=7&drift=0')
+  await request.post(`${apiBaseUrl}/__test/reset?audit=7&drift=0`)
   await page.goto('/')
 
   await expect(page.getByRole('button', { name: /Audit log/i }).getByText('7', { exact: true })).toBeVisible()
   await expect(page.locator('.nav-dot')).toHaveCount(0)
 })
+
+function hasOverviewRequest(requests: string[], bucketSeconds: string, days: number) {
+  return requests.some((requestUrl) => {
+    const url = new URL(requestUrl)
+    if (url.searchParams.get('bucketSeconds') !== bucketSeconds) {
+      return false
+    }
+
+    const fromUtc = url.searchParams.get('fromUtc')
+    const toUtc = url.searchParams.get('toUtc')
+    if (!fromUtc || !toUtc) {
+      return false
+    }
+
+    const durationMs = new Date(toUtc).getTime() - new Date(fromUtc).getTime()
+    return Math.abs(durationMs - days * 24 * 60 * 60 * 1000) < 1000
+  })
+}

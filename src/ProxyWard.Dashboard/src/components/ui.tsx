@@ -240,14 +240,16 @@ export function SegmentedControl<TValue extends string>({
   options,
   onChange,
   disabled = false,
+  ariaLabel,
 }: {
   value: TValue
   options: Array<SegmentedOption<TValue>>
   onChange: (value: TValue) => void
   disabled?: boolean
+  ariaLabel?: string
 }) {
   return (
-    <div className="segmented" role="group">
+    <div className="segmented" role="group" aria-label={ariaLabel}>
       {options.map((option) => (
         <button
           key={option.value}

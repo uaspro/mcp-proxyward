@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import { List, Pause, Play, RefreshCw } from 'lucide-react'
 import { getAuditEvents, type AuditEventItem } from '../../api/audit'
-import { getOverview, type OverviewResponse, type OverviewTopRow } from '../../api/overview'
+import {
+  defaultOverviewRange,
+  getOverview,
+  getOverviewRangeLabel,
+  overviewRangeOptions,
+  type OverviewRange,
+  type OverviewResponse,
+  type OverviewTopRow,
+} from '../../api/overview'
 import { getStatus, type StatusResponse } from '../../api/status'
-import { Badge, BarChart, Button, Card, StatePanel } from '../../components'
+import { Badge, BarChart, Button, Card, SegmentedControl, StatePanel } from '../../components'
 import { CompactList, DecisionBadge, HealthRows, PageHeader, StatCard } from '../../components/dashboard'
 import { dashboardConfig } from '../../config'
 import { ReasonTags } from '../../shared/ReasonTags'
@@ -18,17 +26,20 @@ type OverviewProps = {
 }
 
 export function Overview({ mode, onOpenAuditEvent, onOpenAuditLog }: OverviewProps) {
+  const [overviewRange, setOverviewRange] = useState<OverviewRange>(defaultOverviewRange)
   const {
     overview,
     status,
     loading,
     error,
     refreshedAt,
+    loadedRange,
     refresh,
-  } = useOverviewData()
+  } = useOverviewData(overviewRange)
   const [streamPaused, setStreamPaused] = useState(false)
   const latestAudit = useLatestAuditEvents(streamPaused)
   const toggleStream = () => setStreamPaused((current) => !current)
+  const rangeLabel = getOverviewRangeLabel(loadedRange)
 
   if (!overview && loading) {
     return (
@@ -59,6 +70,13 @@ export function Overview({ mode, onOpenAuditEvent, onOpenAuditLog }: OverviewPro
         subtitle="Traffic, decisions, and runtime health"
         action={
           <div className="row-actions">
+            <SegmentedControl
+              ariaLabel="Overview time range"
+              value={overviewRange}
+              options={overviewRangeOptions}
+              onChange={setOverviewRange}
+              disabled={loading}
+            />
             <Badge tone={mode === 'enforce' ? 'allow' : 'warn'}>{mode}</Badge>
             <Button icon={RefreshCw} onClick={refresh} disabled={loading}>
               Refresh
@@ -81,7 +99,7 @@ export function Overview({ mode, onOpenAuditEvent, onOpenAuditLog }: OverviewPro
         <StatCard label="Error rate" value={formatPercent(overview.errorRate)} delta={overview.metadata.partial ? 'partial' : 'complete'} tone="neutral" />
       </div>
       <div className="dashboard-grid">
-        <Card title="Traffic" action={<Badge tone="neutral">60m</Badge>}>
+        <Card title="Traffic" action={<Badge tone="neutral">{rangeLabel}</Badge>}>
           <BarChart values={overview.series.map((point) => point.total)} />
         </Card>
         <Card title="Health">
@@ -138,23 +156,25 @@ export function Overview({ mode, onOpenAuditEvent, onOpenAuditLog }: OverviewPro
   )
 }
 
-function useOverviewData() {
+function useOverviewData(overviewRange: OverviewRange) {
   const [overview, setOverview] = useState<OverviewResponse | null>(null)
   const [status, setStatus] = useState<StatusResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
+  const [loadedRange, setLoadedRange] = useState<OverviewRange>(overviewRange)
 
   const refresh = useCallback(async () => {
     const controller = new AbortController()
     setLoading(true)
     try {
       const [overviewResponse, statusResponse] = await Promise.all([
-        getOverview(controller.signal),
+        getOverview(overviewRange, controller.signal),
         getStatus(controller.signal),
       ])
       setOverview(overviewResponse)
       setStatus(statusResponse)
+      setLoadedRange(overviewRange)
       setError(null)
       setRefreshedAt(new Date())
     } catch (ex) {
@@ -162,18 +182,22 @@ function useOverviewData() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [overviewRange])
 
   useEffect(() => {
     let disposed = false
     let activeController: AbortController | null = null
 
-    const loadSnapshot = () => {
+    const loadSnapshot = (showLoading: boolean) => {
       activeController?.abort()
       const controller = new AbortController()
       activeController = controller
 
-      void Promise.all([getOverview(controller.signal), getStatus(controller.signal)])
+      if (showLoading) {
+        setLoading(true)
+      }
+
+      void Promise.all([getOverview(overviewRange, controller.signal), getStatus(controller.signal)])
         .then(([overviewResponse, statusResponse]) => {
           if (disposed || controller.signal.aborted) {
             return
@@ -181,6 +205,7 @@ function useOverviewData() {
 
           setOverview(overviewResponse)
           setStatus(statusResponse)
+          setLoadedRange(overviewRange)
           setError(null)
           setRefreshedAt(new Date())
         })
@@ -196,15 +221,15 @@ function useOverviewData() {
         })
     }
 
-    loadSnapshot()
-    const timer = window.setInterval(loadSnapshot, overviewPollingIntervalMs)
+    loadSnapshot(true)
+    const timer = window.setInterval(() => loadSnapshot(false), overviewPollingIntervalMs)
 
     return () => {
       disposed = true
       activeController?.abort()
       window.clearInterval(timer)
     }
-  }, [])
+  }, [overviewRange])
 
   return {
     overview,
@@ -212,6 +237,7 @@ function useOverviewData() {
     loading,
     error,
     refreshedAt,
+    loadedRange,
     refresh,
   }
 }
