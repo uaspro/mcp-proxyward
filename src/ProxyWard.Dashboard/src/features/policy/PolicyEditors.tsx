@@ -458,9 +458,9 @@ function ToolPolicySelector({
   const activeSearchQuery = normalizedToolSearch || normalizeSearchQuery(searchQuery)
   const visibleRows = useMemo(
     () => rows
-      .filter((row) => toolPolicyRowMatchesState(row, stateFilter))
+      .filter((row) => toolPolicyRowMatchesState(row, stateFilter, server.tools.default))
       .filter((row) => toolPolicyRowMatchesSearch(row, activeSearchQuery)),
-    [activeSearchQuery, rows, stateFilter],
+    [activeSearchQuery, rows, server.tools.default, stateFilter],
   )
   const defaultDispositionTone = server.tools.default === 'allow'
     ? 'allow'

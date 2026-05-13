@@ -119,8 +119,28 @@ export function toolPolicyRowMatchesSearch(row: ToolPolicyRow, searchQuery: stri
     || includesSearch(row.disposition, searchQuery)
 }
 
-export function toolPolicyRowMatchesState(row: ToolPolicyRow, stateFilter: ToolDispositionFilter): boolean {
-  return stateFilter === 'all' || row.disposition === stateFilter
+export function toolPolicyRowMatchesState(
+  row: ToolPolicyRow,
+  stateFilter: ToolDispositionFilter,
+  defaultPolicy: ServerPolicyModel['tools']['default'],
+): boolean {
+  if (stateFilter === 'all' || row.disposition === stateFilter) {
+    return true
+  }
+
+  return row.disposition === 'default' && getDefaultToolDisposition(defaultPolicy) === stateFilter
+}
+
+export function getDefaultToolDisposition(defaultPolicy: ServerPolicyModel['tools']['default']): ToolDisposition {
+  if (defaultPolicy === 'allow') {
+    return 'allow'
+  }
+
+  if (defaultPolicy === 'hide') {
+    return 'hide'
+  }
+
+  return 'block'
 }
 
 export function getToolDispositionOrDefault(server: ServerPolicyModel | null, toolName: string): ToolDisposition {
