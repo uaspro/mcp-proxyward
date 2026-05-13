@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, Plus, RefreshCw, Settings, Trash2 } from 'lucide-react'
+import { Check, Pencil, Plus, RefreshCw, Settings, Trash2, X } from 'lucide-react'
 import { applyPolicy, getPolicy, validatePolicy, type PolicyApplyResponse, type PolicyModel, type PolicyResponse, type PolicyValidationResponse, type ServerPolicyModel } from '../../api/policy'
 import { discoverTools, getToolInventory, type ToolInventoryResponse } from '../../api/tools'
-import { Badge, Button, Card, Dialog, StatePanel } from '../../components'
+import { Badge, Button, Card, Dialog, IconButton, StatePanel } from '../../components'
 import { PageHeader } from '../../components/dashboard'
 import { dashboardConfig } from '../../config'
 import { formatApiFailure, formatAuditTime } from '../../shared/formatters'
@@ -20,10 +20,13 @@ import {
   formatServerCount,
   normalizeNewServerForm,
   normalizeSearchQuery,
+  normalizeServerId,
   omitRecordKey,
   policyServerMatchesSearch,
+  renameServerPolicy,
   upsertToolInventoryServer,
   validateNewServerForm,
+  validateServerPolicyName,
   type NewServerPolicyForm,
 } from './policyModel'
 import { GlobalPolicyEditor, PolicyField, PolicyIssueList, ServerPolicyEditor } from './PolicyEditors'
@@ -56,6 +59,9 @@ export function Policy({
   const [discoveringServerId, setDiscoveringServerId] = useState<string | null>(null)
   const [pendingDeleteServer, setPendingDeleteServer] = useState<ServerPolicyModel | null>(null)
   const [pendingEnforceApply, setPendingEnforceApply] = useState<PolicyModel | null>(null)
+  const [renamingServerId, setRenamingServerId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
 
   const serverEntries = useMemo(() => Object.entries(draft?.servers ?? {}), [draft])
   const normalizedSearchQuery = normalizeSearchQuery(searchQuery)
@@ -102,6 +108,9 @@ export function Policy({
     setApplyError(null)
     setApplyResult(null)
     setError(null)
+    setRenamingServerId(null)
+    setRenameValue('')
+    setRenameError(null)
     setSelectedKey((current) => {
       if (current === 'global' || nextDraft.servers[current]) {
         return current
@@ -236,6 +245,69 @@ export function Policy({
     })
     setSelectedKey((current) => (current === serverId ? 'global' : current))
     setPendingDeleteServer(null)
+  }
+
+  function beginRenameServer(serverId: string) {
+    setSelectedKey(serverId)
+    setRenamingServerId(serverId)
+    setRenameValue(serverId)
+    setRenameError(null)
+  }
+
+  function cancelRenameServer() {
+    setRenamingServerId(null)
+    setRenameValue('')
+    setRenameError(null)
+  }
+
+  function confirmRenameServer() {
+    if (!draft || !renamingServerId) {
+      return
+    }
+
+    const currentServer = draft.servers[renamingServerId]
+    if (!currentServer) {
+      cancelRenameServer()
+      return
+    }
+
+    const nextServerId = normalizeServerId(renameValue)
+    const formError = validateServerPolicyName(nextServerId, draft.servers, renamingServerId)
+    if (formError) {
+      setRenameError(formError)
+      return
+    }
+
+    if (nextServerId === renamingServerId) {
+      cancelRenameServer()
+      return
+    }
+
+    setValidation(null)
+    updateDraft((current) => ({
+      ...current,
+      servers: renameServerPolicy(current.servers, renamingServerId, nextServerId),
+    }))
+    setSelectedKey(nextServerId)
+    setToolInventory((current) => current
+      ? {
+          servers: current.servers
+            .map((server) => (server.serverId === renamingServerId ? { ...server, serverId: nextServerId } : server))
+            .sort((left, right) => left.serverId.localeCompare(right.serverId)),
+        }
+      : current)
+    setToolDiscoveryErrors((current) => {
+      if (!Object.prototype.hasOwnProperty.call(current, renamingServerId)) {
+        return current
+      }
+
+      return {
+        ...omitRecordKey(current, renamingServerId),
+        [nextServerId]: current[renamingServerId],
+      }
+    })
+    setDiscoveringServerId((current) => (current === renamingServerId ? nextServerId : current))
+    cancelRenameServer()
   }
 
   async function runValidation() {
@@ -407,7 +479,9 @@ export function Policy({
     )
   }
 
-  const generatedNewServer = newServerForm ? createGeneratedNewServerForm(newServerForm.upstream, draft.servers) : null
+  const generatedNewServer = newServerForm
+    ? createGeneratedNewServerForm(newServerForm.upstream, draft.servers, newServerForm.name)
+    : null
 
   return (
     <section className="page">
@@ -460,16 +534,48 @@ export function Policy({
               <Badge tone={draft.mode === 'enforce' ? 'allow' : 'warn'}>{draft.mode || mode}</Badge>
             </button>
             {visibleServerEntries.map(([serverId, server]) => (
-              <button
-                key={serverId}
-                type="button"
-                className={`policy-server-button ${selectedKey === serverId ? 'selected' : ''}`}
-                onClick={() => setSelectedKey(serverId)}
-              >
-                <span className="server-initials">{serverId.slice(0, 2).toUpperCase()}</span>
-                <span>{serverId}</span>
-                <Badge tone={server.allowed ? 'allow' : 'block'}>{server.allowed ? 'on' : 'off'}</Badge>
-              </button>
+              <div className="policy-server-row" key={serverId}>
+                {renamingServerId === serverId ? (
+                  <div className="policy-server-rename">
+                    <span className="server-initials">{serverId.slice(0, 2).toUpperCase()}</span>
+                    <input
+                      aria-label="Server policy name"
+                      className="form-input"
+                      value={renameValue}
+                      onChange={(event) => {
+                        setRenameValue(event.target.value)
+                        setRenameError(null)
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          confirmRenameServer()
+                        }
+
+                        if (event.key === 'Escape') {
+                          cancelRenameServer()
+                        }
+                      }}
+                      autoFocus
+                    />
+                    <IconButton label="Save server policy name" icon={Check} onClick={confirmRenameServer} />
+                    <IconButton label="Cancel server policy name edit" icon={X} onClick={cancelRenameServer} />
+                    {renameError ? <span className="policy-server-rename-error">{renameError}</span> : null}
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className={`policy-server-button ${selectedKey === serverId ? 'selected' : ''}`}
+                      onClick={() => setSelectedKey(serverId)}
+                    >
+                      <span className="server-initials">{serverId.slice(0, 2).toUpperCase()}</span>
+                      <span>{serverId}</span>
+                      <Badge tone={server.allowed ? 'allow' : 'block'}>{server.allowed ? 'on' : 'off'}</Badge>
+                    </button>
+                    <IconButton label={`Edit ${serverId} policy name`} icon={Pencil} onClick={() => beginRenameServer(serverId)} />
+                  </>
+                )}
+              </div>
             ))}
             {serverEntries.length === 0 ? (
               <StatePanel state="empty" title="No server policies" detail="Add a server policy before validating or applying." />
@@ -547,6 +653,14 @@ export function Policy({
         <div className="confirmation-stack">
           {newServerError ? <StatePanel state="error" title="Server policy invalid" detail={newServerError} /> : null}
           <div className="form-grid">
+            <PolicyField label="name">
+              <input
+                className="form-input"
+                value={newServerForm?.name ?? ''}
+                placeholder="Generated from upstream"
+                onChange={(event) => updateNewServerForm({ name: event.target.value })}
+              />
+            </PolicyField>
             <PolicyField label="upstream">
               <input
                 className="form-input"

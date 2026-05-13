@@ -3,6 +3,7 @@ import type { PolicyModel, PolicyValidationIssue, PolicyValidationResponse, Serv
 import type { ToolDiscoveryResponse, ToolInventoryResponse, ToolInventoryServer, ToolInventoryTool } from '../../api/tools'
 
 export type NewServerPolicyForm = {
+  name: string
   id: string
   route: string
   upstream: string
@@ -235,6 +236,7 @@ export function createNextServerId(
 
 export function createNewServerForm(): NewServerPolicyForm {
   return {
+    name: '',
     id: '',
     route: '',
     upstream: '',
@@ -244,11 +246,16 @@ export function createNewServerForm(): NewServerPolicyForm {
 export function createGeneratedNewServerForm(
   upstream: string,
   servers: Record<string, ServerPolicyModel>,
+  name = '',
 ): NewServerPolicyForm {
   const normalizedUpstream = upstream.trim()
-  const id = createServerIdFromUpstream(normalizedUpstream, servers)
+  const normalizedName = normalizeServerId(name)
+  const id = name.trim()
+    ? normalizedName
+    : createServerIdFromUpstream(normalizedUpstream, servers)
 
   return {
+    name,
     id,
     route: id ? `/${id}/mcp` : '',
     upstream: normalizedUpstream,
@@ -298,11 +305,12 @@ export function normalizeNewServerForm(
   form: NewServerPolicyForm,
   existingServers: Record<string, ServerPolicyModel>,
 ): NewServerPolicyForm {
-  const generated = createGeneratedNewServerForm(form.upstream, existingServers)
+  const generated = createGeneratedNewServerForm(form.upstream, existingServers, form.name)
 
   return {
-    id: generated.id.trim(),
-    route: generated.route.trim(),
+    name: form.name.trim(),
+    id: generated.id,
+    route: generated.route,
     upstream: generated.upstream,
   }
 }
@@ -325,11 +333,14 @@ export function validateNewServerForm(
   }
 
   if (!form.id) {
-    return 'Server id could not be generated from the upstream URL.'
+    return form.name
+      ? 'Server name must include at least one letter or number.'
+      : 'Server id could not be generated from the upstream URL.'
   }
 
-  if (existingServers[form.id]) {
-    return `Server ${form.id} already exists.`
+  const duplicateNameError = validateServerPolicyName(form.id, existingServers)
+  if (duplicateNameError) {
+    return duplicateNameError
   }
 
   if (!form.route.startsWith('/')) {
@@ -337,6 +348,41 @@ export function validateNewServerForm(
   }
 
   return null
+}
+
+export function validateServerPolicyName(
+  serverId: string,
+  existingServers: Record<string, ServerPolicyModel>,
+  currentServerId?: string,
+): string | null {
+  if (!serverId) {
+    return 'Server name must include at least one letter or number.'
+  }
+
+  if (serverId !== currentServerId && existingServers[serverId]) {
+    return `Server ${serverId} already exists.`
+  }
+
+  return null
+}
+
+export function renameServerPolicy(
+  servers: Record<string, ServerPolicyModel>,
+  currentServerId: string,
+  nextServerId: string,
+): Record<string, ServerPolicyModel> {
+  if (currentServerId === nextServerId || !servers[currentServerId]) {
+    return servers
+  }
+
+  const result: Record<string, ServerPolicyModel> = {}
+  for (const [serverId, server] of Object.entries(servers)) {
+    result[serverId === currentServerId ? nextServerId : serverId] = serverId === currentServerId
+      ? { ...server, id: nextServerId }
+      : server
+  }
+
+  return result
 }
 
 export function buildProxyMcpUrl(route: string): string {

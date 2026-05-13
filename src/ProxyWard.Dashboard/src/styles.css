@@ -869,6 +869,13 @@ kbd {
   gap: 6px;
 }
 
+.policy-server-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: start;
+}
+
 .policy-server-button {
   display: flex;
   width: 100%;
@@ -896,6 +903,21 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.policy-server-rename {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.policy-server-rename-error {
+  grid-column: 2 / -1;
+  color: var(--block-fg);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .server-initials {
