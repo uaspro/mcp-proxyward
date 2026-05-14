@@ -30,6 +30,10 @@ public class ManagementAuditEventExportEndpointTests
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("application/x-ndjson", response.Content.Headers.ContentType?.MediaType);
+            Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+            Assert.Equal("no-cache", Assert.Single(response.Headers.Pragma).Name);
+            Assert.True(response.Headers.TryGetValues("X-Content-Type-Options", out var contentTypeOptions));
+            Assert.Equal("nosniff", Assert.Single(contentTypeOptions));
             Assert.Equal(
                 "attachment",
                 response.Content.Headers.ContentDisposition?.DispositionType);

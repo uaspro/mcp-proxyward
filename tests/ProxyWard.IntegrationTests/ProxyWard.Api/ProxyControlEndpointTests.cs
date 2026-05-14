@@ -711,32 +711,33 @@ public class ProxyControlEndpointTests
     }
 
     private static async Task<IReadOnlyList<ControlAuthFailureAuditRow>> ReadControlAuthFailureAuditRowsAsync(
-        string databasePath)
-    {
-        var rows = new List<ControlAuthFailureAuditRow>();
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        string databasePath) =>
+        await AuditDatabase.ReadEventuallyAsync(() =>
         {
-            DataSource = databasePath,
-            Mode = SqliteOpenMode.ReadOnly
-        }.ToString());
-        await connection.OpenAsync();
+            var rows = new List<ControlAuthFailureAuditRow>();
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = databasePath,
+                Mode = SqliteOpenMode.ReadOnly
+            }.ToString());
+            connection.Open();
 
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT reasons, duration_ms, payload_json
-            FROM audit_events
-            WHERE event_type = 'proxy_control_auth_failure'
-            ORDER BY id ASC;
-            """;
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT reasons, duration_ms, payload_json
+                FROM audit_events
+                WHERE event_type = 'proxy_control_auth_failure'
+                ORDER BY id ASC;
+                """;
 
-        await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            rows.Add(new ControlAuthFailureAuditRow(reader.GetString(0), reader.GetInt64(1), reader.GetString(2)));
-        }
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                rows.Add(new ControlAuthFailureAuditRow(reader.GetString(0), reader.GetInt64(1), reader.GetString(2)));
+            }
 
-        return rows;
-    }
+            return rows;
+        });
 
     private sealed record ControlAuthFailureAuditRow(string Reasons, long DurationMs, string PayloadJson);
 

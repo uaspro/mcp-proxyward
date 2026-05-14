@@ -45,8 +45,11 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await ConfigureBusyTimeoutAsync(connection, cancellationToken).ConfigureAwait(false);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var sqliteTransaction = (SqliteTransaction)transaction;
 
-        var counts = await ReadAggregateCountsAsync(connection, fromIso, toIso, cancellationToken).ConfigureAwait(false);
+        var counts = await ReadAggregateCountsAsync(connection, sqliteTransaction, fromIso, toIso, cancellationToken)
+            .ConfigureAwait(false);
 
         long? latencyP95Ms = null;
         var partial = false;
@@ -64,7 +67,14 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
         }
         else
         {
-            latencyP95Ms = await ReadLatencyP95Async(connection, fromIso, toIso, (int)counts.TotalCount, cancellationToken).ConfigureAwait(false);
+            latencyP95Ms = await ReadLatencyP95Async(
+                    connection,
+                    sqliteTransaction,
+                    fromIso,
+                    toIso,
+                    (int)counts.TotalCount,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         if (counts.TotalCount > 0 && counts.AsOfUtc.HasValue)
@@ -73,7 +83,8 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
             var windowFreshnessHorizon = query.ToUtc.AddSeconds(2 * (double)bucketSeconds);
             if (now <= windowFreshnessHorizon)
             {
-                var hasOlderRows = await ReadHasOlderRowsAsync(connection, fromIso, cancellationToken).ConfigureAwait(false);
+                var hasOlderRows = await ReadHasOlderRowsAsync(connection, sqliteTransaction, fromIso, cancellationToken)
+                    .ConfigureAwait(false);
                 var lagThreshold = now.AddSeconds(-2 * (double)bucketSeconds);
                 if (hasOlderRows && counts.AsOfUtc.Value < lagThreshold)
                 {
@@ -84,9 +95,34 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
             }
         }
 
-        var topTools = await ReadTopToolsAsync(connection, fromIso, toIso, query.TopToolsLimit, cancellationToken).ConfigureAwait(false);
-        var topReasons = await ReadTopReasonsAsync(connection, fromIso, toIso, query.TopReasonsLimit, cancellationToken).ConfigureAwait(false);
-        var series = await ReadSeriesAsync(connection, fromIso, toIso, query.FromUtc, query.ToUtc, bucketSeconds, cancellationToken).ConfigureAwait(false);
+        var topTools = await ReadTopToolsAsync(
+                connection,
+                sqliteTransaction,
+                fromIso,
+                toIso,
+                query.TopToolsLimit,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var topReasons = await ReadTopReasonsAsync(
+                connection,
+                sqliteTransaction,
+                fromIso,
+                toIso,
+                query.TopReasonsLimit,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var series = await ReadSeriesAsync(
+                connection,
+                sqliteTransaction,
+                fromIso,
+                toIso,
+                query.FromUtc,
+                query.ToUtc,
+                bucketSeconds,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
         var requestRate = windowSeconds > 0 ? counts.DistinctCorrelations / windowSeconds : 0.0;
         var blockRate = counts.TotalCount > 0 ? (double)counts.BlockCount / counts.TotalCount : 0.0;
@@ -109,11 +145,12 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
 
     private static async Task<AggregateCounts> ReadAggregateCountsAsync(
         SqliteConnection connection,
+        SqliteTransaction transaction,
         string fromIso,
         string toIso,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
+        await using var command = CreateCommand(connection, transaction);
         command.CommandText = """
             SELECT
                 COUNT(*),
@@ -139,20 +176,18 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
         var distinctCorr = reader.GetInt64(3);
         DateTimeOffset? asOf = reader.IsDBNull(4)
             ? null
-            : DateTimeOffset.Parse(
-                reader.GetString(4),
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+            : TryParseTimestamp(reader.GetString(4));
 
         return new AggregateCounts(total, blocks, wouldBlocks, distinctCorr, asOf);
     }
 
     private static async Task<bool> ReadHasOlderRowsAsync(
         SqliteConnection connection,
+        SqliteTransaction transaction,
         string fromIso,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
+        await using var command = CreateCommand(connection, transaction);
         command.CommandText = "SELECT EXISTS(SELECT 1 FROM audit_events WHERE timestamp_utc < $from);";
         command.Parameters.AddWithValue("$from", fromIso);
 
@@ -162,6 +197,7 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
 
     private static async Task<long?> ReadLatencyP95Async(
         SqliteConnection connection,
+        SqliteTransaction transaction,
         string fromIso,
         string toIso,
         int totalCount,
@@ -172,7 +208,7 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
             return null;
         }
 
-        await using var command = connection.CreateCommand();
+        await using var command = CreateCommand(connection, transaction);
         command.CommandText = """
             SELECT duration_ms
             FROM audit_events
@@ -186,6 +222,11 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
+            if (reader.IsDBNull(0))
+            {
+                continue;
+            }
+
             durations.Add(reader.GetInt64(0));
         }
 
@@ -209,12 +250,13 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
 
     private static async Task<IReadOnlyList<OverviewTopRow>> ReadTopToolsAsync(
         SqliteConnection connection,
+        SqliteTransaction transaction,
         string fromIso,
         string toIso,
         int topN,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
+        await using var command = CreateCommand(connection, transaction);
         command.CommandText = """
             SELECT tool_name, COUNT(*) AS c
             FROM audit_events
@@ -231,6 +273,11 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
+            if (reader.IsDBNull(0))
+            {
+                continue;
+            }
+
             rows.Add(new OverviewTopRow(reader.GetString(0), reader.GetInt64(1)));
         }
 
@@ -239,12 +286,13 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
 
     private static async Task<IReadOnlyList<OverviewTopRow>> ReadTopReasonsAsync(
         SqliteConnection connection,
+        SqliteTransaction transaction,
         string fromIso,
         string toIso,
         int topN,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
+        await using var command = CreateCommand(connection, transaction);
         command.CommandText = """
             SELECT reasons
             FROM audit_events
@@ -257,6 +305,11 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
+            if (reader.IsDBNull(0))
+            {
+                continue;
+            }
+
             var raw = reader.GetString(0);
             foreach (var reason in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
@@ -274,6 +327,7 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
 
     private static async Task<IReadOnlyList<OverviewSeriesPoint>> ReadSeriesAsync(
         SqliteConnection connection,
+        SqliteTransaction transaction,
         string fromIso,
         string toIso,
         DateTimeOffset windowFromUtc,
@@ -293,7 +347,7 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
         var wouldBlock = new int[bucketCount];
         var warn = new int[bucketCount];
 
-        await using var command = connection.CreateCommand();
+        await using var command = CreateCommand(connection, transaction);
         command.CommandText = """
             SELECT timestamp_utc, decision
             FROM audit_events
@@ -306,11 +360,12 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var ts = DateTimeOffset.Parse(
-                reader.GetString(0),
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
-            var decision = reader.GetString(1);
+            if (reader.IsDBNull(0) || TryParseTimestamp(reader.GetString(0)) is not { } ts)
+            {
+                continue;
+            }
+
+            var decision = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
 
             var offsetSeconds = (ts - windowFromUtc).TotalSeconds;
             var bucketIndex = (int)(offsetSeconds / bucketSeconds);
@@ -365,6 +420,22 @@ public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
         pragma.CommandText = "PRAGMA busy_timeout=5000;";
         await pragma.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    private static SqliteCommand CreateCommand(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        return command;
+    }
+
+    private static DateTimeOffset? TryParseTimestamp(string? value) =>
+        DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+                ? parsed
+                : null;
 
     private static string FormatIso(DateTimeOffset value) =>
         value.UtcDateTime.ToString("o", CultureInfo.InvariantCulture);

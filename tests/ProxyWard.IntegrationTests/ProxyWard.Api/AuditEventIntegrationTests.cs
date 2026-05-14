@@ -44,7 +44,7 @@ public class AuditEventIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "request_inspection");
         Assert.Equal("audit", row.Mode);
         Assert.Equal("allow", row.Decision);
@@ -94,7 +94,7 @@ public class AuditEventIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("tools/call", row.Method);
         Assert.Equal("fs.read", row.ToolName);
@@ -140,7 +140,7 @@ public class AuditEventIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var blockRow = Assert.Single(rows, r => r.EventType == "server_allowlist_policy");
         Assert.Equal("enforce", blockRow.Mode);
         Assert.Equal("block", blockRow.Decision);
@@ -261,8 +261,8 @@ public class AuditEventIntegrationTests
                   - rm
         """;
 
-    private static List<AuditRow> ReadAuditEvents(string path) =>
-        AuditDatabase.ReadEventually(() =>
+    private static Task<List<AuditRow>> ReadAuditEvents(string path) =>
+        AuditDatabase.ReadEventuallyAsync(() =>
         {
             var rows = new List<AuditRow>();
             using var connection = new SqliteConnection(new SqliteConnectionStringBuilder

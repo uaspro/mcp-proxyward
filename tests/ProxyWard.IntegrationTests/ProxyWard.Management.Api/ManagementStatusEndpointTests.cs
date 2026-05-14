@@ -6,7 +6,9 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Sinks;
+using ProxyWard.Management.Application;
 using ProxyWard.Management.Application.Status;
+using ProxyWard.Management.Infrastructure.Status;
 using ManagementProgram = ProxyWard.Management.Api.Program;
 
 namespace ProxyWard.IntegrationTests;
@@ -203,6 +205,41 @@ public class ManagementStatusEndpointTests
         }
     }
 
+    [Fact]
+    public async Task ProxyControlClientPreservesConfiguredBasePath()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+                {
+                  "mode": "audit",
+                  "policyVersion": "policy-1",
+                  "serverCount": 2,
+                  "routeVersion": 3
+                }
+                """)
+        });
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://proxy.local/admin/")
+        };
+        var options = new ManagementApiOptions(
+            AuditDatabasePath: TempDbPath(),
+            ProxyControlBaseUrl: httpClient.BaseAddress,
+            ProxyControlToken: "test-token",
+            AdminToken: null,
+            LocalDevelopmentMode: false,
+            CorsAllowedOrigins: []);
+        var client = new HttpProxyControlClient(httpClient, options);
+
+        var status = await client.GetStatusAsync(CancellationToken.None);
+
+        Assert.Equal("audit", status.Mode);
+        Assert.Equal(new Uri("http://proxy.local/admin/control/status"), handler.LastRequestUri);
+        Assert.Equal("Bearer", handler.LastAuthorization?.Scheme);
+        Assert.Equal("test-token", handler.LastAuthorization?.Parameter);
+    }
+
     private static WebApplicationFactory<ManagementProgram> CreateFactory(IProxyControlClient stub) =>
         new WebApplicationFactory<ManagementProgram>().WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services =>
@@ -270,5 +307,21 @@ public class ManagementStatusEndpointTests
                 RouteVersion: 1,
                 RouteCount: request.Routes.Count,
                 ClusterCount: request.Clusters.Count));
+    }
+
+    private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> responseFactory) : HttpMessageHandler
+    {
+        public Uri? LastRequestUri { get; private set; }
+
+        public System.Net.Http.Headers.AuthenticationHeaderValue? LastAuthorization { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            LastRequestUri = request.RequestUri;
+            LastAuthorization = request.Headers.Authorization;
+            return Task.FromResult(responseFactory(request));
+        }
     }
 }

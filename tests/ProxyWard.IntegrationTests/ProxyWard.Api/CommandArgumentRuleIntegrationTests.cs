@@ -64,7 +64,7 @@ public class CommandArgumentRuleIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("enforce", row.Mode);
         Assert.Equal("block", row.Decision);
@@ -115,7 +115,7 @@ public class CommandArgumentRuleIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("audit", row.Mode);
         Assert.Equal("would_block", row.Decision);
@@ -169,7 +169,7 @@ public class CommandArgumentRuleIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("block", row.Decision);
         Assert.Contains("dangerous_command", row.Reasons, StringComparison.Ordinal);
@@ -225,7 +225,7 @@ public class CommandArgumentRuleIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("block", row.Decision);
         Assert.Contains("path_outside_allowed_roots", row.Reasons, StringComparison.Ordinal);
@@ -283,7 +283,7 @@ public class CommandArgumentRuleIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("block", row.Decision);
         Assert.Contains("tool_blocked", row.Reasons, StringComparison.Ordinal);
@@ -421,8 +421,8 @@ public class CommandArgumentRuleIntegrationTests
         """;
     }
 
-    private static List<AuditRow> ReadAuditEvents(string path) =>
-        AuditDatabase.ReadEventually(() =>
+    private static Task<List<AuditRow>> ReadAuditEvents(string path) =>
+        AuditDatabase.ReadEventuallyAsync(() =>
         {
             var rows = new List<AuditRow>();
             using var connection = new SqliteConnection(new SqliteConnectionStringBuilder

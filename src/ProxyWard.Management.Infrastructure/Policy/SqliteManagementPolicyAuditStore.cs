@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Data.Sqlite;
+using ProxyWard.Audit.Sinks;
 using ProxyWard.Management.Application;
 using ProxyWard.Management.Application.Policy;
 
@@ -40,7 +41,7 @@ public sealed class SqliteManagementPolicyAuditStore : IManagementPolicyAuditSto
 
         await using var connection = new SqliteConnection(readConnectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await ConfigureReadConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+        await SqliteAuditSchema.ConfigureReadConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
 
         if (await TableExistsAsync(connection, "audit_events", cancellationToken).ConfigureAwait(false))
         {
@@ -71,8 +72,8 @@ public sealed class SqliteManagementPolicyAuditStore : IManagementPolicyAuditSto
 
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await ConfigureWriteConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
-        await EnsureAuditSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
+        await SqliteAuditSchema.ConfigureWriteConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+        await SqliteAuditSchema.EnsureSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -196,28 +197,6 @@ public sealed class SqliteManagementPolicyAuditStore : IManagementPolicyAuditSto
         return accumulator;
     }
 
-    private static async Task ConfigureReadConnectionAsync(
-        SqliteConnection connection,
-        CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA busy_timeout=5000;";
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async Task ConfigureWriteConnectionAsync(
-        SqliteConnection connection,
-        CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            PRAGMA journal_mode=WAL;
-            PRAGMA synchronous=NORMAL;
-            PRAGMA busy_timeout=5000;
-            """;
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
-
     private static async Task<bool> TableExistsAsync(
         SqliteConnection connection,
         string tableName,
@@ -234,38 +213,6 @@ public sealed class SqliteManagementPolicyAuditStore : IManagementPolicyAuditSto
         command.Parameters.AddWithValue("$table_name", tableName);
 
         return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
-    }
-
-    private static async Task EnsureAuditSchemaAsync(
-        SqliteConnection connection,
-        CancellationToken cancellationToken)
-    {
-        await using var schema = connection.CreateCommand();
-        schema.CommandText = """
-            CREATE TABLE IF NOT EXISTS audit_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp_utc TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                mode TEXT NOT NULL,
-                decision TEXT NOT NULL,
-                server_id TEXT NOT NULL,
-                method TEXT NULL,
-                tool_name TEXT NULL,
-                reasons TEXT NOT NULL,
-                policy_version TEXT NOT NULL,
-                correlation_id TEXT NOT NULL,
-                request_bytes INTEGER NOT NULL,
-                duration_ms INTEGER NOT NULL,
-                payload_json TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp_utc);
-            CREATE INDEX IF NOT EXISTS idx_audit_events_decision ON audit_events(decision);
-            CREATE INDEX IF NOT EXISTS idx_audit_events_server_id ON audit_events(server_id);
-            CREATE INDEX IF NOT EXISTS idx_audit_events_method ON audit_events(method);
-            CREATE INDEX IF NOT EXISTS idx_audit_events_tool_name ON audit_events(tool_name);
-            CREATE INDEX IF NOT EXISTS idx_audit_events_reasons ON audit_events(reasons);
-            """;
-        await schema.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static void AddWindowParameters(SqliteCommand command, ManagementPolicyImpactWindow window)

@@ -89,14 +89,14 @@ public sealed class HttpProxyControlClient : IProxyControlClient
 
     public async Task<ProxyControlStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
-        using var request = CreateAuthorizedRequest(HttpMethod.Get, "/control/status");
+        using var request = CreateAuthorizedRequest(HttpMethod.Get, "control/status");
         using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
         return await ReadStatusAsync(response, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ProxyControlStatus> ApplyModeAsync(string mode, CancellationToken cancellationToken)
     {
-        using var request = CreateAuthorizedRequest(HttpMethod.Patch, "/control/mode");
+        using var request = CreateAuthorizedRequest(HttpMethod.Patch, "control/mode");
         request.Content = new StringContent(
             JsonSerializer.Serialize(new { mode }, JsonOptions),
             Encoding.UTF8,
@@ -109,7 +109,7 @@ public sealed class HttpProxyControlClient : IProxyControlClient
         string yaml,
         CancellationToken cancellationToken)
     {
-        using var request = CreateAuthorizedRequest(HttpMethod.Put, "/control/policy-snapshot");
+        using var request = CreateAuthorizedRequest(HttpMethod.Put, "control/policy-snapshot");
         request.Content = new StringContent(yaml, Encoding.UTF8, "application/x-yaml");
         using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
         return await ReadStatusAsync(response, cancellationToken).ConfigureAwait(false);
@@ -119,7 +119,7 @@ public sealed class HttpProxyControlClient : IProxyControlClient
         ProxyControlYarpConfigRequest requestBody,
         CancellationToken cancellationToken)
     {
-        using var request = CreateAuthorizedRequest(HttpMethod.Put, "/control/yarp-config");
+        using var request = CreateAuthorizedRequest(HttpMethod.Put, "control/yarp-config");
         request.Content = new StringContent(
             JsonSerializer.Serialize(requestBody, JsonOptions),
             Encoding.UTF8,
@@ -213,6 +213,13 @@ public sealed class HttpProxyControlClient : IProxyControlClient
                 "proxy_control_malformed_response",
                 innerException: ex);
         }
+        catch (IOException ex)
+        {
+            throw new ProxyControlClientException(
+                "Proxy control response read failed.",
+                "proxy_control_transport_error",
+                innerException: ex);
+        }
     }
 
     private static string ReadRequiredString(JsonElement root, string propertyName) =>
@@ -242,6 +249,13 @@ public sealed class HttpProxyControlClient : IProxyControlClient
             throw new ProxyControlClientException(
                 "Proxy control returned a malformed response.",
                 "proxy_control_malformed_response",
+                innerException: ex);
+        }
+        catch (IOException ex)
+        {
+            throw new ProxyControlClientException(
+                "Proxy control response read failed.",
+                "proxy_control_transport_error",
                 innerException: ex);
         }
     }

@@ -52,7 +52,7 @@ public class ToolArgumentOverrideIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
         Assert.Equal("allow", row.Decision);
         Assert.Equal("fs.safe-read", row.ToolName);
 
@@ -110,7 +110,7 @@ public class ToolArgumentOverrideIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
         Assert.Equal("block", row.Decision);
         Assert.Equal("fs.other-read", row.ToolName);
         Assert.Contains("path_outside_allowed_roots", row.Reasons, StringComparison.Ordinal);
@@ -170,7 +170,7 @@ public class ToolArgumentOverrideIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
         Assert.Equal("block", row.Decision);
         Assert.Equal("fs.strict-read", row.ToolName);
         Assert.Contains("path_outside_allowed_roots", row.Reasons, StringComparison.Ordinal);
@@ -371,8 +371,8 @@ public class ToolArgumentOverrideIntegrationTests
                 .Select(line => prefix + line));
     }
 
-    private static List<AuditRow> ReadAuditEvents(string path) =>
-        AuditDatabase.ReadEventually(() =>
+    private static Task<List<AuditRow>> ReadAuditEvents(string path) =>
+        AuditDatabase.ReadEventuallyAsync(() =>
         {
             var rows = new List<AuditRow>();
             using var connection = new SqliteConnection(new SqliteConnectionStringBuilder

@@ -50,7 +50,7 @@ public class ToolResponseSecretInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_response_secret_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tool_response_secret_inspection");
         Assert.Equal("block", row.Decision);
         Assert.Equal("tools/call", row.Method);
         Assert.Equal("repos.search", row.ToolName);
@@ -96,7 +96,7 @@ public class ToolResponseSecretInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_response_secret_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tool_response_secret_inspection");
         Assert.Equal("block", row.Decision);
         Assert.Contains("regex", row.PayloadJson, StringComparison.Ordinal);
         Assert.DoesNotContain(secret, row.PayloadJson, StringComparison.Ordinal);
@@ -131,7 +131,7 @@ public class ToolResponseSecretInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_response_secret_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tool_response_secret_inspection");
         Assert.Equal("would_block", row.Decision);
         Assert.Contains("secret_return_blocked", row.Reasons, StringComparison.Ordinal);
         Assert.DoesNotContain(secret, row.PayloadJson, StringComparison.Ordinal);
@@ -166,7 +166,7 @@ public class ToolResponseSecretInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        Assert.DoesNotContain(ReadAuditEvents(dbPath), row => row.EventType == "tool_response_secret_inspection");
+        Assert.DoesNotContain(await ReadAuditEvents(dbPath), row => row.EventType == "tool_response_secret_inspection");
 
         DeleteIfExists(dbPath);
     }
@@ -203,7 +203,7 @@ public class ToolResponseSecretInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_response_secret_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tool_response_secret_inspection");
         Assert.Equal("block", row.Decision);
         Assert.Contains("secret_return_blocked", row.Reasons, StringComparison.Ordinal);
         Assert.DoesNotContain("inspection_unsupported", row.Reasons, StringComparison.Ordinal);
@@ -360,8 +360,8 @@ public class ToolResponseSecretInspectionIntegrationTests
         """;
     }
 
-    private static List<AuditRow> ReadAuditEvents(string path) =>
-        AuditDatabase.ReadEventually(() =>
+    private static Task<List<AuditRow>> ReadAuditEvents(string path) =>
+        AuditDatabase.ReadEventuallyAsync(() =>
         {
             var rows = new List<AuditRow>();
             using var connection = new SqliteConnection(new SqliteConnectionStringBuilder

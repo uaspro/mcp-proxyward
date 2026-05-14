@@ -58,7 +58,7 @@ public class ToolPolicyIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         Assert.Single(rows);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("enforce", row.Mode);
@@ -104,7 +104,7 @@ public class ToolPolicyIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("audit", row.Mode);
         Assert.Equal("would_block", row.Decision);
@@ -159,7 +159,7 @@ public class ToolPolicyIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("enforce", row.Mode);
         Assert.Equal("block", row.Decision);
@@ -210,7 +210,7 @@ public class ToolPolicyIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
         Assert.Equal("block", row.Decision);
         Assert.Equal("repos.search", row.ToolName);
         Assert.Contains("tool_blocked", row.Reasons, StringComparison.Ordinal);
@@ -258,7 +258,7 @@ public class ToolPolicyIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tool_call_policy");
         Assert.Equal("block", row.Decision);
         Assert.Equal("issues.list", row.ToolName);
         Assert.Contains("tool_not_allowed", row.Reasons, StringComparison.Ordinal);
@@ -307,7 +307,7 @@ public class ToolPolicyIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("block", row.Decision);
         Assert.Equal("shell.exec", row.ToolName);
@@ -353,7 +353,7 @@ public class ToolPolicyIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("enforce", row.Mode);
         Assert.Equal("block", row.Decision);
@@ -403,7 +403,7 @@ public class ToolPolicyIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var toolRows = ReadAuditEvents(dbPath)
+        var toolRows = (await ReadAuditEvents(dbPath))
             .Where(r => r.EventType == "tool_call_policy")
             .OrderBy(ReadBatchIndex)
             .ToArray();
@@ -481,7 +481,7 @@ public class ToolPolicyIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var toolRows = ReadAuditEvents(dbPath)
+        var toolRows = (await ReadAuditEvents(dbPath))
             .Where(r => r.EventType == "tool_call_policy")
             .OrderBy(ReadBatchIndex)
             .ToArray();
@@ -546,7 +546,7 @@ public class ToolPolicyIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var toolRows = ReadAuditEvents(dbPath)
+        var toolRows = (await ReadAuditEvents(dbPath))
             .Where(r => r.EventType == "tool_call_policy")
             .OrderBy(ReadBatchIndex)
             .ToArray();
@@ -605,7 +605,7 @@ public class ToolPolicyIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows, r => r.EventType == "tool_call_policy");
         Assert.Equal("allow", row.Decision);
         Assert.Equal("repos.search", row.ToolName);
@@ -731,8 +731,8 @@ public class ToolPolicyIntegrationTests
         """;
     }
 
-    private static List<AuditRow> ReadAuditEvents(string path) =>
-        AuditDatabase.ReadEventually(() =>
+    private static Task<List<AuditRow>> ReadAuditEvents(string path) =>
+        AuditDatabase.ReadEventuallyAsync(() =>
         {
             var rows = new List<AuditRow>();
             using var connection = new SqliteConnection(new SqliteConnectionStringBuilder

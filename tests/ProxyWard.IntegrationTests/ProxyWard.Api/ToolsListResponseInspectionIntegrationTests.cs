@@ -52,7 +52,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var rows = ReadAuditEvents(dbPath);
+        var rows = await ReadAuditEvents(dbPath);
         var row = Assert.Single(rows);
         Assert.Equal("tools_list_response_inspection", row.EventType);
         Assert.Equal("allow", row.Decision);
@@ -112,7 +112,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath));
+        var row = Assert.Single(await ReadAuditEvents(dbPath));
         Assert.Equal("allow", row.Decision);
         Assert.Equal(string.Empty, row.Reasons);
 
@@ -163,7 +163,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath));
+        var row = Assert.Single(await ReadAuditEvents(dbPath));
         Assert.Equal("allow", row.Decision);
 
         DeleteIfExists(dbPath);
@@ -213,7 +213,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath));
+        var row = Assert.Single(await ReadAuditEvents(dbPath));
         Assert.Equal("allow", row.Decision);
 
         DeleteIfExists(dbPath);
@@ -264,7 +264,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath));
+        var row = Assert.Single(await ReadAuditEvents(dbPath));
         Assert.Equal("allow", row.Decision);
 
         DeleteIfExists(dbPath);
@@ -313,7 +313,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath));
+        var row = Assert.Single(await ReadAuditEvents(dbPath));
         Assert.Equal("allow", row.Decision);
 
         DeleteIfExists(dbPath);
@@ -349,7 +349,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
         Assert.Equal("allow", row.Decision);
         Assert.Equal(string.Empty, row.Reasons);
 
@@ -400,7 +400,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath));
+        var row = Assert.Single(await ReadAuditEvents(dbPath));
         Assert.Equal("tools_list_response_inspection", row.EventType);
         Assert.True(row.DurationMs >= 40);
 
@@ -434,7 +434,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath));
+        var row = Assert.Single(await ReadAuditEvents(dbPath));
         Assert.Equal("tools_list_response_inspection", row.EventType);
         Assert.Equal("allow", row.Decision);
         Assert.Equal(string.Empty, row.Reasons);
@@ -487,7 +487,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
         Assert.Equal("allow", row.Decision);
         Assert.Equal(string.Empty, row.Reasons);
 
@@ -531,7 +531,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath));
+        var row = Assert.Single(await ReadAuditEvents(dbPath));
         Assert.Equal("tools_list_response_inspection", row.EventType);
         Assert.Equal("allow", row.Decision);
         Assert.Equal(string.Empty, row.Reasons);
@@ -574,7 +574,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
         Assert.Equal("allow", row.Decision);
         Assert.Equal(string.Empty, row.Reasons);
 
@@ -616,7 +616,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
         Assert.Equal("block", row.Decision);
         Assert.Contains("inspection_unsupported", row.Reasons, StringComparison.Ordinal);
 
@@ -653,7 +653,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
         Assert.Equal("block", row.Decision);
         Assert.Contains("inspection_unsupported", row.Reasons, StringComparison.Ordinal);
 
@@ -693,7 +693,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
         Assert.Equal("warn", row.Decision);
         Assert.Contains("tool_description_changed", row.Reasons, StringComparison.Ordinal);
 
@@ -706,7 +706,7 @@ public class ToolsListResponseInspectionIntegrationTests
             .ToArray();
         Assert.Equal(["repos.search"], driftedToolNames);
 
-        var reviews = ReadDriftReviews(dbPath);
+        var reviews = await ReadDriftReviews(dbPath);
         var review = Assert.Single(reviews);
         Assert.Equal("github", review.ServerId);
         Assert.Equal("repos.search", review.ToolName);
@@ -725,7 +725,7 @@ public class ToolsListResponseInspectionIntegrationTests
             .ToArray();
         Assert.Equal([review.Id], driftReviewIds);
 
-        var diffMetadata = Assert.Single(ReadDiffMetadata(dbPath));
+        var diffMetadata = Assert.Single(await ReadDiffMetadata(dbPath));
         Assert.Equal(review.Id, diffMetadata.DriftReviewId);
         Assert.Contains("Old description", diffMetadata.BeforeJson, StringComparison.Ordinal);
         Assert.Contains("New description", diffMetadata.AfterJson, StringComparison.Ordinal);
@@ -787,11 +787,11 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
         Assert.Equal("block", row.Decision);
         Assert.Contains("tool_schema_changed", row.Reasons, StringComparison.Ordinal);
 
-        var reviews = ReadDriftReviews(dbPath);
+        var reviews = await ReadDriftReviews(dbPath);
         var review = Assert.Single(reviews);
         Assert.Equal("github", review.ServerId);
         Assert.Equal("repos.search", review.ToolName);
@@ -810,7 +810,7 @@ public class ToolsListResponseInspectionIntegrationTests
             .ToArray();
         Assert.Equal([review.Id], driftReviewIds);
 
-        var diffMetadata = Assert.Single(ReadDiffMetadata(dbPath));
+        var diffMetadata = Assert.Single(await ReadDiffMetadata(dbPath));
         Assert.Equal(review.Id, diffMetadata.DriftReviewId);
         Assert.Contains("\"q\"", diffMetadata.BeforeJson, StringComparison.Ordinal);
         Assert.DoesNotContain("\"limit\"", diffMetadata.BeforeJson, StringComparison.Ordinal);
@@ -852,7 +852,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
         Assert.Equal("allow", row.Decision);
         Assert.DoesNotContain("driftReviewIds", row.PayloadJson, StringComparison.Ordinal);
 
@@ -904,7 +904,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
         Assert.Equal("block", row.Decision);
         Assert.Contains("tool_schema_changed", row.Reasons, StringComparison.Ordinal);
 
@@ -961,8 +961,8 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_SCHEMA_DIFF_CAPTURE_VALUES", null);
         }
 
-        var review = Assert.Single(ReadDriftReviews(dbPath));
-        var diffMetadata = Assert.Single(ReadDiffMetadata(dbPath));
+        var review = Assert.Single(await ReadDriftReviews(dbPath));
+        var diffMetadata = Assert.Single(await ReadDiffMetadata(dbPath));
         Assert.Equal(review.Id, diffMetadata.DriftReviewId);
         Assert.Null(diffMetadata.BeforeJson);
         Assert.Null(diffMetadata.AfterJson);
@@ -1008,7 +1008,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var review = Assert.Single(ReadDriftReviews(dbPath));
+        var review = Assert.Single(await ReadDriftReviews(dbPath));
         Assert.Equal("pending", review.Status);
         Assert.Equal(1, review.FromVersion);
         Assert.Equal(2, review.ToVersion);
@@ -1058,7 +1058,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
         Assert.Equal("warn", row.Decision);
         Assert.Contains("tool_description_changed", row.Reasons, StringComparison.Ordinal);
 
@@ -1098,7 +1098,7 @@ public class ToolsListResponseInspectionIntegrationTests
             Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
 
-        var row = Assert.Single(ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
+        var row = Assert.Single(await ReadAuditEvents(dbPath), r => r.EventType == "tools_list_response_inspection");
         Assert.Equal("allow", row.Decision);
         Assert.Equal(string.Empty, row.Reasons);
 
@@ -1621,8 +1621,8 @@ public class ToolsListResponseInspectionIntegrationTests
                   - rm
         """;
 
-    private static List<DriftReviewDbRow> ReadDriftReviews(string path) =>
-        AuditDatabase.ReadEventually(() =>
+    private static Task<List<DriftReviewDbRow>> ReadDriftReviews(string path) =>
+        AuditDatabase.ReadEventuallyAsync(() =>
         {
             var rows = new List<DriftReviewDbRow>();
             using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
@@ -1658,8 +1658,8 @@ public class ToolsListResponseInspectionIntegrationTests
             return rows;
         });
 
-    private static List<DiffMetadataDbRow> ReadDiffMetadata(string path) =>
-        AuditDatabase.ReadEventually(() =>
+    private static Task<List<DiffMetadataDbRow>> ReadDiffMetadata(string path) =>
+        AuditDatabase.ReadEventuallyAsync(() =>
         {
             var rows = new List<DiffMetadataDbRow>();
             using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
@@ -1691,8 +1691,8 @@ public class ToolsListResponseInspectionIntegrationTests
             return rows;
         });
 
-    private static List<AuditRow> ReadAuditEvents(string path) =>
-        AuditDatabase.ReadEventually(() =>
+    private static Task<List<AuditRow>> ReadAuditEvents(string path) =>
+        AuditDatabase.ReadEventuallyAsync(() =>
         {
             var rows = new List<AuditRow>();
             using var connection = new SqliteConnection(new SqliteConnectionStringBuilder

@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
+using ProxyWard.Audit.Sinks;
 using ProxyWard.Management.Application.Audit;
 
 namespace ProxyWard.Management.Infrastructure.Audit;
@@ -49,7 +51,7 @@ public sealed class ManagementAuditEventRepository : IManagementAuditEventReposi
 
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await ConfigureConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+        await SqliteAuditSchema.ConfigureReadConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
 
         var totalCount = await CountAsync(connection, filter, cancellationToken).ConfigureAwait(false);
         var items = await ReadItemsAsync(connection, filter, offset, pageSize, cancellationToken).ConfigureAwait(false);
@@ -66,7 +68,7 @@ public sealed class ManagementAuditEventRepository : IManagementAuditEventReposi
 
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await ConfigureConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+        await SqliteAuditSchema.ConfigureReadConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
@@ -111,7 +113,7 @@ public sealed class ManagementAuditEventRepository : IManagementAuditEventReposi
 
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await ConfigureConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+        await SqliteAuditSchema.ConfigureReadConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
 
         var filter = new SqlFilter(
             " WHERE id = $id",
@@ -124,15 +126,6 @@ public sealed class ManagementAuditEventRepository : IManagementAuditEventReposi
     {
         var requested = requestedPageSize <= 0 ? 50 : requestedPageSize;
         return Math.Min(requested, _options.MaxPageSize);
-    }
-
-    private static async Task ConfigureConnectionAsync(
-        SqliteConnection connection,
-        CancellationToken cancellationToken)
-    {
-        await using var pragma = connection.CreateCommand();
-        pragma.CommandText = "PRAGMA busy_timeout=5000;";
-        await pragma.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<long> CountAsync(
@@ -193,31 +186,74 @@ public sealed class ManagementAuditEventRepository : IManagementAuditEventReposi
 
     private static ManagementAuditEventItem ReadItem(SqliteDataReader reader)
     {
-        var payload = JsonNode.Parse(reader.GetString(13));
-        var argumentSummary = payload?["argumentSummary"]?.DeepClone();
-
         return new ManagementAuditEventItem(
             Id: reader.GetInt64(0),
-            TimestampUtc: DateTimeOffset.Parse(
-                reader.GetString(1),
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
-            EventType: reader.GetString(2),
-            Mode: reader.GetString(3),
-            Decision: reader.GetString(4),
-            ServerId: reader.GetString(5),
-            Method: reader.IsDBNull(6) ? null : reader.GetString(6),
-            ToolName: reader.IsDBNull(7) ? null : reader.GetString(7),
-            Reasons: SplitReasons(reader.GetString(8)),
-            PolicyVersion: reader.GetString(9),
-            CorrelationId: reader.GetString(10),
-            RequestBytes: reader.GetInt64(11),
-            DurationMs: reader.GetInt64(12),
-            ArgumentSummary: argumentSummary);
+            TimestampUtc: ReadTimestampOrUnixEpoch(reader, 1),
+            EventType: ReadTextOrFallback(reader, 2, "unknown"),
+            Mode: ReadTextOrFallback(reader, 3, "unknown"),
+            Decision: ReadTextOrFallback(reader, 4, "unknown"),
+            ServerId: ReadTextOrFallback(reader, 5, "unknown"),
+            Method: ReadOptionalText(reader, 6),
+            ToolName: ReadOptionalText(reader, 7),
+            Reasons: SplitReasons(ReadOptionalText(reader, 8)),
+            PolicyVersion: ReadTextOrFallback(reader, 9, "unknown"),
+            CorrelationId: ReadTextOrFallback(reader, 10, "unknown"),
+            RequestBytes: ReadInt64OrZero(reader, 11),
+            DurationMs: ReadInt64OrZero(reader, 12),
+            ArgumentSummary: ReadArgumentSummary(ReadOptionalText(reader, 13)));
     }
 
-    private static IReadOnlyList<string> SplitReasons(string reasons) =>
-        reasons.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    private static IReadOnlyList<string> SplitReasons(string? reasons) =>
+        string.IsNullOrWhiteSpace(reasons)
+            ? []
+            : reasons.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static string? ReadOptionalText(SqliteDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        var value = reader.GetString(ordinal).Trim();
+        return value.Length == 0 ? null : value;
+    }
+
+    private static string ReadTextOrFallback(SqliteDataReader reader, int ordinal, string fallback) =>
+        ReadOptionalText(reader, ordinal) ?? fallback;
+
+    private static long ReadInt64OrZero(SqliteDataReader reader, int ordinal) =>
+        reader.IsDBNull(ordinal) ? 0L : reader.GetInt64(ordinal);
+
+    private static DateTimeOffset ReadTimestampOrUnixEpoch(SqliteDataReader reader, int ordinal)
+    {
+        var raw = ReadOptionalText(reader, ordinal);
+        return DateTimeOffset.TryParse(
+            raw,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+                ? parsed
+                : DateTimeOffset.UnixEpoch;
+    }
+
+    private static JsonNode? ReadArgumentSummary(string? payloadJson)
+    {
+        if (string.IsNullOrWhiteSpace(payloadJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            var payload = JsonNode.Parse(payloadJson);
+            return payload?["argumentSummary"]?.DeepClone();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     private static SqlFilter BuildFilter(ManagementAuditEventQuery query)
     {

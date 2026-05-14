@@ -149,12 +149,27 @@ internal static class ManagementApiServiceCollectionExtensions
         services.AddScoped<IManagementStatusStoreProbe, SqliteManagementStatusStoreProbe>();
         services.AddHttpClient<IProxyControlClient, HttpProxyControlClient>(client =>
         {
-            client.BaseAddress = options.ProxyControlBaseUrl;
+            client.BaseAddress = EnsureTrailingSlash(options.ProxyControlBaseUrl);
             client.Timeout = ProxyControlProbeTimeout;
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
         {
             AllowAutoRedirect = false
         });
         services.AddScoped<ManagementStatusService>();
+    }
+
+    private static Uri EnsureTrailingSlash(Uri uri)
+    {
+        if (uri.AbsolutePath.EndsWith("/", StringComparison.Ordinal))
+        {
+            return uri;
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Path = uri.AbsolutePath + "/"
+        };
+
+        return builder.Uri;
     }
 }

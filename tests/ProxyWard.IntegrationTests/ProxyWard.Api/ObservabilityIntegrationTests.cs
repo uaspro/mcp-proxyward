@@ -180,7 +180,7 @@ public class ObservabilityIntegrationTests
             Assert.Equal(0, upstream.RequestCount);
 
             var auditRow = Assert.Single(
-                ReadAuditEvents(dbPath),
+                await ReadAuditEvents(dbPath),
                 row => row.EventType == "tool_call_policy");
             var auditSummary = auditRow.ArgumentSummary.ToJsonString();
             var policyActivity = Assert.Single(
@@ -267,7 +267,7 @@ public class ObservabilityIntegrationTests
             Assert.Equal(1, upstream.RequestCount);
 
             var auditRow = Assert.Single(
-                ReadAuditEvents(dbPath),
+                await ReadAuditEvents(dbPath),
                 row => row.EventType == "tool_call_policy");
             var auditSummary = auditRow.ArgumentSummary.ToJsonString();
             var policyActivity = Assert.Single(
@@ -551,8 +551,8 @@ public class ObservabilityIntegrationTests
         await store.RecordAsync(snapshot, new DateTimeOffset(2026, 5, 3, 12, 0, 0, TimeSpan.Zero), CancellationToken.None);
     }
 
-    private static List<AuditRow> ReadAuditEvents(string path) =>
-        AuditDatabase.ReadEventually(() =>
+    private static Task<List<AuditRow>> ReadAuditEvents(string path) =>
+        AuditDatabase.ReadEventuallyAsync(() =>
         {
             var rows = new List<AuditRow>();
             using var connection = new SqliteConnection(new SqliteConnectionStringBuilder

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Sinks;
 using ManagementProgram = ProxyWard.Management.Api.Program;
@@ -132,6 +133,40 @@ public class ManagementAuditEventEndpointTests
         }
     }
 
+    [Fact]
+    public async Task AuditEventsEndpointToleratesMalformedAuditPayloads()
+    {
+        var dbPath = TempDbPath();
+        await SeedMalformedRowAsync(dbPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", dbPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<ManagementProgram>();
+            using var client = factory.CreateClient();
+
+            using var listResponse = await client.GetAsync("/api/audit/events?pageSize=10");
+            Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+
+            await using (var stream = await listResponse.Content.ReadAsStreamAsync())
+            using (var payload = await JsonDocument.ParseAsync(stream))
+            {
+                var item = Assert.Single(payload.RootElement.GetProperty("items").EnumerateArray());
+                Assert.Equal("unknown", item.GetProperty("eventType").GetString());
+                Assert.Equal("unknown", item.GetProperty("decision").GetString());
+                Assert.Equal(JsonValueKind.Null, item.GetProperty("argumentSummary").ValueKind);
+                Assert.Equal(DateTimeOffset.UnixEpoch, item.GetProperty("timestampUtc").GetDateTimeOffset());
+            }
+
+            using var detailResponse = await client.GetAsync("/api/audit/events/1");
+            Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", null);
+        }
+    }
+
     private static async Task SeedDecisionRowsAsync(string dbPath)
     {
         using var sink = new SqliteAuditSink(dbPath);
@@ -139,6 +174,52 @@ public class ManagementAuditEventEndpointTests
         await sink.WriteAsync(CreateEvent(2, AuditDecision.Block, "beta", "tools/call", "fs.read", ["path_traversal"]), CancellationToken.None);
         await sink.WriteAsync(CreateEvent(3, AuditDecision.WouldBlock, "beta", "tools/call", "net.fetch", ["private_network"]), CancellationToken.None);
         await sink.WriteAsync(CreateEvent(4, AuditDecision.Warn, "gamma", "tools/list", null, ["schema_drift"]), CancellationToken.None);
+    }
+
+    private static async Task SeedMalformedRowAsync(string dbPath)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = SqliteOpenMode.ReadWriteCreate
+        }.ToString());
+        await connection.OpenAsync();
+        await SqliteAuditSchema.ConfigureWriteConnectionAsync(connection, CancellationToken.None);
+        await SqliteAuditSchema.EnsureSchemaAsync(connection, CancellationToken.None);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO audit_events (
+                timestamp_utc,
+                event_type,
+                mode,
+                decision,
+                server_id,
+                method,
+                tool_name,
+                reasons,
+                policy_version,
+                correlation_id,
+                request_bytes,
+                duration_ms,
+                payload_json
+            ) VALUES (
+                'not-a-timestamp',
+                '',
+                '',
+                '',
+                '',
+                NULL,
+                NULL,
+                '',
+                '',
+                '',
+                0,
+                0,
+                '{not-json'
+            );
+            """;
+        await command.ExecuteNonQueryAsync();
     }
 
     private static AuditEvent CreateEvent(

@@ -7,6 +7,9 @@ namespace ProxyWard.Management.Infrastructure.Status;
 
 public sealed class SqliteManagementStatusStoreProbe : IManagementStatusStoreProbe
 {
+    private const int BusyTimeoutMilliseconds = 5000;
+    private const int CommandTimeoutSeconds = 2;
+
     private readonly ManagementApiOptions _options;
 
     public SqliteManagementStatusStoreProbe(ManagementApiOptions options)
@@ -23,7 +26,8 @@ public sealed class SqliteManagementStatusStoreProbe : IManagementStatusStorePro
             {
                 DataSource = Path.GetFullPath(_options.AuditDatabasePath),
                 Mode = SqliteOpenMode.ReadOnly,
-                Cache = SqliteCacheMode.Shared
+                Cache = SqliteCacheMode.Shared,
+                DefaultTimeout = CommandTimeoutSeconds
             }.ToString();
 
             connection = new SqliteConnection(connectionString);
@@ -31,12 +35,14 @@ public sealed class SqliteManagementStatusStoreProbe : IManagementStatusStorePro
 
             await using (var pragma = connection.CreateCommand())
             {
-                pragma.CommandText = "PRAGMA busy_timeout=5000;";
+                pragma.CommandTimeout = CommandTimeoutSeconds;
+                pragma.CommandText = $"PRAGMA busy_timeout={BusyTimeoutMilliseconds};";
                 await pragma.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 
             await using (var probe = connection.CreateCommand())
             {
+                probe.CommandTimeout = CommandTimeoutSeconds;
                 probe.CommandText = "SELECT 1;";
                 await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -64,11 +70,24 @@ public sealed class SqliteManagementStatusStoreProbe : IManagementStatusStorePro
             ComponentStatusValues.Healthy,
             Notes: null,
             Details: new Dictionary<string, object?> { ["sqlitePath"] = _options.AuditDatabasePath });
+        var openedConnection = connection
+            ?? throw new InvalidOperationException("SQLite connection was not opened.");
 
         ComponentReport schemaLock;
         try
         {
-            await using var schemaCommand = connection.CreateCommand();
+            if (!await TableExistsAsync(openedConnection, "tool_schema_versions", cancellationToken).ConfigureAwait(false))
+            {
+                schemaLock = new ComponentReport(
+                    ComponentStatusValues.Unknown,
+                    Notes: "tool_schema_versions table not initialized",
+                    Details: null);
+
+                return (auditDb, schemaLock);
+            }
+
+            await using var schemaCommand = openedConnection.CreateCommand();
+            schemaCommand.CommandTimeout = CommandTimeoutSeconds;
             schemaCommand.CommandText = "SELECT COUNT(*) FROM tool_schema_versions;";
             var raw = await schemaCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
             var count = raw is null ? 0L : Convert.ToInt64(raw, CultureInfo.InvariantCulture);
@@ -76,13 +95,6 @@ public sealed class SqliteManagementStatusStoreProbe : IManagementStatusStorePro
                 ComponentStatusValues.Healthy,
                 Notes: null,
                 Details: new Dictionary<string, object?> { ["trackedSnapshotCount"] = count });
-        }
-        catch (SqliteException ex) when (IsTableMissing(ex))
-        {
-            schemaLock = new ComponentReport(
-                ComponentStatusValues.Unknown,
-                Notes: "tool_schema_versions table not initialized",
-                Details: null);
         }
         catch (SqliteException)
         {
@@ -93,12 +105,28 @@ public sealed class SqliteManagementStatusStoreProbe : IManagementStatusStorePro
         }
         finally
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            await openedConnection.DisposeAsync().ConfigureAwait(false);
         }
 
         return (auditDb, schemaLock);
     }
 
-    private static bool IsTableMissing(SqliteException ex) =>
-        ex.Message.Contains("no such table", StringComparison.OrdinalIgnoreCase);
+    private static async Task<bool> TableExistsAsync(
+        SqliteConnection connection,
+        string tableName,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandTimeout = CommandTimeoutSeconds;
+        command.CommandText = """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name = $table_name
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$table_name", tableName);
+
+        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
+    }
 }

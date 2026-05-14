@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Sinks;
 using ManagementProgram = ProxyWard.Management.Api.Program;
@@ -239,6 +240,41 @@ public class ManagementOverviewEndpointTests
         }
     }
 
+    [Fact]
+    public async Task OverviewEndpointToleratesMalformedAuditRows()
+    {
+        var dbPath = TempDbPath();
+        var windowFrom = new DateTimeOffset(2026, 5, 6, 10, 0, 0, TimeSpan.Zero);
+        var windowTo = windowFrom.AddSeconds(120);
+
+        await SeedMalformedOverviewRowAsync(dbPath, windowFrom.AddSeconds(15));
+        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<ManagementProgram>();
+            using var client = factory.CreateClient();
+
+            var url = $"/api/overview?fromUtc={IsoZ(windowFrom)}&toUtc={IsoZ(windowTo)}&bucketSeconds=10";
+            using var response = await client.GetAsync(url);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+            var root = payload.RootElement;
+
+            Assert.Equal(JsonValueKind.Null, root.GetProperty("latencyP95Ms").ValueKind);
+            Assert.Equal(1.0, root.GetProperty("blockRate").GetDouble(), 5);
+            Assert.Empty(root.GetProperty("topReasons").EnumerateArray());
+            Assert.Equal(1, root.GetProperty("series").EnumerateArray().Sum(point => point.GetProperty("total").GetInt32()));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        }
+    }
+
     [Theory]
     [InlineData("/api/overview?fromUtc=2026-05-06T10:00:00Z&toUtc=2026-05-06T09:00:00Z&bucketSeconds=60")] // toUtc < fromUtc
     [InlineData("/api/overview?fromUtc=2026-04-01T10:00:00Z&toUtc=2026-05-02T10:00:01Z&bucketSeconds=3600")] // > 30 days
@@ -426,6 +462,75 @@ public class ManagementOverviewEndpointTests
             DurationMs: durationMs,
             ArgumentSummary: JsonNode.Parse("""{"token":"[redacted]"}"""),
             BatchSize: 0);
+
+    private static async Task SeedMalformedOverviewRowAsync(string dbPath, DateTimeOffset timestamp)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = SqliteOpenMode.ReadWriteCreate
+        }.ToString());
+        await connection.OpenAsync();
+        await SqliteAuditSchema.ConfigureWriteConnectionAsync(connection, CancellationToken.None);
+
+        await using (var schema = connection.CreateCommand())
+        {
+            schema.CommandText = """
+                CREATE TABLE audit_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp_utc TEXT NULL,
+                    event_type TEXT NULL,
+                    mode TEXT NULL,
+                    decision TEXT NULL,
+                    server_id TEXT NULL,
+                    method TEXT NULL,
+                    tool_name TEXT NULL,
+                    reasons TEXT NULL,
+                    policy_version TEXT NULL,
+                    correlation_id TEXT NULL,
+                    request_bytes INTEGER NULL,
+                    duration_ms INTEGER NULL,
+                    payload_json TEXT NULL
+                );
+                """;
+            await schema.ExecuteNonQueryAsync();
+        }
+
+        await using var insert = connection.CreateCommand();
+        insert.CommandText = """
+            INSERT INTO audit_events (
+                timestamp_utc,
+                event_type,
+                mode,
+                decision,
+                server_id,
+                method,
+                tool_name,
+                reasons,
+                policy_version,
+                correlation_id,
+                request_bytes,
+                duration_ms,
+                payload_json
+            ) VALUES (
+                $timestamp_utc,
+                'tool_call_policy',
+                'audit',
+                'block',
+                'alpha',
+                'tools/call',
+                'fs.read',
+                NULL,
+                'policy-1',
+                'corr-malformed',
+                0,
+                NULL,
+                '{not-json'
+            );
+            """;
+        insert.Parameters.AddWithValue("$timestamp_utc", timestamp.UtcDateTime.ToString("o", CultureInfo.InvariantCulture));
+        await insert.ExecuteNonQueryAsync();
+    }
 
     private static string TempDbPath() =>
         Path.Combine(Path.GetTempPath(), $"proxyward-management-overview-{Guid.NewGuid():N}.db");

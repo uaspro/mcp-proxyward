@@ -4,7 +4,9 @@ namespace ProxyWard.IntegrationTests;
 
 internal static class AuditDatabase
 {
-    public static List<T> ReadEventually<T>(Func<List<T>> readOnce)
+    public static async Task<List<T>> ReadEventuallyAsync<T>(
+        Func<List<T>> readOnce,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(readOnce);
 
@@ -26,7 +28,7 @@ internal static class AuditDatabase
                 lastException = ex;
             }
 
-            Thread.Sleep(25);
+            await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
         }
 
         if (lastException is not null)
