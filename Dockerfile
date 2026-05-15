@@ -3,6 +3,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
+COPY Directory.Build.props ./
 COPY src/ProxyWard.Api/ProxyWard.Api.csproj src/ProxyWard.Api/
 COPY src/ProxyWard.Audit/ProxyWard.Audit.csproj src/ProxyWard.Audit/
 COPY src/ProxyWard.Core/ProxyWard.Core.csproj src/ProxyWard.Core/
