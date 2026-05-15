@@ -9,7 +9,6 @@ using ProxyWard.Api.Observability;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Redaction;
 using ProxyWard.Core.JsonRpc;
-using ProxyWard.Core.Mcp;
 using ProxyWard.Core.Policies;
 using ProxyWard.Locking.Lockfiles;
 using ProxyWard.Locking.Persistence;

@@ -3,7 +3,6 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ProxyWard.Management.Application.Status;
-using ProxyWard.Policy.Configuration;
 
 namespace ProxyWard.Management.Application.Policy;
 

@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using ProxyWard.Audit.Events;
-using ProxyWard.Audit.Sinks;
 using ProxyWard.Policy.Configuration;
 using ProxyWard.Proxy.Application.Runtime;
 

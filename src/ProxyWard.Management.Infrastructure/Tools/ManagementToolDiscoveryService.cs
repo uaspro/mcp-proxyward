@@ -1,10 +1,8 @@
-using System.Net;
 using System.Text;
 using System.Text.Json;
 using Npgsql;
 using ProxyWard.Locking.Persistence;
 using ProxyWard.Locking.Tools;
-using ProxyWard.Management.Application;
 using ProxyWard.Management.Application.Tools;
 using ProxyWard.Policy.Persistence;
 

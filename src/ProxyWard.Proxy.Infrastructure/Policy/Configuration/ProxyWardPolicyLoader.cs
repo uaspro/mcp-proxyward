@@ -684,6 +684,7 @@ public static class ProxyWardPolicyLoader
             _ => "failClosed"
         };
 
+#pragma warning disable CA1812 // YAML DTOs are instantiated by YamlDotNet during deserialization.
     private sealed class ProxyWardPolicyYaml
     {
         public string? Mode { get; set; }
@@ -814,4 +815,5 @@ public static class ProxyWardPolicyLoader
         public bool? BlockShell { get; set; }
         public List<string>? Dangerous { get; set; }
     }
+#pragma warning restore CA1812
 }

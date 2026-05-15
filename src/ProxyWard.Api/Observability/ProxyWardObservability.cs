@@ -1,6 +1,5 @@
 using System.Reflection;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
-using OpenTelemetry;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;

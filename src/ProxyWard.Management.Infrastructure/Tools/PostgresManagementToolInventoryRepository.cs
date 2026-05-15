@@ -15,7 +15,7 @@ public sealed class PostgresManagementToolInventoryRepository : IManagementToolI
             ["rejected"] = 2,
             ["blocked"] = 3,
             ["pending"] = 4
-    };
+        };
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly IPolicyStore _policyStore;

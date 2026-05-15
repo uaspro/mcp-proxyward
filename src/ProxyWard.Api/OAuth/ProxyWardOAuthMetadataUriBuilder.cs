@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Primitives;
 using ProxyWard.Policy.Configuration;
 
 namespace ProxyWard.Api.OAuth;

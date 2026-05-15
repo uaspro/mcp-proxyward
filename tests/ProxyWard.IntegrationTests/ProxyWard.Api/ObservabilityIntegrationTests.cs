@@ -100,7 +100,7 @@ public class ObservabilityIntegrationTests
                 {
                     builder.ConfigureTestServices(services =>
                     {
-                        services.AddSingleton<IAuditSink, ThrowingAuditSink>();
+                        services.AddSingleton<IAuditSink>(_ => new ThrowingAuditSink());
                     });
                 });
             using var client = factory.CreateClient();
