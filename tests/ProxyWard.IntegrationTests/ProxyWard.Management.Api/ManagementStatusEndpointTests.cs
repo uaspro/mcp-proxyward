@@ -143,7 +143,7 @@ public class ManagementStatusEndpointTests
 
             using var response = await client.GetAsync("/api/status");
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
 
             await using var stream = await response.Content.ReadAsStreamAsync();
             using var payload = await JsonDocument.ParseAsync(stream);

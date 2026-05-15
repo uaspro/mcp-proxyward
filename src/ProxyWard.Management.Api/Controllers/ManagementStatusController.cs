@@ -18,6 +18,11 @@ public sealed class ManagementStatusController : ControllerBase
     public async Task<IActionResult> Get(CancellationToken cancellationToken)
     {
         var response = await _statusService.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        if (response.Status == ComponentStatusValues.Unhealthy)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, response);
+        }
+
         return Ok(response);
     }
 }
