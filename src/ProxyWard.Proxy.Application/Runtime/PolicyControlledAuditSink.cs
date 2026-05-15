@@ -1,13 +1,11 @@
 using ProxyWard.Audit.Events;
-using ProxyWard.Audit.Sinks;
 
-namespace ProxyWard.Api.Runtime;
+namespace ProxyWard.Proxy.Application.Runtime;
 
 public sealed class PolicyControlledAuditSink : IAuditSink, IAsyncDisposable, IDisposable
 {
     private readonly IProxyWardPolicyProvider _policyProvider;
     private readonly IAuditSink _enabledSink;
-    private readonly IAuditSink _disabledSink = new NullAuditSink();
     private bool _disposed;
 
     public PolicyControlledAuditSink(
@@ -25,8 +23,9 @@ public sealed class PolicyControlledAuditSink : IAuditSink, IAsyncDisposable, ID
             throw new ObjectDisposedException(nameof(PolicyControlledAuditSink));
         }
 
-        return (_policyProvider.Current.Audit.Enabled ? _enabledSink : _disabledSink)
-            .WriteAsync(auditEvent, cancellationToken);
+        return _policyProvider.Current.Audit.Enabled
+            ? _enabledSink.WriteAsync(auditEvent, cancellationToken)
+            : ValueTask.CompletedTask;
     }
 
     public async ValueTask DisposeAsync()

@@ -16,12 +16,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\ProxyWard.Core\ProxyWard.Core.csproj" />
     <ProjectReference Include="..\..\src\ProxyWard.Api\ProxyWard.Api.csproj" />
-    <ProjectReference Include="..\..\src\ProxyWard.Policy\ProxyWard.Policy.csproj" />
-    <ProjectReference Include="..\..\src\ProxyWard.Locking\ProxyWard.Locking.csproj" />
-    <ProjectReference Include="..\..\src\ProxyWard.Audit\ProxyWard.Audit.csproj" />
     <ProjectReference Include="..\..\src\ProxyWard.Management.Application\ProxyWard.Management.Application.csproj" />
+    <ProjectReference Include="..\..\src\ProxyWard.SharedKernel\ProxyWard.SharedKernel.csproj" />
+    <ProjectReference Include="..\..\src\ProxyWard.Proxy.Domain\ProxyWard.Proxy.Domain.csproj" />
+    <ProjectReference Include="..\..\src\ProxyWard.Proxy.Application\ProxyWard.Proxy.Application.csproj" />
+    <ProjectReference Include="..\..\src\ProxyWard.Proxy.Infrastructure\ProxyWard.Proxy.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

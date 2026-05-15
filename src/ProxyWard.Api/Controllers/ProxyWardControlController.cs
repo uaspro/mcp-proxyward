@@ -2,9 +2,9 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using ProxyWard.Api.Control;
-using ProxyWard.Api.Runtime;
-using ProxyWard.Api.Yarp;
 using ProxyWard.Policy.Configuration;
+using ProxyWard.Proxy.Application.Runtime;
+using ProxyWard.Proxy.Infrastructure.Yarp;
 
 namespace ProxyWard.Api.Controllers;
 

@@ -21,15 +21,18 @@ public sealed class ManagementPolicyModeService
     private readonly IProxyControlClient _proxyControlClient;
     private readonly IManagementPolicySnapshotStore _policySnapshots;
     private readonly IManagementPolicyAuditStore _auditStore;
+    private readonly IManagementPolicyYamlCodec _policyYaml;
 
     public ManagementPolicyModeService(
         IProxyControlClient proxyControlClient,
         IManagementPolicySnapshotStore policySnapshots,
-        IManagementPolicyAuditStore auditStore)
+        IManagementPolicyAuditStore auditStore,
+        IManagementPolicyYamlCodec policyYaml)
     {
         _proxyControlClient = proxyControlClient ?? throw new ArgumentNullException(nameof(proxyControlClient));
         _policySnapshots = policySnapshots ?? throw new ArgumentNullException(nameof(policySnapshots));
         _auditStore = auditStore ?? throw new ArgumentNullException(nameof(auditStore));
+        _policyYaml = policyYaml ?? throw new ArgumentNullException(nameof(policyYaml));
     }
 
     public async Task<ManagementPolicyModeImpactResponse> GetImpactAsync(
@@ -59,7 +62,7 @@ public sealed class ManagementPolicyModeService
         var targetMode = NormalizeMode(request.Mode);
         var currentStatus = await _proxyControlClient.GetStatusAsync(cancellationToken).ConfigureAwait(false);
         var currentPolicy = await _policySnapshots.InitializeAndReadCurrentAsync(
-            ProxyWardDefaultPolicy.CreateYaml(),
+            _policyYaml.CreateDefaultYaml(),
             cancellationToken).ConfigureAwait(false);
         var window = NormalizeWindow(request.ImpactFromUtc, request.ImpactToUtc);
         var impact = await BuildImpactAsync(targetMode, currentStatus, window, cancellationToken).ConfigureAwait(false);
@@ -85,10 +88,10 @@ public sealed class ManagementPolicyModeService
             .ApplyModeAsync(targetMode, cancellationToken)
             .ConfigureAwait(false);
 
-        var persistedPolicy = ProxyWardPolicyLoader.WithMode(
+        var persistedPolicy = _policyYaml.WithMode(
             currentPolicy.Policy,
             targetMode == "enforce" ? ProxyWardMode.Enforce : ProxyWardMode.Audit);
-        var persistedYaml = ProxyWardPolicySerializer.ToYaml(persistedPolicy);
+        var persistedYaml = _policyYaml.ToYaml(persistedPolicy);
         try
         {
             await _policySnapshots.SaveAsync(

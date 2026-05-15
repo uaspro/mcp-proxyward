@@ -1,4 +1,4 @@
-using ProxyWard.Api.Yarp;
+using ProxyWard.Proxy.Infrastructure.Yarp;
 using Yarp.ReverseProxy.Configuration;
 
 namespace ProxyWard.UnitTests;

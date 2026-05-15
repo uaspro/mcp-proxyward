@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using ProxyWard.Api.Observability;
-using ProxyWard.Api.Runtime;
 using ProxyWard.Audit.Events;
 using ProxyWard.Core.Policies;
 using ProxyWard.Policy.Configuration;
 using ProxyWard.Policy.Engine;
+using ProxyWard.Proxy.Application.Runtime;
 
 namespace ProxyWard.Api.Middleware;
 

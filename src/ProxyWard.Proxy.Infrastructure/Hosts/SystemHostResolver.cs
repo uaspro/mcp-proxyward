@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using ProxyWard.Policy.Engine;
 
-namespace ProxyWard.Api.Hosts;
+namespace ProxyWard.Proxy.Infrastructure.Hosts;
 
 public sealed class SystemHostResolver : IHostResolver
 {

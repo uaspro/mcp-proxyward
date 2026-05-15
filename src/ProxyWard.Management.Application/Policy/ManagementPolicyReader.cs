@@ -9,19 +9,22 @@ public sealed class ManagementPolicyReader
 
     private readonly IManagementPolicySnapshotStore _policySnapshots;
     private readonly IManagementPolicyYamlSanitizer _yamlSanitizer;
+    private readonly IManagementPolicyYamlCodec _policyYaml;
 
     public ManagementPolicyReader(
         IManagementPolicySnapshotStore policySnapshots,
-        IManagementPolicyYamlSanitizer yamlSanitizer)
+        IManagementPolicyYamlSanitizer yamlSanitizer,
+        IManagementPolicyYamlCodec policyYaml)
     {
         _policySnapshots = policySnapshots ?? throw new ArgumentNullException(nameof(policySnapshots));
         _yamlSanitizer = yamlSanitizer ?? throw new ArgumentNullException(nameof(yamlSanitizer));
+        _policyYaml = policyYaml ?? throw new ArgumentNullException(nameof(policyYaml));
     }
 
     public async Task<ManagementPolicyResponse> ReadAsync(CancellationToken cancellationToken)
     {
         var snapshot = await _policySnapshots.InitializeAndReadCurrentAsync(
-            ProxyWardDefaultPolicy.CreateYaml(),
+            _policyYaml.CreateDefaultYaml(),
             cancellationToken).ConfigureAwait(false);
         var source = _policySnapshots.SourceDescription;
 

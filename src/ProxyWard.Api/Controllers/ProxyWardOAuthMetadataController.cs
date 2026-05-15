@@ -2,8 +2,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc;
 using ProxyWard.Api.OAuth;
-using ProxyWard.Api.Runtime;
 using ProxyWard.Policy.Configuration;
+using ProxyWard.Proxy.Application.Runtime;
 
 namespace ProxyWard.Api.Controllers;
 

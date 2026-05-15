@@ -3,7 +3,6 @@
   <ItemGroup>
     <ProjectReference Include="..\ProxyWard.SharedKernel\ProxyWard.SharedKernel.csproj" />
     <ProjectReference Include="..\ProxyWard.Proxy.Domain\ProxyWard.Proxy.Domain.csproj" />
-    <ProjectReference Include="..\ProxyWard.Proxy.Application\ProxyWard.Proxy.Application.csproj" />
   </ItemGroup>
 
 </Project>

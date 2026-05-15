@@ -1,6 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.7" />
+    <PackageReference Include="Npgsql" Version="10.0.2" />
+    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
+    <PackageReference Include="YamlDotNet" Version="17.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\ProxyWard.SharedKernel\ProxyWard.SharedKernel.csproj" />
     <ProjectReference Include="..\ProxyWard.Proxy.Domain\ProxyWard.Proxy.Domain.csproj" />
     <ProjectReference Include="..\ProxyWard.Proxy.Application\ProxyWard.Proxy.Application.csproj" />

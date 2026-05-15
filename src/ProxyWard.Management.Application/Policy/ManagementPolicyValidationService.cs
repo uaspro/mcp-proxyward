@@ -9,10 +9,14 @@ public sealed class ManagementPolicyValidationService
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IManagementPolicyModelYamlSerializer _yamlSerializer;
+    private readonly IManagementPolicyYamlCodec _policyYaml;
 
-    public ManagementPolicyValidationService(IManagementPolicyModelYamlSerializer yamlSerializer)
+    public ManagementPolicyValidationService(
+        IManagementPolicyModelYamlSerializer yamlSerializer,
+        IManagementPolicyYamlCodec policyYaml)
     {
         _yamlSerializer = yamlSerializer ?? throw new ArgumentNullException(nameof(yamlSerializer));
+        _policyYaml = policyYaml ?? throw new ArgumentNullException(nameof(policyYaml));
     }
 
     public async Task<ManagementPolicyValidationResponse> ValidateAsync(
@@ -33,7 +37,7 @@ public sealed class ManagementPolicyValidationService
         var errors = proposal.Errors.ToList();
         try
         {
-            var policy = ProxyWardPolicyLoader.Load(yaml);
+            var policy = _policyYaml.Load(yaml);
             if (errors.Count > 0)
             {
                 return new ManagementPolicyValidationOutcome(
@@ -195,20 +199,20 @@ public sealed class ManagementPolicyValidationService
             || string.Equals(mediaType, "text/plain", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static ManagementPolicyValidationError MapPolicyError(string message) =>
+    private ManagementPolicyValidationError MapPolicyError(string message) =>
         new(
             Field: InferField(message),
             Code: "policy_validation_error",
             Message: message);
 
-    private static string InferField(string message)
+    private string InferField(string message)
     {
         if (message.StartsWith("YAML could not be parsed:", StringComparison.OrdinalIgnoreCase))
         {
             return "yaml";
         }
 
-        if (string.Equals(message, ProxyWardPolicyLoader.RemovedLockfileMessage, StringComparison.Ordinal))
+        if (string.Equals(message, _policyYaml.RemovedLockfileMessage, StringComparison.Ordinal))
         {
             return "lockfile";
         }

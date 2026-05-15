@@ -5,10 +5,10 @@ WORKDIR /src
 
 COPY Directory.Build.props ./
 COPY src/ProxyWard.Api/ProxyWard.Api.csproj src/ProxyWard.Api/
-COPY src/ProxyWard.Audit/ProxyWard.Audit.csproj src/ProxyWard.Audit/
-COPY src/ProxyWard.Core/ProxyWard.Core.csproj src/ProxyWard.Core/
-COPY src/ProxyWard.Locking/ProxyWard.Locking.csproj src/ProxyWard.Locking/
-COPY src/ProxyWard.Policy/ProxyWard.Policy.csproj src/ProxyWard.Policy/
+COPY src/ProxyWard.SharedKernel/ProxyWard.SharedKernel.csproj src/ProxyWard.SharedKernel/
+COPY src/ProxyWard.Proxy.Domain/ProxyWard.Proxy.Domain.csproj src/ProxyWard.Proxy.Domain/
+COPY src/ProxyWard.Proxy.Application/ProxyWard.Proxy.Application.csproj src/ProxyWard.Proxy.Application/
+COPY src/ProxyWard.Proxy.Infrastructure/ProxyWard.Proxy.Infrastructure.csproj src/ProxyWard.Proxy.Infrastructure/
 RUN dotnet restore src/ProxyWard.Api/ProxyWard.Api.csproj
 
 COPY src/ src/

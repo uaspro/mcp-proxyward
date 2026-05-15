@@ -1,10 +1,7 @@
 using ProxyWard.Api.Control;
-using ProxyWard.Api.Hosts;
 using ProxyWard.Api.Middleware;
 using ProxyWard.Api.OAuth;
 using ProxyWard.Api.Observability;
-using ProxyWard.Api.Runtime;
-using ProxyWard.Api.Yarp;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Redaction;
 using ProxyWard.Audit.Sinks;
@@ -16,6 +13,9 @@ using ProxyWard.Locking.Tools;
 using ProxyWard.Policy.Configuration;
 using ProxyWard.Policy.Engine;
 using ProxyWard.Policy.Persistence;
+using ProxyWard.Proxy.Application.Runtime;
+using ProxyWard.Proxy.Infrastructure.Hosts;
+using ProxyWard.Proxy.Infrastructure.Yarp;
 using Npgsql;
 using Yarp.ReverseProxy.Configuration;
 

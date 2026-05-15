@@ -1,13 +1,13 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/ProxyWard.Api/ProxyWard.Api.csproj" />
-    <Project Path="src/ProxyWard.Audit/ProxyWard.Audit.csproj" />
-    <Project Path="src/ProxyWard.Core/ProxyWard.Core.csproj" />
-    <Project Path="src/ProxyWard.Locking/ProxyWard.Locking.csproj" />
     <Project Path="src/ProxyWard.Management.Api/ProxyWard.Management.Api.csproj" />
     <Project Path="src/ProxyWard.Management.Application/ProxyWard.Management.Application.csproj" />
     <Project Path="src/ProxyWard.Management.Infrastructure/ProxyWard.Management.Infrastructure.csproj" />
-    <Project Path="src/ProxyWard.Policy/ProxyWard.Policy.csproj" />
+    <Project Path="src/ProxyWard.Proxy.Application/ProxyWard.Proxy.Application.csproj" />
+    <Project Path="src/ProxyWard.Proxy.Domain/ProxyWard.Proxy.Domain.csproj" />
+    <Project Path="src/ProxyWard.Proxy.Infrastructure/ProxyWard.Proxy.Infrastructure.csproj" />
+    <Project Path="src/ProxyWard.SharedKernel/ProxyWard.SharedKernel.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ProxyWard.IntegrationTests/ProxyWard.IntegrationTests.csproj" />

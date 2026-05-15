@@ -19,10 +19,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ProxyWard.Api\ProxyWard.Api.csproj" />
-    <ProjectReference Include="..\..\src\ProxyWard.Core\ProxyWard.Core.csproj" />
     <ProjectReference Include="..\..\src\ProxyWard.Management.Api\ProxyWard.Management.Api.csproj" />
     <ProjectReference Include="..\..\src\ProxyWard.Management.Application\ProxyWard.Management.Application.csproj" />
     <ProjectReference Include="..\..\src\ProxyWard.Management.Infrastructure\ProxyWard.Management.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\ProxyWard.SharedKernel\ProxyWard.SharedKernel.csproj" />
+    <ProjectReference Include="..\..\src\ProxyWard.Proxy.Domain\ProxyWard.Proxy.Domain.csproj" />
+    <ProjectReference Include="..\..\src\ProxyWard.Proxy.Application\ProxyWard.Proxy.Application.csproj" />
+    <ProjectReference Include="..\..\src\ProxyWard.Proxy.Infrastructure\ProxyWard.Proxy.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

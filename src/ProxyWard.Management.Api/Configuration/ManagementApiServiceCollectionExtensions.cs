@@ -181,6 +181,7 @@ internal static class ManagementApiServiceCollectionExtensions
         services.AddSingleton<IManagementPolicySnapshotStore, ManagementPolicySnapshotStore>();
         services.AddSingleton<IManagementPolicyYamlSanitizer, YamlManagementPolicySanitizer>();
         services.AddSingleton<IManagementPolicyModelYamlSerializer, YamlManagementPolicyModelSerializer>();
+        services.AddSingleton<IManagementPolicyYamlCodec, ManagementPolicyYamlCodec>();
         services.AddSingleton<IManagementPolicyAuditStore>(services =>
         {
             return CreateForPersistence<IManagementPolicyAuditStore>(

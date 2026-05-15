@@ -1,7 +1,7 @@
 using ProxyWard.Policy.Configuration;
 using Yarp.ReverseProxy.Configuration;
 
-namespace ProxyWard.Api.Yarp;
+namespace ProxyWard.Proxy.Infrastructure.Yarp;
 
 public static class ProxyWardYarpConfig
 {

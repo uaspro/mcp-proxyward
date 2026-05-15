@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
-using ProxyWard.Api.Hosts;
 using ProxyWard.Api.Middleware;
 using ProxyWard.Api.Observability;
-using ProxyWard.Api.Runtime;
-using ProxyWard.Api.Yarp;
+using ProxyWard.Proxy.Application.Runtime;
+using ProxyWard.Proxy.Infrastructure.Hosts;
+using ProxyWard.Proxy.Infrastructure.Yarp;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Redaction;
 using ProxyWard.Audit.Sinks;

@@ -6,7 +6,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ProxyWard.Api.Observability;
-using ProxyWard.Api.Runtime;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Redaction;
 using ProxyWard.Core.JsonRpc;
@@ -16,6 +15,7 @@ using ProxyWard.Locking.Lockfiles;
 using ProxyWard.Locking.Persistence;
 using ProxyWard.Locking.Tools;
 using ProxyWard.Policy.Configuration;
+using ProxyWard.Proxy.Application.Runtime;
 
 namespace ProxyWard.Api.Middleware;
 

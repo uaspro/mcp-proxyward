@@ -1,6 +1,6 @@
 using ProxyWard.Policy.Configuration;
 
-namespace ProxyWard.Api.Runtime;
+namespace ProxyWard.Proxy.Application.Runtime;
 
 public interface IProxyWardPolicyProvider
 {

@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
-    <ProjectReference Include="..\ProxyWard.Core\ProxyWard.Core.csproj" />
-    <ProjectReference Include="..\ProxyWard.Policy\ProxyWard.Policy.csproj" />
-    <ProjectReference Include="..\ProxyWard.Locking\ProxyWard.Locking.csproj" />
-    <ProjectReference Include="..\ProxyWard.Audit\ProxyWard.Audit.csproj" />
+    <ProjectReference Include="..\ProxyWard.SharedKernel\ProxyWard.SharedKernel.csproj" />
+    <ProjectReference Include="..\ProxyWard.Proxy.Domain\ProxyWard.Proxy.Domain.csproj" />
+    <ProjectReference Include="..\ProxyWard.Proxy.Application\ProxyWard.Proxy.Application.csproj" />
+    <ProjectReference Include="..\ProxyWard.Proxy.Infrastructure\ProxyWard.Proxy.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>

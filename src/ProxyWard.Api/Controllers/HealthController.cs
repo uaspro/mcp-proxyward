@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using ProxyWard.Api.Runtime;
+using ProxyWard.Proxy.Application.Runtime;
 
 namespace ProxyWard.Api.Controllers;
 

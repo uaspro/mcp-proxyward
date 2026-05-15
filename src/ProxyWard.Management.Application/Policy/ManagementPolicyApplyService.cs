@@ -18,17 +18,20 @@ public sealed class ManagementPolicyApplyService
     private readonly IProxyControlClient _proxyControlClient;
     private readonly IManagementPolicySnapshotStore _policySnapshots;
     private readonly IManagementPolicyAuditStore _auditStore;
+    private readonly IManagementPolicyYamlCodec _policyYaml;
 
     public ManagementPolicyApplyService(
         ManagementPolicyValidationService validationService,
         IProxyControlClient proxyControlClient,
         IManagementPolicySnapshotStore policySnapshots,
-        IManagementPolicyAuditStore auditStore)
+        IManagementPolicyAuditStore auditStore,
+        IManagementPolicyYamlCodec policyYaml)
     {
         _validationService = validationService ?? throw new ArgumentNullException(nameof(validationService));
         _proxyControlClient = proxyControlClient ?? throw new ArgumentNullException(nameof(proxyControlClient));
         _policySnapshots = policySnapshots ?? throw new ArgumentNullException(nameof(policySnapshots));
         _auditStore = auditStore ?? throw new ArgumentNullException(nameof(auditStore));
+        _policyYaml = policyYaml ?? throw new ArgumentNullException(nameof(policyYaml));
     }
 
     public async Task<ManagementPolicyApplyOutcome> ApplyAsync(
@@ -45,7 +48,7 @@ public sealed class ManagementPolicyApplyService
         }
 
         var previousSnapshot = await _policySnapshots.InitializeAndReadCurrentAsync(
-            ProxyWardDefaultPolicy.CreateYaml(),
+            _policyYaml.CreateDefaultYaml(),
             cancellationToken).ConfigureAwait(false);
         var yarpConfig = ManagementPolicyYarpConfigFactory.Create(proposal.Policy);
         var previousStatus = await ReadCurrentStatusAsync(cancellationToken).ConfigureAwait(false);
@@ -193,7 +196,7 @@ public sealed class ManagementPolicyApplyService
 
         try
         {
-            var rollbackPolicy = ProxyWardPolicyLoader.Load(rollbackYaml);
+            var rollbackPolicy = _policyYaml.Load(rollbackYaml);
             var rollbackConfig = ManagementPolicyYarpConfigFactory.Create(rollbackPolicy);
             await _proxyControlClient.ApplyYarpConfigAsync(rollbackConfig, cancellationToken).ConfigureAwait(false);
             await _proxyControlClient.ApplyPolicySnapshotAsync(rollbackYaml, cancellationToken).ConfigureAwait(false);

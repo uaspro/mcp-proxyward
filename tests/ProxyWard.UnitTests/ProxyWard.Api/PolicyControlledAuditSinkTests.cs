@@ -1,4 +1,4 @@
-using ProxyWard.Api.Runtime;
+using ProxyWard.Proxy.Application.Runtime;
 using ProxyWard.Audit.Events;
 using ProxyWard.Policy.Configuration;
 

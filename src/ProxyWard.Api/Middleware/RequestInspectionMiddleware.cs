@@ -1,12 +1,12 @@
 using System.Diagnostics;
 using ProxyWard.Api.Observability;
-using ProxyWard.Api.Runtime;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Redaction;
 using ProxyWard.Core.JsonRpc;
 using ProxyWard.Core.Mcp;
 using ProxyWard.Core.Policies;
 using ProxyWard.Policy.Configuration;
+using ProxyWard.Proxy.Application.Runtime;
 
 namespace ProxyWard.Api.Middleware;
 

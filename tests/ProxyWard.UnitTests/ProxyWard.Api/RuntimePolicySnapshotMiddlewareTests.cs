@@ -1,9 +1,9 @@
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
-using ProxyWard.Api.Hosts;
 using ProxyWard.Api.Middleware;
-using ProxyWard.Api.Runtime;
+using ProxyWard.Proxy.Application.Runtime;
+using ProxyWard.Proxy.Infrastructure.Hosts;
 using ProxyWard.Audit.Redaction;
 using ProxyWard.Audit.Sinks;
 using ProxyWard.Core.JsonRpc;

@@ -29,6 +29,19 @@ public interface IManagementPolicyModelYamlSerializer
     string ToYaml(ManagementPolicyModel model);
 }
 
+public interface IManagementPolicyYamlCodec
+{
+    string RemovedLockfileMessage { get; }
+
+    string CreateDefaultYaml();
+
+    ProxyWardPolicy Load(string yaml);
+
+    ProxyWardPolicy WithMode(ProxyWardPolicy policy, ProxyWardMode mode);
+
+    string ToYaml(ProxyWardPolicy policy);
+}
+
 public interface IManagementPolicyAuditStore
 {
     Task<IReadOnlyList<ManagementPolicyModeImpactItem>> ReadModeImpactAsync(

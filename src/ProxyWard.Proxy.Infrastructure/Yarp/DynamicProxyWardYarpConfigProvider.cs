@@ -1,6 +1,6 @@
 using Yarp.ReverseProxy.Configuration;
 
-namespace ProxyWard.Api.Yarp;
+namespace ProxyWard.Proxy.Infrastructure.Yarp;
 
 public sealed class DynamicProxyWardYarpConfigProvider : IProxyWardYarpConfigProvider
 {

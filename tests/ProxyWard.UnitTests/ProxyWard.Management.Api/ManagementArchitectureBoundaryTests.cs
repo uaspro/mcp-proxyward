@@ -18,6 +18,7 @@ public class ManagementArchitectureBoundaryTests
         Assert.DoesNotContain("YamlDotNet", references);
         Assert.DoesNotContain("ProxyWard.Management.Api", references);
         Assert.DoesNotContain("ProxyWard.Management.Infrastructure", references);
+        Assert.DoesNotContain("ProxyWard.Proxy.Infrastructure", references);
     }
 
     [Fact]
@@ -59,6 +60,27 @@ public class ManagementArchitectureBoundaryTests
                 var source = File.ReadAllText(file);
                 return source.Contains("ProxyWard.Policy.Persistence", StringComparison.Ordinal)
                     || source.Contains("SqlitePolicyStore", StringComparison.Ordinal);
+            })
+            .Select(file => Path.GetRelativePath(RepoRoot.Value, file))
+            .ToArray();
+
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
+    public void ManagementApplicationSourceDoesNotUsePolicyYamlInfrastructureStatics()
+    {
+        var offenders = Directory
+            .EnumerateFiles(
+                RepoPath("src/ProxyWard.Management.Application"),
+                "*.cs",
+                SearchOption.AllDirectories)
+            .Where(file =>
+            {
+                var source = File.ReadAllText(file);
+                return source.Contains("ProxyWardPolicyLoader", StringComparison.Ordinal)
+                    || source.Contains("ProxyWardPolicySerializer", StringComparison.Ordinal)
+                    || source.Contains("ProxyWardDefaultPolicy", StringComparison.Ordinal);
             })
             .Select(file => Path.GetRelativePath(RepoRoot.Value, file))
             .ToArray();

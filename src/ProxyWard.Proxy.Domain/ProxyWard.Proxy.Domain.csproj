@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProxyWard.SharedKernel\ProxyWard.SharedKernel.csproj" />
+  </ItemGroup>
+
+</Project>
