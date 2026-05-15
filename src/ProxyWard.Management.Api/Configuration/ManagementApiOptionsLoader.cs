@@ -1,6 +1,7 @@
 using System.Globalization;
 using ProxyWard.Management.Application;
 using ProxyWard.Management.Application.Audit;
+using ProxyWard.Core.Persistence;
 
 namespace ProxyWard.Management.Api.Configuration;
 
@@ -8,10 +9,17 @@ internal static class ManagementApiOptionsLoader
 {
     public static ManagementApiOptions LoadOptions(IConfiguration configuration)
     {
-        var auditDatabasePath = Environment.GetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH")
-            ?? Environment.GetEnvironmentVariable("PROXYWARD_DB_PATH")
+        var sqlitePath = Environment.GetEnvironmentVariable("PROXYWARD_DB_PATH")
+            ?? Environment.GetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH")
+            ?? configuration["Management:Persistence:SqlitePath"]
+            ?? configuration["ProxyWard:Persistence:SqlitePath"]
+            ?? configuration["ProxyWard:DatabasePath"]
             ?? configuration["Management:Audit:SqlitePath"]
             ?? "./data/proxyward.db";
+        var persistenceDatabase = ResolvePersistenceDatabase(configuration, sqlitePath);
+        var sqliteDatabasePath = persistenceDatabase.SqlitePath
+            ?? Environment.GetEnvironmentVariable("PROXYWARD_DB_PATH")
+            ?? sqlitePath;
 
         var proxyControlBaseUrlValue = Environment.GetEnvironmentVariable("PROXYWARD_PROXY_CONTROL_URL")
             ?? configuration["Management:ProxyControl:BaseUrl"]
@@ -45,12 +53,13 @@ internal static class ManagementApiOptionsLoader
                 ?? configuration["Management:Cors:AllowedOrigins"]);
 
         return new ManagementApiOptions(
-            auditDatabasePath,
+            sqliteDatabasePath,
             proxyControlBaseUrl,
             proxyControlToken,
             adminToken,
             localDevelopmentMode,
-            corsAllowedOrigins);
+            corsAllowedOrigins,
+            persistenceDatabase);
     }
 
     public static ManagementAuditReadOptions LoadAuditReadOptions(IConfiguration configuration)
@@ -125,4 +134,57 @@ internal static class ManagementApiOptionsLoader
                 .Where(origin => origin.Length > 0)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+
+    private static PersistenceDatabaseOptions ResolvePersistenceDatabase(
+        IConfiguration configuration,
+        string sqlitePath)
+    {
+        var provider = NormalizeProvider(
+            Environment.GetEnvironmentVariable("PROXYWARD_PERSISTENCE_PROVIDER")
+            ?? Environment.GetEnvironmentVariable("PROXYWARD_DB_PROVIDER")
+            ?? configuration["Management:Persistence:Provider"]
+            ?? configuration["ProxyWard:Persistence:Provider"]
+            ?? "sqlite");
+
+        if (provider == "postgres")
+        {
+            var connectionString =
+                Environment.GetEnvironmentVariable("PROXYWARD_PERSISTENCE_CONNECTION_STRING")
+                ?? Environment.GetEnvironmentVariable("PROXYWARD_POSTGRES_CONNECTION_STRING")
+                ?? configuration["Management:Persistence:PostgresConnectionString"]
+                ?? configuration["ProxyWard:Persistence:PostgresConnectionString"]
+                ?? configuration.GetConnectionString("ProxyWardPersistence");
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "PostgreSQL persistence requires PROXYWARD_PERSISTENCE_CONNECTION_STRING, PROXYWARD_POSTGRES_CONNECTION_STRING, Management:Persistence:PostgresConnectionString, ProxyWard:Persistence:PostgresConnectionString, or ConnectionStrings:ProxyWardPersistence.");
+            }
+
+            return PersistenceDatabaseOptions.ForPostgreSql(connectionString);
+        }
+
+        if (provider != "sqlite")
+        {
+            throw new InvalidOperationException(
+                "Persistence provider must be 'sqlite' or 'postgres'. Configure PROXYWARD_PERSISTENCE_PROVIDER or Management:Persistence:Provider.");
+        }
+
+        return PersistenceDatabaseOptions.ForSqlite(sqlitePath);
+    }
+
+    private static string NormalizeProvider(string? value)
+    {
+        var normalized =
+            value?.Replace("-", string.Empty, StringComparison.Ordinal)
+                .Replace("_", string.Empty, StringComparison.Ordinal)
+                .Trim()
+                .ToLowerInvariant() ?? string.Empty;
+
+        return normalized switch
+        {
+            "postgresql" => "postgres",
+            _ => normalized
+        };
+    }
 }

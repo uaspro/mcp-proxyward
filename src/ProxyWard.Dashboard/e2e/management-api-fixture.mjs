@@ -90,8 +90,7 @@ const policyModel = {
     batchToolCalls: 'failClosed',
   },
   audit: {
-    sink: 'sqlite',
-    sqlitePath: '/app/data/proxyward.db',
+    enabled: true,
   },
   observability: {
     serviceName: 'mcp-proxyward',
@@ -122,10 +121,10 @@ const responses = {
           routeVersion: 1,
         },
       },
-      auditDb: {
+      persistenceDb: {
         status: 'healthy',
         notes: null,
-        details: { sqlitePath: '/app/data/proxyward.db' },
+        details: { provider: 'sqlite', source: '/app/data/proxyward.db' },
       },
       schemaLock: {
         status: 'healthy',
@@ -135,7 +134,7 @@ const responses = {
       telemetry: {
         status: 'healthy',
         notes: null,
-        details: { source: 'audit-db' },
+        details: { source: 'persistence-db' },
       },
     },
   },
@@ -166,7 +165,7 @@ const responses = {
       },
     ],
     metadata: {
-      source: 'audit-db',
+      source: 'persistence-db',
       asOfUtc: now,
       partial: false,
       notes: null,
@@ -229,8 +228,12 @@ const responses = {
       tracesRatio: 1,
     },
     audit: {
-      sink: 'sqlite',
-      sqlitePath: '/app/data/proxyward.db',
+      enabled: true,
+    },
+    persistence: {
+      provider: 'sqlite',
+      source: 'sqlite:/app/data/proxyward.db',
+      connectionConfigured: true,
     },
     inspection: {
       maxBodyBytes: 1048576,

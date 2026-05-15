@@ -1594,12 +1594,6 @@ kbd {
   transform: translateX(16px);
 }
 
-.settings-stack {
-  display: grid;
-  gap: 0;
-  margin-bottom: 16px;
-}
-
 .state-panel {
   display: flex;
   min-width: 0;

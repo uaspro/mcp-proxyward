@@ -11,7 +11,7 @@ namespace ProxyWard.IntegrationTests;
 
 public class ManagementAuditEventExportEndpointTests
 {
-    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string PersistenceDbEnv = "PROXYWARD_DB_PATH";
     private const string MaxExportRowsEnv = "PROXYWARD_MANAGEMENT_AUDIT_MAX_EXPORT_ROWS";
 
     [Fact]
@@ -19,7 +19,7 @@ public class ManagementAuditEventExportEndpointTests
     {
         var dbPath = TempDbPath();
         await SeedDecisionRowsAsync(dbPath);
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
 
         try
         {
@@ -51,7 +51,7 @@ public class ManagementAuditEventExportEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -60,7 +60,7 @@ public class ManagementAuditEventExportEndpointTests
     {
         var dbPath = TempDbPath();
         await SeedDecisionRowsAsync(dbPath);
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
 
         try
         {
@@ -89,7 +89,7 @@ public class ManagementAuditEventExportEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -98,7 +98,7 @@ public class ManagementAuditEventExportEndpointTests
     {
         var dbPath = TempDbPath();
         await SeedDecisionRowsAsync(dbPath);
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
         Environment.SetEnvironmentVariable(MaxExportRowsEnv, "2");
 
         try
@@ -119,7 +119,7 @@ public class ManagementAuditEventExportEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
             Environment.SetEnvironmentVariable(MaxExportRowsEnv, null);
         }
     }
@@ -129,7 +129,7 @@ public class ManagementAuditEventExportEndpointTests
     {
         var dbPath = TempDbPath();
         await SeedDecisionRowsAsync(dbPath);
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
 
         try
         {
@@ -156,7 +156,7 @@ public class ManagementAuditEventExportEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 

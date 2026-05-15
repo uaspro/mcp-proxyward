@@ -45,7 +45,7 @@ public sealed class ManagementPolicyApplyService
         }
 
         var previousSnapshot = await _policySnapshots.InitializeAndReadCurrentAsync(
-            ProxyWardDefaultPolicy.CreateYaml(_policySnapshots.DatabasePath),
+            ProxyWardDefaultPolicy.CreateYaml(),
             cancellationToken).ConfigureAwait(false);
         var yarpConfig = ManagementPolicyYarpConfigFactory.Create(proposal.Policy);
         var previousStatus = await ReadCurrentStatusAsync(cancellationToken).ConfigureAwait(false);

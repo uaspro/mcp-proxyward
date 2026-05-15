@@ -3,7 +3,7 @@ namespace ProxyWard.Management.Application.Status;
 public sealed class ManagementStatusService
 {
     private const string ServiceName = "MCP ProxyWard Management API";
-    private const string TelemetrySource = "audit-db";
+    private const string TelemetrySource = "persistence-db";
 
     private readonly IManagementStatusStoreProbe _storeProbe;
     private readonly IProxyControlClient _proxyControlClient;
@@ -20,7 +20,7 @@ public sealed class ManagementStatusService
     {
         var managementApi = new ComponentReport(ComponentStatusValues.Healthy, Notes: null, Details: null);
 
-        var (auditDb, schemaLock) = await _storeProbe.ProbeAsync(cancellationToken).ConfigureAwait(false);
+        var (persistenceDb, schemaLock) = await _storeProbe.ProbeAsync(cancellationToken).ConfigureAwait(false);
 
         ProxyControlProbeResult probeResult;
         try
@@ -38,11 +38,11 @@ public sealed class ManagementStatusService
         var proxyControl = new ComponentReport(probeResult.Status, probeResult.Notes, probeResult.Details);
 
         var telemetry = new ComponentReport(
-            auditDb.Status,
+            persistenceDb.Status,
             Notes: null,
             Details: new Dictionary<string, object?> { ["source"] = TelemetrySource });
 
-        var components = new StatusComponents(managementApi, proxyControl, auditDb, schemaLock, telemetry);
+        var components = new StatusComponents(managementApi, proxyControl, persistenceDb, schemaLock, telemetry);
         var topStatus = AggregateTopStatus(components);
 
         return new StatusResponse(topStatus, ServiceName, components);
@@ -50,14 +50,14 @@ public sealed class ManagementStatusService
 
     private static string AggregateTopStatus(StatusComponents components)
     {
-        if (components.AuditDb.Status == ComponentStatusValues.Unhealthy)
+        if (components.PersistenceDb.Status == ComponentStatusValues.Unhealthy)
         {
             return ComponentStatusValues.Unhealthy;
         }
 
         if (HasIssue(components.ManagementApi)
             || HasIssue(components.ProxyControl)
-            || HasIssue(components.AuditDb)
+            || HasIssue(components.PersistenceDb)
             || HasIssue(components.SchemaLock)
             || HasIssue(components.Telemetry))
         {
@@ -73,5 +73,5 @@ public sealed class ManagementStatusService
 
 public interface IManagementStatusStoreProbe
 {
-    Task<(ComponentReport AuditDb, ComponentReport SchemaLock)> ProbeAsync(CancellationToken cancellationToken);
+    Task<(ComponentReport PersistenceDb, ComponentReport SchemaLock)> ProbeAsync(CancellationToken cancellationToken);
 }

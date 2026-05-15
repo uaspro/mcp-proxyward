@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Data.Sqlite;
+using Npgsql;
 using ProxyWard.Locking.Persistence;
 using ProxyWard.Locking.Tools;
 using ProxyWard.Management.Application;
@@ -16,19 +16,19 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly HttpClient _httpClient;
-    private readonly ManagementApiOptions _options;
-    private readonly SqlitePolicyStore _policyStore;
+    private readonly IPolicyStore _policyStore;
+    private readonly ITrackedToolSchemaStore _schemaStore;
     private readonly ToolDefinitionExtractor _extractor = new();
     private readonly ToolFingerprinter _fingerprinter = new();
 
     public ManagementToolDiscoveryService(
         HttpClient httpClient,
-        ManagementApiOptions options,
-        SqlitePolicyStore policyStore)
+        IPolicyStore policyStore,
+        ITrackedToolSchemaStore schemaStore)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        _options = options ?? throw new ArgumentNullException(nameof(options));
         _policyStore = policyStore ?? throw new ArgumentNullException(nameof(policyStore));
+        _schemaStore = schemaStore ?? throw new ArgumentNullException(nameof(schemaStore));
     }
 
     public async Task<ManagementToolDiscoveryResponse> DiscoverAsync(
@@ -63,7 +63,6 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
             .OrderBy(entry => entry.ToolName, StringComparer.Ordinal)
             .ToArray();
 
-        using var store = new SqliteTrackedToolSchemaStore(_options.AuditDatabasePath);
         var snapshot = new ToolSchemaSnapshotInput(
             ServerId: serverId,
             UpstreamUrl: upstream.AbsoluteUri,
@@ -71,7 +70,7 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
             Tools: entries,
             PolicyVersion: null,
             SourceCorrelationId: $"mgmt-tools-{Guid.NewGuid():N}");
-        var recorded = await store
+        var recorded = await _schemaStore
             .RecordAsync(snapshot, DateTimeOffset.UtcNow, cancellationToken)
             .ConfigureAwait(false);
 
@@ -116,7 +115,7 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
                 return configuredServer.Upstream;
             }
         }
-        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SchemaLockWriteFailedException or NpgsqlException)
         {
             throw new ManagementToolDiscoveryRequestException(
                 "tool_discovery_policy_unavailable",

@@ -151,8 +151,7 @@ public class ObservabilityExportIntegrationTests
           unsupportedStreaming: warn
           batchToolCalls: failClosed
         audit:
-          sink: sqlite
-          sqlitePath: {{Path.Combine(Path.GetTempPath(), $"proxyward-audit-{Guid.NewGuid():N}.db").Replace("\\", "/")}}
+          enabled: true
         observability:
           serviceName: mcp-proxyward-test
           console:

@@ -186,15 +186,23 @@ public class AuditEventIntegrationTests
         return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
+    private static readonly System.Threading.AsyncLocal<string?> NextPolicyDatabasePath = new();
+
     private static string WriteTempPolicy(string yaml)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.yaml");
+        var path = NextPolicyDatabasePath.Value
+            ?? Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.db");
+        NextPolicyDatabasePath.Value = null;
         new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 
-    private static string NewTempSqlitePath() =>
-        Path.Combine(Path.GetTempPath(), $"proxyward-audit-{Guid.NewGuid():N}.db");
+    private static string NewTempSqlitePath()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"proxyward-audit-{Guid.NewGuid():N}.db");
+        NextPolicyDatabasePath.Value = path;
+        return path;
+    }
 
     private static void DeleteIfExists(string path)
     {
@@ -224,8 +232,7 @@ public class AuditEventIntegrationTests
           maxBodyBytes: {{maxBodyBytes}}
           unsupportedStreaming: {{unsupportedStreaming}}
         audit:
-          sink: sqlite
-          sqlitePath: {{sqlitePath.Replace("\\", "/")}}
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:

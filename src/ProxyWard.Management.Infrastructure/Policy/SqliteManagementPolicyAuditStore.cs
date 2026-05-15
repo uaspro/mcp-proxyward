@@ -15,7 +15,7 @@ public sealed class SqliteManagementPolicyAuditStore : IManagementPolicyAuditSto
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        _databasePath = Path.GetFullPath(options.AuditDatabasePath);
+        _databasePath = Path.GetFullPath(options.SqliteDatabasePath);
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = _databasePath,

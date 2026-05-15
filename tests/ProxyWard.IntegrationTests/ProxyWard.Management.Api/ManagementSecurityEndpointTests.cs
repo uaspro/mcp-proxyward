@@ -12,7 +12,7 @@ namespace ProxyWard.IntegrationTests;
 
 public class ManagementSecurityEndpointTests : IAsyncLifetime
 {
-    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string PersistenceDbEnv = "PROXYWARD_DB_PATH";
     private const string AdminTokenEnv = "PROXYWARD_MANAGEMENT_ADMIN_TOKEN";
     private const string SharedAdminTokenEnv = "PROXYWARD_ADMIN_TOKEN";
     private const string LocalDevEnv = "PROXYWARD_MANAGEMENT_LOCAL_DEV";
@@ -26,7 +26,7 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         Environment.SetEnvironmentVariable(AdminTokenEnv, null);
         Environment.SetEnvironmentVariable(SharedAdminTokenEnv, null);
         Environment.SetEnvironmentVariable(LocalDevEnv, null);
@@ -38,7 +38,7 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
     [Fact]
     public async Task ManagementWriteRequiresAdminTokenOutsideLocalDevMode()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
 
         var stub = new StubProxyControlClient();
         await using var factory = CreateFactory(stub);
@@ -64,7 +64,7 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
     [Fact]
     public async Task ManagementWriteAllowsExplicitLocalDevModeWithoutAdminToken()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(LocalDevEnv, "true");
 
         var stub = new StubProxyControlClient();
@@ -84,7 +84,7 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
     {
         const string expectedToken = "test-admin-token";
         const string suppliedToken = "wrong-token";
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, expectedToken);
 
         var stub = new StubProxyControlClient();

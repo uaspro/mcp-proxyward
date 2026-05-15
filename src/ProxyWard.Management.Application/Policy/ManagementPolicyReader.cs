@@ -21,9 +21,9 @@ public sealed class ManagementPolicyReader
     public async Task<ManagementPolicyResponse> ReadAsync(CancellationToken cancellationToken)
     {
         var snapshot = await _policySnapshots.InitializeAndReadCurrentAsync(
-            ProxyWardDefaultPolicy.CreateYaml(_policySnapshots.DatabasePath),
+            ProxyWardDefaultPolicy.CreateYaml(),
             cancellationToken).ConfigureAwait(false);
-        var source = FormatSource(_policySnapshots.DatabasePath);
+        var source = _policySnapshots.SourceDescription;
 
         return new ManagementPolicyResponse(
             Yaml: _yamlSanitizer.MaskSensitiveValues(snapshot.Yaml),
@@ -42,9 +42,6 @@ public sealed class ManagementPolicyReader
                 LoadedAtUtc: DateTimeOffset.UtcNow));
     }
 
-    private static string FormatSource(string databasePath) =>
-        $"sqlite:{databasePath}#policy_snapshots";
-
     public static ManagementPolicyModel CreateModel(ProxyWardPolicy policy) =>
         new(
             Mode: FormatMode(policy.Mode),
@@ -53,8 +50,7 @@ public sealed class ManagementPolicyReader
                 UnsupportedStreaming: FormatUnsupportedInspectionBehavior(policy.Inspection.UnsupportedStreaming),
                 BatchToolCalls: FormatBatchToolCallBehavior(policy.Inspection.BatchToolCalls)),
             Audit: new ManagementAuditPolicyModel(
-                Sink: policy.Audit.Sink,
-                SqlitePath: policy.Audit.SqlitePath),
+                Enabled: policy.Audit.Enabled),
             Observability: new ManagementObservabilityPolicyModel(
                 ServiceName: policy.Observability.ServiceName,
                 Console: new ManagementConsoleExporterPolicyModel(policy.Observability.Console.Enabled),
@@ -200,9 +196,7 @@ public sealed record ManagementInspectionPolicyModel(
     string UnsupportedStreaming,
     string BatchToolCalls);
 
-public sealed record ManagementAuditPolicyModel(
-    string Sink,
-    string? SqlitePath);
+public sealed record ManagementAuditPolicyModel(bool Enabled);
 
 public sealed record ManagementObservabilityPolicyModel(
     string ServiceName,

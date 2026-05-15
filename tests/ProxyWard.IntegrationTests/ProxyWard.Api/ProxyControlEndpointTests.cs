@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
+using ProxyWard.Policy.Persistence;
 
 namespace ProxyWard.IntegrationTests;
 
@@ -85,11 +86,8 @@ public class ProxyControlEndpointTests
         const string expectedToken = "test-control-token";
         const string suppliedToken = "wrong-token";
         var databasePath = Path.Combine(Path.GetTempPath(), $"proxyward-control-auth-{Guid.NewGuid():N}.db");
-        var policyPath = TestFiles.SavePolicy(ValidYaml.Replace(
-            "sqlitePath: ./data/proxyward.db",
-            $"sqlitePath: {TestFiles.YamlPath(databasePath)}",
-            StringComparison.Ordinal));
-        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
+        await new SqlitePolicyStore(databasePath).SaveAsync(ValidYaml);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", databasePath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", expectedToken);
 
@@ -747,8 +745,7 @@ public class ProxyControlEndpointTests
           maxBodyBytes: 1048576
           unsupportedStreaming: warn
         audit:
-          sink: sqlite
-          sqlitePath: ./data/proxyward.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:

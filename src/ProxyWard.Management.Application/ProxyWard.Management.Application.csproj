@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\ProxyWard.Core\ProxyWard.Core.csproj" />
     <ProjectReference Include="..\ProxyWard.Policy\ProxyWard.Policy.csproj" />
   </ItemGroup>
 

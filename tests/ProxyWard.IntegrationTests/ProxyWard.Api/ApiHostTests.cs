@@ -41,6 +41,38 @@ public class ApiHostTests
     }
 
     [Fact]
+    public async Task HostStartsWithLegacyAuditSinkPolicySnapshot()
+    {
+        var databasePath = TestFiles.NewSqlitePath();
+        InsertRawPolicy(databasePath, ValidYaml.Replace(
+            "enabled: true",
+            """
+            sink: sqlite
+              sqlitePath: ./data/proxyward.db
+            """,
+            StringComparison.Ordinal));
+        Environment.SetEnvironmentVariable(DbEnv, databasePath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.GetAsync("/health");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var payload = await TestJson.ReadAsync(response);
+            Assert.Equal("healthy", payload.RootElement.GetProperty("status").GetString());
+            Assert.StartsWith("sha256:", payload.RootElement.GetProperty("policyVersion").GetString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(DbEnv, null);
+            TestFiles.DeleteSqlite(databasePath);
+        }
+    }
+
+    [Fact]
     public void InvalidPolicyPreventsHostStartup()
     {
         var databasePath = TestFiles.NewSqlitePath();
@@ -127,8 +159,7 @@ public class ApiHostTests
           maxBodyBytes: 1048576
           unsupportedStreaming: warn
         audit:
-          sink: sqlite
-          sqlitePath: ./data/proxyward.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:

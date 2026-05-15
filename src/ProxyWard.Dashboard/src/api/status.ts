@@ -14,7 +14,7 @@ export type StatusResponse = {
   components: {
     managementApi: ComponentReport
     proxyControl: ComponentReport
-    auditDb: ComponentReport
+    persistenceDb: ComponentReport
     schemaLock: ComponentReport
     telemetry: ComponentReport
   }

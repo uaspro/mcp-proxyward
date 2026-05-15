@@ -1,14 +1,19 @@
 using ProxyWard.Management.Application.Policy;
+using ProxyWard.Core.Persistence;
 
 namespace ProxyWard.Management.Application.Settings;
 
 public sealed class ManagementSettingsService
 {
     private readonly ManagementPolicyReader _policyReader;
+    private readonly ManagementApiOptions _options;
 
-    public ManagementSettingsService(ManagementPolicyReader policyReader)
+    public ManagementSettingsService(
+        ManagementPolicyReader policyReader,
+        ManagementApiOptions options)
     {
         _policyReader = policyReader ?? throw new ArgumentNullException(nameof(policyReader));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
     public async Task<ManagementSettingsResponse> GetAsync(CancellationToken cancellationToken)
@@ -26,8 +31,12 @@ public sealed class ManagementSettingsService
                 ApplicationInsightsConnectionStringEnv: model.Observability.ApplicationInsights.ConnectionStringEnv,
                 TracesRatio: model.Observability.Sampling.TracesRatio),
             Audit: new ManagementSettingsAudit(
-                Sink: model.Audit.Sink,
-                SqlitePath: model.Audit.SqlitePath),
+                Enabled: model.Audit.Enabled),
+            Persistence: new ManagementSettingsPersistence(
+                Provider: _options.EffectivePersistenceDatabase.ProviderName,
+                Source: _options.EffectivePersistenceDatabase.SourceDescription,
+                ConnectionConfigured: _options.EffectivePersistenceDatabase.Provider == PersistenceDatabaseProvider.Sqlite
+                    || !string.IsNullOrWhiteSpace(_options.EffectivePersistenceDatabase.PostgresConnectionString)),
             Inspection: new ManagementSettingsInspection(
                 MaxBodyBytes: model.Inspection.MaxBodyBytes,
                 UnsupportedStreaming: model.Inspection.UnsupportedStreaming,
@@ -48,6 +57,7 @@ public sealed class ManagementSettingsService
 public sealed record ManagementSettingsResponse(
     ManagementSettingsObservability Observability,
     ManagementSettingsAudit Audit,
+    ManagementSettingsPersistence Persistence,
     ManagementSettingsInspection Inspection,
     ManagementSettingsServiceInfo Service,
     ManagementSettingsRuntime Runtime);
@@ -61,9 +71,12 @@ public sealed record ManagementSettingsObservability(
     string ApplicationInsightsConnectionStringEnv,
     double TracesRatio);
 
-public sealed record ManagementSettingsAudit(
-    string Sink,
-    string? SqlitePath);
+public sealed record ManagementSettingsAudit(bool Enabled);
+
+public sealed record ManagementSettingsPersistence(
+    string Provider,
+    string Source,
+    bool ConnectionConfigured);
 
 public sealed record ManagementSettingsInspection(
     int MaxBodyBytes,

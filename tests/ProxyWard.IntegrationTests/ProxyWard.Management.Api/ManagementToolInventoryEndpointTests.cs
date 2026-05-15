@@ -15,7 +15,7 @@ namespace ProxyWard.IntegrationTests;
 
 public class ManagementToolInventoryEndpointTests : IAsyncLifetime
 {
-    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string PersistenceDbEnv = "PROXYWARD_DB_PATH";
     private const string AdminTokenEnv = "PROXYWARD_MANAGEMENT_ADMIN_TOKEN";
 
     private readonly string _databasePath = Path.Combine(
@@ -26,7 +26,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         Environment.SetEnvironmentVariable(AdminTokenEnv, null);
         TestFiles.DeleteSqlite(_databasePath);
 
@@ -38,7 +38,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
     {
         await SeedSchemaHistoryAsync();
         await SeedPendingDriftAsync("alpha", "repos.search");
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
@@ -75,7 +75,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
     {
         await SeedSchemaHistoryAsync();
         await new SqlitePolicyStore(_databasePath).SaveAsync(PolicyYamlWithUnobservedServer());
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
@@ -96,8 +96,8 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
     [Fact]
     public async Task ToolsEndpointReturnsEmptyInventoryWhenSchemaTablesAreMissing()
     {
-        await EnsureAuditDbExistsWithoutSchemaLockAsync();
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        await EnsurePersistenceDbExistsWithoutSchemaLockAsync();
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
@@ -114,7 +114,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
     public async Task DiscoverEndpointCallsToolsListAndPersistsInventory()
     {
         await using var upstream = await StartToolListUpstreamAsync();
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
@@ -155,7 +155,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
     public async Task DiscoverEndpointAcceptsEventStreamAndPreservesUpstreamQuery()
     {
         await using var upstream = await StartHuggingFaceStyleToolListUpstreamAsync();
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
@@ -186,7 +186,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
     public async Task DiscoverEndpointInitializesSessionBeforeToolsList()
     {
         await using var upstream = await StartSessionRequiredToolListUpstreamAsync();
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
@@ -216,7 +216,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
     [Fact]
     public async Task DiscoverEndpointPersistsInventoryWhenReadOnlySharedCacheConnectionExists()
     {
-        await EnsureAuditDbExistsWithoutSchemaLockAsync();
+        await EnsurePersistenceDbExistsWithoutSchemaLockAsync();
         await using var readOnlyConnection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = _databasePath,
@@ -226,7 +226,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
         await readOnlyConnection.OpenAsync();
 
         await using var upstream = await StartToolListUpstreamAsync();
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
@@ -291,7 +291,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
             CancellationToken.None);
     }
 
-    private async Task EnsureAuditDbExistsWithoutSchemaLockAsync()
+    private async Task EnsurePersistenceDbExistsWithoutSchemaLockAsync()
     {
         using var sink = new SqliteAuditSink(_databasePath);
         await sink.WriteAsync(new AuditEvent(
@@ -492,8 +492,7 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
           unsupportedStreaming: warn
           batchToolCalls: failClosed
         audit:
-          sink: sqlite
-          sqlitePath: ./data/proxyward.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:

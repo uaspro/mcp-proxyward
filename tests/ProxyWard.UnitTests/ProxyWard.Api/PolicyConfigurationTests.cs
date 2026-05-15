@@ -1,4 +1,6 @@
+using Microsoft.Data.Sqlite;
 using ProxyWard.Policy.Configuration;
+using ProxyWard.Policy.Persistence;
 
 namespace ProxyWard.UnitTests;
 
@@ -13,8 +15,7 @@ public class PolicyConfigurationTests
         Assert.Equal(1_048_576, policy.Inspection.MaxBodyBytes);
         Assert.Equal(UnsupportedInspectionBehavior.Warn, policy.Inspection.UnsupportedStreaming);
         Assert.Equal(BatchToolCallBehavior.FailClosed, policy.Inspection.BatchToolCalls);
-        Assert.Equal("sqlite", policy.Audit.Sink);
-        Assert.Equal("./data/proxyward.db", policy.Audit.SqlitePath);
+        Assert.True(policy.Audit.Enabled);
         Assert.Equal("mcp-proxyward", policy.Observability.ServiceName);
         Assert.Equal("APPLICATIONINSIGHTS_CONNECTION_STRING", policy.Observability.ApplicationInsights.ConnectionStringEnv);
         Assert.DoesNotContain(
@@ -28,6 +29,143 @@ public class PolicyConfigurationTests
         Assert.False(policy.Servers["sample"].Secrets.BlockReturn);
         Assert.Empty(policy.Servers["sample"].Secrets.Patterns);
         Assert.StartsWith("sha256:", policy.VersionHash, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoadAuditEnabledFalseReturnsTypedPolicyAndAffectsVersionHash()
+    {
+        var yaml = ValidYaml.Replace(
+            "  enabled: true",
+            "  enabled: false",
+            StringComparison.Ordinal);
+
+        var baseline = ProxyWardPolicyLoader.Load(ValidYaml);
+        var policy = ProxyWardPolicyLoader.Load(yaml);
+
+        Assert.False(policy.Audit.Enabled);
+        Assert.NotEqual(baseline.VersionHash, policy.VersionHash);
+
+        var serialized = ProxyWardPolicySerializer.ToYaml(policy);
+        Assert.Contains("enabled: false", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("sink", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("sqlitePath", serialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoadRuntimeAuditStorageFieldsThrowsClearValidationException()
+    {
+        var yaml = ValidYaml.Replace("enabled: true", "sink: postgres", StringComparison.Ordinal);
+
+        var ex = Assert.Throws<PolicyValidationException>(() =>
+            ProxyWardPolicyLoader.Load(yaml));
+
+        Assert.Contains(ProxyWardPolicyLoader.RuntimeAuditStorageMessage, ex.Message);
+    }
+
+    [Fact]
+    public void LoadStoredSnapshotMigratesLegacyAuditStorageFields()
+    {
+        var yaml = ValidYaml.Replace(
+            "enabled: true",
+            """
+            sink: sqlite
+              sqlitePath: ./data/proxyward.db
+            """,
+            StringComparison.Ordinal);
+
+        var policy = ProxyWardPolicyLoader.LoadStoredSnapshot(yaml);
+        var serialized = ProxyWardPolicySerializer.ToYaml(policy);
+
+        Assert.True(policy.Audit.Enabled);
+        Assert.Contains("enabled: true", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("sink", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("sqlitePath", serialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoadStoredSnapshotMapsLegacyNoneSinkToAuditDisabled()
+    {
+        var yaml = ValidYaml.Replace("enabled: true", "sink: none", StringComparison.Ordinal);
+
+        var policy = ProxyWardPolicyLoader.LoadStoredSnapshot(yaml);
+
+        Assert.False(policy.Audit.Enabled);
+    }
+
+    [Fact]
+    public async Task SqlitePolicyStoreNormalizesLegacyStoredSnapshotHash()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"proxyward-policy-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new SqlitePolicyStore(dbPath);
+            await store.EnsureSchemaAsync();
+            var legacyYaml = ValidYaml.Replace("enabled: true", "sink: none", StringComparison.Ordinal);
+
+            await using (var connection = new SqliteConnection(
+                new SqliteConnectionStringBuilder
+                {
+                    DataSource = dbPath,
+                    Mode = SqliteOpenMode.ReadWriteCreate
+                }.ToString()))
+            {
+                await connection.OpenAsync();
+                await using var insert = connection.CreateCommand();
+                insert.CommandText = """
+                    INSERT INTO policy_snapshots (
+                        created_at_utc,
+                        policy_hash,
+                        yaml,
+                        requested_by,
+                        note
+                    ) VALUES (
+                        $created_at_utc,
+                        $policy_hash,
+                        $yaml,
+                        $requested_by,
+                        $note
+                    );
+                    """;
+                insert.Parameters.AddWithValue("$created_at_utc", DateTimeOffset.UtcNow.UtcDateTime.ToString("o"));
+                insert.Parameters.AddWithValue("$policy_hash", "sha256:legacy");
+                insert.Parameters.AddWithValue("$yaml", legacyYaml);
+                insert.Parameters.AddWithValue("$requested_by", "test");
+                insert.Parameters.AddWithValue("$note", "legacy snapshot");
+                await insert.ExecuteNonQueryAsync();
+            }
+
+            var current = await store.ReadCurrentAsync();
+
+            Assert.NotNull(current);
+            Assert.False(current!.Policy.Audit.Enabled);
+            Assert.Equal(current.Policy.VersionHash, current.PolicyHash);
+            Assert.DoesNotContain("sink", current.Yaml, StringComparison.Ordinal);
+
+            await using var verify = new SqliteConnection(
+                new SqliteConnectionStringBuilder
+                {
+                    DataSource = dbPath,
+                    Mode = SqliteOpenMode.ReadOnly
+                }.ToString());
+            await verify.OpenAsync();
+            await using var select = verify.CreateCommand();
+            select.CommandText = "SELECT policy_hash, yaml FROM policy_snapshots ORDER BY id DESC LIMIT 1;";
+            await using var reader = await select.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(current.PolicyHash, reader.GetString(0));
+            Assert.Equal(current.Yaml, reader.GetString(1));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            foreach (var path in new[] { dbPath, dbPath + "-wal", dbPath + "-shm" })
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+        }
     }
 
     [Fact]
@@ -315,8 +453,7 @@ public class PolicyConfigurationTests
           maxBodyBytes: 1048576
           unsupportedStreaming: warn
         audit:
-          sink: sqlite
-          sqlitePath: ./data/proxyward.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:
@@ -380,8 +517,7 @@ public class PolicyConfigurationTests
           maxBodyBytes: 1048576
           unsupportedStreaming: warn
         audit:
-          sink: sqlite
-          sqlitePath: ./data/proxyward.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:
@@ -428,8 +564,7 @@ public class PolicyConfigurationTests
           maxBodyBytes: 1048576
           unsupportedStreaming: warn
         audit:
-          sink: sqlite
-          sqlitePath: ./data/proxyward.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:

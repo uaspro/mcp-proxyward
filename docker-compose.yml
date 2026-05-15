@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     environment:
       ASPNETCORE_URLS: http://+:8080
+      PROXYWARD_PERSISTENCE_PROVIDER: sqlite
       PROXYWARD_DB_PATH: /app/data/proxyward.db
       PROXYWARD_CONTROL_ENABLED: "true"
       PROXYWARD_ADMIN_TOKEN: proxyward-local-admin-token
@@ -21,7 +22,8 @@ services:
       dockerfile: src/ProxyWard.Management.Api/Dockerfile
     environment:
       ASPNETCORE_URLS: http://+:8081
-      PROXYWARD_MANAGEMENT_AUDIT_DB_PATH: /app/data/proxyward.db
+      PROXYWARD_PERSISTENCE_PROVIDER: sqlite
+      PROXYWARD_DB_PATH: /app/data/proxyward.db
       PROXYWARD_PROXY_CONTROL_URL: http://proxyward:8080
       PROXYWARD_ADMIN_TOKEN: proxyward-local-admin-token
       PROXYWARD_MANAGEMENT_ADMIN_TOKEN: proxyward-local-admin-token

@@ -169,8 +169,7 @@ public class RequestInspectionIntegrationTests
           maxBodyBytes: {{maxBodyBytes}}
           unsupportedStreaming: {{unsupportedStreaming}}
         audit:
-          sink: sqlite
-          sqlitePath: ./data/proxyward.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:

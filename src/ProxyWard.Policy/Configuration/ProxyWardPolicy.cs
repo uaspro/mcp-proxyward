@@ -18,9 +18,7 @@ public enum BatchToolCallBehavior
     FailClosed
 }
 
-public sealed record AuditOptions(
-    string Sink,
-    string? SqlitePath);
+public sealed record AuditOptions(bool Enabled);
 
 public sealed record ObservabilityOptions(
     string ServiceName,

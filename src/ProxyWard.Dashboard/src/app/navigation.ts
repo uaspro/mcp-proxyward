@@ -1,4 +1,4 @@
-import { Activity, FileCode2, GitBranch, List, Settings, type LucideIcon } from 'lucide-react'
+import { Activity, FileCode2, GitBranch, List, Server, type LucideIcon } from 'lucide-react'
 
 export type RouteId = 'overview' | 'audit' | 'drift' | 'policy' | 'settings'
 
@@ -13,7 +13,7 @@ export const navItems: NavItem[] = [
   { id: 'audit', label: 'Audit log', icon: List },
   { id: 'drift', label: 'Schema drift', icon: GitBranch },
   { id: 'policy', label: 'Policy', icon: FileCode2 },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'settings', label: 'System', icon: Server },
 ]
 
 export const routePathById: Record<RouteId, string> = {
@@ -21,7 +21,7 @@ export const routePathById: Record<RouteId, string> = {
   audit: '/audit',
   drift: '/schema-drift',
   policy: '/policy',
-  settings: '/settings',
+  settings: '/system',
 }
 
 const routeIdByPath: Record<string, RouteId> = {
@@ -32,6 +32,7 @@ const routeIdByPath: Record<string, RouteId> = {
   '/schema-drift': 'drift',
   '/drift': 'drift',
   '/policy': 'policy',
+  '/system': 'settings',
   '/settings': 'settings',
 }
 

@@ -16,11 +16,7 @@ public static class ProxyWardPolicySerializer
     private static SortedDictionary<string, object?> ToRaw(ProxyWardPolicy policy) =>
         new(StringComparer.Ordinal)
         {
-            ["audit"] = new SortedDictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["sink"] = policy.Audit.Sink,
-                ["sqlitePath"] = policy.Audit.SqlitePath
-            },
+            ["audit"] = CreateAudit(policy.Audit),
             ["inspection"] = new SortedDictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["batchToolCalls"] = "failClosed",
@@ -54,6 +50,12 @@ public static class ProxyWardPolicySerializer
                 pair => pair.Key,
                 pair => (object?)ToRaw(pair.Value),
                 StringComparer.Ordinal)
+        };
+
+    private static SortedDictionary<string, object?> CreateAudit(AuditOptions audit)
+        => new(StringComparer.Ordinal)
+        {
+            ["enabled"] = audit.Enabled
         };
 
     private static SortedDictionary<string, object?> ToRaw(ServerPolicy server) =>

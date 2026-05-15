@@ -37,8 +37,7 @@ public class InMemoryProxyWardPolicyProviderTests
           maxBodyBytes: 1048576
           unsupportedStreaming: warn
         audit:
-          sink: sqlite
-          sqlitePath: ./data/proxyward.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:

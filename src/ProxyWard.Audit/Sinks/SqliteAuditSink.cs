@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
 using ProxyWard.Audit.Events;
 
@@ -8,11 +5,6 @@ namespace ProxyWard.Audit.Sinks;
 
 public sealed class SqliteAuditSink : IAuditSink, IBatchedAuditSink, IDisposable
 {
-    private static readonly JsonSerializerOptions PayloadJsonOptions = new()
-    {
-        WriteIndented = false
-    };
-
     private readonly string _connectionString;
     private readonly SemaphoreSlim _writeGate = new(initialCount: 1, maxCount: 1);
     private SqliteConnection? _connection;
@@ -169,54 +161,19 @@ public sealed class SqliteAuditSink : IAuditSink, IBatchedAuditSink, IDisposable
             );
             """;
 
-        insert.Parameters.AddWithValue("$timestamp_utc", auditEvent.Timestamp.UtcDateTime.ToString("o", CultureInfo.InvariantCulture));
+        insert.Parameters.AddWithValue("$timestamp_utc", AuditEventPersistence.FormatTimestamp(auditEvent.Timestamp));
         insert.Parameters.AddWithValue("$event_type", auditEvent.EventType);
         insert.Parameters.AddWithValue("$mode", auditEvent.Mode);
-        insert.Parameters.AddWithValue("$decision", FormatDecision(auditEvent.Decision));
+        insert.Parameters.AddWithValue("$decision", AuditEventPersistence.FormatDecision(auditEvent.Decision));
         insert.Parameters.AddWithValue("$server_id", auditEvent.ServerId);
         insert.Parameters.AddWithValue("$method", (object?)auditEvent.Method ?? DBNull.Value);
         insert.Parameters.AddWithValue("$tool_name", (object?)auditEvent.ToolName ?? DBNull.Value);
-        insert.Parameters.AddWithValue("$reasons", string.Join(',', auditEvent.Reasons));
+        insert.Parameters.AddWithValue("$reasons", AuditEventPersistence.FormatReasons(auditEvent.Reasons));
         insert.Parameters.AddWithValue("$policy_version", auditEvent.PolicyVersion);
         insert.Parameters.AddWithValue("$correlation_id", auditEvent.CorrelationId);
         insert.Parameters.AddWithValue("$request_bytes", auditEvent.RequestBytes);
         insert.Parameters.AddWithValue("$duration_ms", auditEvent.DurationMs);
-        insert.Parameters.AddWithValue("$payload_json", SerializePayload(auditEvent));
+        insert.Parameters.AddWithValue("$payload_json", AuditEventPersistence.SerializePayload(auditEvent));
         return insert;
     }
-
-    private static string SerializePayload(AuditEvent auditEvent)
-    {
-        var payload = new JsonObject
-        {
-            ["timestamp"] = auditEvent.Timestamp.UtcDateTime.ToString("o", CultureInfo.InvariantCulture),
-            ["eventType"] = auditEvent.EventType,
-            ["mode"] = auditEvent.Mode,
-            ["decision"] = FormatDecision(auditEvent.Decision),
-            ["serverId"] = auditEvent.ServerId,
-            ["method"] = auditEvent.Method,
-            ["toolName"] = auditEvent.ToolName,
-            ["reasons"] = new JsonArray(auditEvent.Reasons.Select(r => (JsonNode?)JsonValue.Create(r)).ToArray()),
-            ["policyVersion"] = auditEvent.PolicyVersion,
-            ["correlationId"] = auditEvent.CorrelationId,
-            ["requestBytes"] = auditEvent.RequestBytes,
-            ["durationMs"] = auditEvent.DurationMs,
-            ["batchSize"] = auditEvent.BatchSize,
-            ["batchIndex"] = auditEvent.BatchIndex,
-            ["argumentOverrideApplied"] = auditEvent.ArgumentOverrideApplied,
-            ["argumentSummary"] = auditEvent.ArgumentSummary?.DeepClone()
-        };
-
-        return payload.ToJsonString(PayloadJsonOptions);
-    }
-
-    private static string FormatDecision(AuditDecision decision) =>
-        decision switch
-        {
-            AuditDecision.Allow => "allow",
-            AuditDecision.Warn => "warn",
-            AuditDecision.WouldBlock => "would_block",
-            AuditDecision.Block => "block",
-            _ => "unknown"
-        };
 }

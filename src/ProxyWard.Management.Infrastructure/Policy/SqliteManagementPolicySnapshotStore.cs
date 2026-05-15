@@ -12,7 +12,7 @@ public sealed class SqliteManagementPolicySnapshotStore : IManagementPolicySnaps
         _policyStore = policyStore ?? throw new ArgumentNullException(nameof(policyStore));
     }
 
-    public string DatabasePath => _policyStore.DatabasePath;
+    public string SourceDescription => _policyStore.SourceDescription;
 
     public async Task<ManagementStoredPolicySnapshot> InitializeAndReadCurrentAsync(
         string defaultYaml,

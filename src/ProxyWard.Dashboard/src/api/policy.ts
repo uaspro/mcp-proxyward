@@ -38,8 +38,7 @@ export type InspectionPolicy = {
 }
 
 export type AuditPolicy = {
-  sink: string
-  sqlitePath: string | null
+  enabled: boolean
 }
 
 export type ObservabilityPolicy = {

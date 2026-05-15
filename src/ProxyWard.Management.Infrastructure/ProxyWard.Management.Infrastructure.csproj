@@ -3,6 +3,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
+    <PackageReference Include="Npgsql" Version="10.0.2" />
     <PackageReference Include="YamlDotNet" Version="17.1.0" />
   </ItemGroup>
 

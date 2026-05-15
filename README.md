@@ -37,7 +37,7 @@ ProxyWard's core data plane is an ASP.NET Core service. The bundled stack also i
                  │  Tool allow/block rules                │
                  │  tools/list schema-lock drift checks   │
                  │  Path / host / command argument rules  │
-                 │  Redacted SQLite audit log             │
+                 │  Redacted persistence DB audit log      │
                  │  OpenTelemetry logs / traces / metrics │
                  └────────────────────────────────────────┘
 ```
@@ -46,12 +46,12 @@ Highlights:
 
 - **Audit mode and enforce mode** share the same decision engine, so you can roll out as `audit` first, watch the would-block events, then flip to `enforce` with confidence.
 - **YAML policy** describes servers, routes, tool allow/block lists, and argument rules in a single reviewable file.
-- **DB-backed tool schema lock** captures stable hashes of each tool's name, title, description, input schema, and output schema. Drift produces a deterministic warn-or-block decision and keeps a versioned history in SQLite.
+- **DB-backed tool schema lock** captures stable hashes of each tool's name, title, description, input schema, and output schema. Drift produces a deterministic warn-or-block decision and keeps a versioned history in the configured persistence DB.
 - **Argument rules** cover path traversal / allowed roots, host allowlists, private-network targets, and dangerous shell-like commands.
-- **Redacted audit events** are persisted to SQLite — sensitive argument values never leak into the audit DB, logs, traces, or metrics.
+- **Redacted audit events** are persisted to the configured persistence DB; sensitive argument values never leak into the database, logs, traces, or metrics.
 - **OpenTelemetry-compatible** logs, traces, and metrics, with optional OTLP and Azure Monitor Application Insights export.
 
-Stack: .NET 10 · ASP.NET Core · YARP · YAML · SQLite · OpenTelemetry · Docker.
+Stack: .NET 10 · ASP.NET Core · YARP · YAML · SQLite / PostgreSQL · OpenTelemetry · Docker.
 
 ---
 
@@ -87,7 +87,7 @@ This brings up four services:
 | `dashboard`      | React operator dashboard                | 8082  |
 | `otel-collector` | Receives OTLP logs / traces / metrics   | 4317 / 4318 |
 
-The compose stack stores policy snapshots, audit data, and schema-lock history in the named `proxyward-data` volume at `/app/data/proxyward.db`. The proxy boots from that SQLite policy snapshot table and keeps the active policy cached in memory; the management API persists policy edits to the same DB and immediately pushes the accepted snapshot to the proxy runtime-control API. The stack binds published ports to `127.0.0.1`, uses a local compose admin token for management writes and proxy runtime control, and serves dashboard same-origin `/api/*` requests through its web server.
+The compose stack stores policy snapshots, audit data, and schema-lock history in the named `proxyward-data` volume at `/app/data/proxyward.db`. The proxy boots from that SQLite policy snapshot table and keeps the active policy cached in memory; the management API persists policy edits to the same DB and immediately pushes the accepted snapshot to the proxy runtime-control API. The database provider is static startup configuration, not a runtime policy setting. The stack binds published ports to `127.0.0.1`, uses a local compose admin token for management writes and proxy runtime control, and serves dashboard same-origin `/api/*` requests through its web server.
 
 ### 3. Verify the proxy is healthy
 
@@ -133,7 +133,7 @@ export PROXYWARD_ADMIN_TOKEN=local-dev-token
 dotnet run --project src/ProxyWard.Api --urls http://localhost:8080
 
 # 3. Terminal 2: management API
-export PROXYWARD_MANAGEMENT_AUDIT_DB_PATH=./data/proxyward.db
+export PROXYWARD_DB_PATH=./data/proxyward.db
 export PROXYWARD_PROXY_CONTROL_URL=http://localhost:8080
 export PROXYWARD_ADMIN_TOKEN=local-dev-token
 export PROXYWARD_MANAGEMENT_CORS_ALLOWED_ORIGINS=http://localhost:5173
@@ -148,7 +148,7 @@ npm run dev
 
 ProxyWard listens on `http://localhost:8080`, the management API listens on `http://localhost:8081`, and Vite serves the dashboard at `http://localhost:5173`.
 
-To stop the compose stack and wipe the audit DB and schema-lock history for a clean run:
+To stop the compose stack and wipe the persistence DB for a clean run:
 
 ```bash
 docker compose down -v
@@ -172,11 +172,13 @@ Compose binds published ports to `127.0.0.1` and wires the dashboard through Ngi
 
 | Variable | Service | Purpose |
 | -------- | ------- | ------- |
-| `PROXYWARD_DB_PATH` | Proxy | SQLite DB path containing `policy_snapshots`, audit rows, and schema-lock tables. |
+| `PROXYWARD_PERSISTENCE_PROVIDER` | Proxy and management | Static persistence provider: `sqlite` (default) or `postgres`. The provider is read at startup and cannot be changed from policy or dashboard settings. |
+| `PROXYWARD_DB_PATH` | Proxy and management | SQLite DB path containing `policy_snapshots`, audit rows, schema-lock tables, and management/control-plane settings when the provider is `sqlite`. |
+| `PROXYWARD_PERSISTENCE_CONNECTION_STRING` | Proxy and management | PostgreSQL connection string used when `PROXYWARD_PERSISTENCE_PROVIDER=postgres`. Keep this in environment or secret storage; it is not stored in policy YAML. |
 | `PROXYWARD_CONTROL_ENABLED` | Proxy | Enables the minimal `/control/*` runtime-control endpoints. |
 | `PROXYWARD_CONTROL_TOKEN` | Proxy | Bearer token for proxy control endpoints. Falls back to `PROXYWARD_ADMIN_TOKEN`. |
 | `PROXYWARD_ADMIN_TOKEN` | Proxy and management | Shared local admin-token fallback used by Compose. Prefer secret injection outside local development. |
-| `PROXYWARD_MANAGEMENT_AUDIT_DB_PATH` | Management API | SQLite DB path used for policy snapshots, audit/schema-lock data, and dashboard reads. |
+| `PROXYWARD_MANAGEMENT_AUDIT_DB_PATH` | Management API | Legacy SQLite path alias. Prefer `PROXYWARD_DB_PATH` for new deployments. |
 | `PROXYWARD_PROXY_CONTROL_URL` | Management API | Internal URL of the proxy control API, for example `http://proxyward:8080` in Compose. |
 | `PROXYWARD_PROXY_CONTROL_TOKEN` | Management API | Bearer token used by management API when calling proxy `/control/*`; falls back to `PROXYWARD_ADMIN_TOKEN`. |
 | `PROXYWARD_MANAGEMENT_ADMIN_TOKEN` | Management API | Bearer token required by privileged management write endpoints outside explicit local-dev mode. |
@@ -202,9 +204,9 @@ Management API endpoints:
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| `GET` | `/api/status` | Management, proxy control, audit DB, schema lock, and telemetry health. |
+| `GET` | `/api/status` | Management, proxy control, persistence DB, schema lock, and telemetry health. |
 | `GET` | `/api/settings` | Read-only effective settings summary for the dashboard. |
-| `GET` | `/api/overview` | Dashboard aggregate stats and time-series data from the audit DB. |
+| `GET` | `/api/overview` | Dashboard aggregate stats and time-series data from persisted audit events. |
 | `GET` | `/api/audit/events` | Paged/filterable audit events. |
 | `GET` | `/api/audit/events/{id}` | Audit event detail. |
 | `GET` | `/api/audit/export.ndjson` | Bounded NDJSON audit export. |
@@ -219,7 +221,7 @@ Management API endpoints:
 | `GET` | `/api/tools` | Tool inventory from schema-lock history. |
 | `POST` | `/api/tools/discover` | Privileged upstream `tools/list` discovery and schema-lock snapshot capture. |
 
-Privileged management writes require `Authorization: Bearer <admin-token>` unless `PROXYWARD_MANAGEMENT_LOCAL_DEV=true` is explicitly set. Auth failures are logged and written to the audit DB without token values.
+Privileged management writes require `Authorization: Bearer <admin-token>` unless `PROXYWARD_MANAGEMENT_LOCAL_DEV=true` is explicitly set. Auth failures are logged and written to the persistence DB without token values.
 
 ---
 
@@ -238,8 +240,7 @@ inspection:
   unsupportedStreaming: warn
   batchToolCalls: failClosed
 audit:
-  sink: sqlite
-  sqlitePath: ./data/proxyward.db
+  enabled: true
 observability:
   serviceName: mcp-proxyward
   console:
@@ -272,8 +273,8 @@ What you get:
 
 - The call is **proxied normally** to the upstream and the client sees the real response.
 - The proxy emits OpenTelemetry activities and metrics for the request, with policy failures and operational warnings written as structured logs.
-- A redacted row is written to `./data/proxyward.db` (table `audit_events`) capturing timestamp, server id, method, tool name, decision, mode, and policy version.
-- The first time `tools/list` is called, ProxyWard records each tool's hashes into the `tool_schema_versions` table in `./data/proxyward.db`. From then on, any change to a tool's description or schema becomes a versioned audit event tied to the policy hash.
+- A redacted row is written to the configured persistence DB (`audit_events`) capturing timestamp, server id, method, tool name, decision, mode, and policy version.
+- The first time `tools/list` is called, ProxyWard records each tool's hashes into the `tool_schema_versions` table in the same persistence DB. From then on, any change to a tool's description or schema becomes a versioned audit event tied to the policy hash.
 
 This mode is the recommended starting point for any new deployment.
 
@@ -297,8 +298,7 @@ inspection:
   unsupportedStreaming: block
   batchToolCalls: failClosed
 audit:
-  sink: sqlite
-  sqlitePath: ./data/proxyward.db
+  enabled: true
 observability:
   serviceName: mcp-proxyward
   console:
@@ -397,7 +397,7 @@ Now consider three calls a client might make through `http://localhost:8080/gith
 
 → `repos.search` is allowed, but the argument inspector resolves `10.0.0.5` and matches `blockPrivateNetworks: true`. Reason `private_network_target` is recorded; the upstream is not called and the client gets the JSON-RPC error.
 
-**Drift on top of all of the above:** if the upstream later changes the description of `repos.search`, the next `tools/list` produces a `tool_description_changed` decision. In `enforce` mode only the affected tool is removed from matching `tools/list` responses until the change is approved; in `audit` mode it produces a warn event you can spot in logs and the audit DB.
+**Drift on top of all of the above:** if the upstream later changes the description of `repos.search`, the next `tools/list` produces a `tool_description_changed` decision. In `enforce` mode only the affected tool is removed from matching `tools/list` responses until the change is approved; in `audit` mode it produces a warn event you can spot in logs and the persistence DB.
 
 You can flip between `mode: audit` and `mode: enforce` without changing any other rule — the same engine produces `would_block` decisions in audit and real `block` decisions in enforce.
 
@@ -405,25 +405,50 @@ You can flip between `mode: audit` and `mode: enforce` without changing any othe
 
 ## Configuration Reference (short)
 
-Policy snapshots are persisted in SQLite and cached by the proxy at runtime. The dashboard and management API still accept YAML or structured JSON policy proposals with these top-level keys:
+Policy snapshots are persisted in the static persistence DB and cached by the proxy at runtime. The dashboard and management API still accept YAML or structured JSON policy proposals with these top-level keys:
 
 | Key             | Purpose                                                           |
 | --------------- | ----------------------------------------------------------------- |
 | `mode`          | `audit` or `enforce`                                              |
 | `inspection`    | Body size limits, streaming behavior, batch handling              |
-| `audit`         | Audit sink type and storage path                                  |
+| `audit`         | Audit capture enablement (`enabled: true|false`)                  |
 | `observability` | Service name, console / OTLP / Application Insights export        |
 | `servers.<id>`  | Per-server route, upstream URL, allow flag, tool rules, arg rules |
 
-The Compose stack bootstraps an empty DB-backed policy into `policy_snapshots` when the DB is empty; subsequent edits are persisted in SQLite and pushed to the proxy runtime.
+The Compose stack bootstraps an empty DB-backed policy into `policy_snapshots` when the DB is empty; subsequent edits are persisted in the configured DB and pushed to the proxy runtime.
+
+### Persistence database options
+
+SQLite is the default persistence provider. It stores policy snapshots, audit rows, schema-lock history, drift review state, and management/control-plane settings in the same file:
+
+```powershell
+$env:PROXYWARD_PERSISTENCE_PROVIDER="sqlite"
+$env:PROXYWARD_DB_PATH="./data/proxyward.db"
+```
+
+Use PostgreSQL when the full persistence database should be centralized. Keep the connection string in environment or secret storage:
+
+```powershell
+$env:PROXYWARD_PERSISTENCE_PROVIDER="postgres"
+$env:PROXYWARD_PERSISTENCE_CONNECTION_STRING="Host=postgres;Database=proxyward;Username=proxyward;Password=change-me"
+```
+
+The selected provider is read at service startup and cannot be changed from policy YAML, the management API, or the dashboard. Policy only controls whether audit capture is enabled:
+
+```yaml
+audit:
+  enabled: true
+```
+
+PostgreSQL uses the same logical tables as SQLite; `payload_json` columns are stored as `jsonb`.
 
 ---
 
 ## Project Status
 
-MVP-stage. Implemented: reverse proxy via YARP, server allowlist, JSON-RPC parsing, tool allow/block, DB-backed `tools/list` schema-lock persistence and drift detection, schema drift review queue and actions, management API and React dashboard, runtime policy and mode apply through the control API, path / host / command argument rules, per-server secret redaction and response blocking, redacted SQLite audit, OpenTelemetry logs / traces / metrics with optional OTLP and Application Insights export, Docker Compose stack.
+MVP-stage. Implemented: reverse proxy via YARP, server allowlist, JSON-RPC parsing, tool allow/block, DB-backed `tools/list` schema-lock persistence and drift detection, schema drift review queue and actions, management API and React dashboard, runtime policy and mode apply through the control API, path / host / command argument rules, per-server secret redaction and response blocking, SQLite and PostgreSQL persistence, OpenTelemetry logs / traces / metrics with optional OTLP and Application Insights export, Docker Compose stack.
 
-Deferred (designed for, not built yet): PostgreSQL audit sink, stdio sidecar transport, policy-based `tools/list` filtering for static allow/block rules, and a remote hosted policy service.
+Deferred (designed for, not built yet): stdio sidecar transport and a remote hosted policy service.
 
 ---
 

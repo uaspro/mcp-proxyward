@@ -21,15 +21,15 @@ public sealed class ManagementToolInventoryRepository : IManagementToolInventory
 
     private readonly string _databasePath;
     private readonly string _connectionString;
-    private readonly SqlitePolicyStore _policyStore;
+    private readonly IPolicyStore _policyStore;
 
     public ManagementToolInventoryRepository(
         ManagementApiOptions options,
-        SqlitePolicyStore policyStore)
+        IPolicyStore policyStore)
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        _databasePath = Path.GetFullPath(options.AuditDatabasePath);
+        _databasePath = Path.GetFullPath(options.SqliteDatabasePath);
         _policyStore = policyStore ?? throw new ArgumentNullException(nameof(policyStore));
         _connectionString = new SqliteConnectionStringBuilder
         {

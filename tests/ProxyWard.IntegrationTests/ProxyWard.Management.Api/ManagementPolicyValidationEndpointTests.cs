@@ -9,7 +9,7 @@ namespace ProxyWard.IntegrationTests;
 
 public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 {
-    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string PersistenceDbEnv = "PROXYWARD_DB_PATH";
 
     private readonly string _databasePath = Path.Combine(
         Path.GetTempPath(),
@@ -19,7 +19,7 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         TestFiles.DeleteSqlite(_databasePath);
 
         return Task.CompletedTask;
@@ -103,6 +103,26 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
             .EnumerateArray()
             .Select(value => value.GetString()!)
             .ToArray());
+    }
+
+    [Fact]
+    public async Task ValidateEndpointAcceptsStructuredAuditEnabledModelRequest()
+    {
+        await using var factory = new WebApplicationFactory<ManagementProgram>();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsync(
+            "/api/policy/validate",
+            TestJson.Content(StructuredAuditDisabledModelRequestJson()));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var payload = await TestJson.ReadAsync(response);
+        var root = payload.RootElement;
+
+        Assert.True(root.GetProperty("valid").GetBoolean());
+        var audit = root.GetProperty("normalizedModel").GetProperty("audit");
+        Assert.False(audit.GetProperty("enabled").GetBoolean());
     }
 
     [Fact]
@@ -206,7 +226,7 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
     {
         var activePolicy = ActivePolicyYaml();
         await new SqlitePolicyStore(_databasePath).SaveAsync(activePolicy);
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
@@ -233,8 +253,7 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
           unsupportedStreaming: warn
           batchToolCalls: failClosed
         audit:
-          sink: sqlite
-          sqlitePath: ./data/active.db
+          enabled: true
         observability:
           serviceName: active-proxyward
           console:
@@ -276,8 +295,7 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
           unsupportedStreaming: warn
           batchToolCalls: failClosed
         audit:
-          sink: sqlite
-          sqlitePath: ./data/proxyward.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:
@@ -326,8 +344,7 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
           unsupportedStreaming: warn
           batchToolCalls: failClosed
         audit:
-          sink: sqlite
-          sqlitePath: ./data/proxyward.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:
@@ -393,8 +410,7 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
               "batchToolCalls": "failClosed"
             },
             "audit": {
-              "sink": "sqlite",
-              "sqlitePath": "./data/structured.db"
+              "enabled": true
             },
             "observability": {
               "serviceName": "structured-proxyward",
@@ -442,6 +458,65 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
         }
         """;
 
+    private static string StructuredAuditDisabledModelRequestJson() =>
+        """
+        {
+          "model": {
+            "mode": "audit",
+            "inspection": {
+              "maxBodyBytes": 65536,
+              "unsupportedStreaming": "warn",
+              "batchToolCalls": "failClosed"
+            },
+            "audit": {
+              "enabled": false
+            },
+            "observability": {
+              "serviceName": "structured-proxyward",
+              "console": { "enabled": false },
+              "otlp": {
+                "enabled": false,
+                "endpoint": "http://otel-collector:4317"
+              },
+              "applicationInsights": {
+                "enabled": false,
+                "connectionStringEnv": "APPLICATIONINSIGHTS_CONNECTION_STRING"
+              },
+              "sampling": { "tracesRatio": 1.0 }
+            },
+            "servers": {
+              "github": {
+                "id": "github",
+                "route": "/github/mcp",
+                "upstream": "https://github.example/mcp",
+                "allowed": true,
+                "tools": {
+                  "default": "deny",
+                  "allow": [],
+                  "block": [],
+                  "hide": []
+                },
+                "arguments": {
+                  "paths": {
+                    "allowedRoots": [],
+                    "blockTraversal": false
+                  },
+                  "hosts": {
+                    "allow": [],
+                    "blockPrivateNetworks": false
+                  },
+                  "commands": {
+                    "blockShell": false,
+                    "dangerous": []
+                  },
+                  "overrides": {}
+                }
+              }
+            }
+          }
+        }
+        """;
+
     private static string StructuredSecretModelRequestJson() =>
         """
         {
@@ -453,8 +528,7 @@ public class ManagementPolicyValidationEndpointTests : IAsyncLifetime
               "batchToolCalls": "failClosed"
             },
             "audit": {
-              "sink": "sqlite",
-              "sqlitePath": "./data/structured.db"
+              "enabled": true
             },
             "observability": {
               "serviceName": "structured-proxyward",

@@ -3,7 +3,7 @@ namespace ProxyWard.Policy.Configuration;
 public static class ProxyWardDefaultPolicy
 {
     public static string CreateYaml(
-        string databasePath,
+        string? databasePath = null,
         bool otlpEnabled = true)
     {
         var policy = new ProxyWardPolicy(
@@ -12,7 +12,7 @@ public static class ProxyWardDefaultPolicy
                 MaxBodyBytes: 1_048_576,
                 UnsupportedStreaming: UnsupportedInspectionBehavior.Warn,
                 BatchToolCalls: BatchToolCallBehavior.FailClosed),
-            Audit: new AuditOptions("sqlite", databasePath),
+            Audit: new AuditOptions(Enabled: true),
             Observability: new ObservabilityOptions(
                 "mcp-proxyward",
                 new ConsoleExporterOptions(true),

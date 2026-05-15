@@ -14,11 +14,7 @@ public sealed class YamlManagementPolicyModelSerializer : IManagementPolicyModel
 
         var raw = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
-            ["audit"] = new SortedDictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["sink"] = model.Audit?.Sink,
-                ["sqlitePath"] = model.Audit?.SqlitePath
-            },
+            ["audit"] = CreateAudit(model.Audit),
             ["inspection"] = new SortedDictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["batchToolCalls"] = model.Inspection?.BatchToolCalls,
@@ -35,6 +31,12 @@ public sealed class YamlManagementPolicyModelSerializer : IManagementPolicyModel
 
         return Serializer.Serialize(raw);
     }
+
+    private static SortedDictionary<string, object?> CreateAudit(ManagementAuditPolicyModel? audit)
+        => new(StringComparer.Ordinal)
+        {
+            ["enabled"] = audit?.Enabled
+        };
 
     private static SortedDictionary<string, object?> CreateObservability(
         ManagementObservabilityPolicyModel? observability) =>

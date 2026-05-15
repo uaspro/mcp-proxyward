@@ -62,7 +62,7 @@ internal static class WorstCaseProxyWardHost
         builder.Services.AddSingleton<ArgumentPolicyOverrideResolver>();
         builder.Services.AddSingleton<IAuditSink>(_ =>
         {
-            IAuditSink sink = new SqliteAuditSink(policy.Audit.SqlitePath!);
+            IAuditSink sink = new SqliteAuditSink(sqlitePath);
             return new QueuedAuditSink(sink);
         });
         builder.Services
@@ -93,8 +93,7 @@ internal static class WorstCaseProxyWardHost
           unsupportedStreaming: warn
           batchToolCalls: failClosed
         audit:
-          sink: sqlite
-          sqlitePath: {{YamlPath(sqlitePath)}}
+          enabled: true
         observability:
           serviceName: mcp-proxyward-perf
           console:

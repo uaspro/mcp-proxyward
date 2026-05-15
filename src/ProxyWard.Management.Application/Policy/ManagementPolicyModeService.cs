@@ -59,7 +59,7 @@ public sealed class ManagementPolicyModeService
         var targetMode = NormalizeMode(request.Mode);
         var currentStatus = await _proxyControlClient.GetStatusAsync(cancellationToken).ConfigureAwait(false);
         var currentPolicy = await _policySnapshots.InitializeAndReadCurrentAsync(
-            ProxyWardDefaultPolicy.CreateYaml(_policySnapshots.DatabasePath),
+            ProxyWardDefaultPolicy.CreateYaml(),
             cancellationToken).ConfigureAwait(false);
         var window = NormalizeWindow(request.ImpactFromUtc, request.ImpactToUtc);
         var impact = await BuildImpactAsync(targetMode, currentStatus, window, cancellationToken).ConfigureAwait(false);

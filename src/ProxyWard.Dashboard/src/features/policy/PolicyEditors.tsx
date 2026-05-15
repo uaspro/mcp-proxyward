@@ -72,11 +72,17 @@ export function GlobalPolicyEditor({
           <PolicyField label="batchToolCalls">
             <strong className="mono">{draft.inspection.batchToolCalls}</strong>
           </PolicyField>
-          <PolicyField label="audit.sink">
-            <strong className="mono">{draft.audit.sink}</strong>
-          </PolicyField>
-          <PolicyField label="audit.sqlitePath">
-            <strong className="mono truncate">{draft.audit.sqlitePath ?? '-'}</strong>
+          <PolicyField label="audit.enabled">
+            <Toggle
+              checked={draft.audit.enabled}
+              label={draft.audit.enabled ? 'Enabled' : 'Disabled'}
+              onChange={(checked) =>
+                onChange((current) => ({
+                  ...current,
+                  audit: { enabled: checked },
+                }))
+              }
+            />
           </PolicyField>
         </div>
       </Card>

@@ -3,6 +3,7 @@ import { getJson } from './client'
 export type SettingsResponse = {
   observability: SettingsObservability
   audit: SettingsAudit
+  persistence: SettingsPersistence
   inspection: SettingsInspection
   service: SettingsServiceInfo
   runtime: SettingsRuntime
@@ -19,8 +20,13 @@ export type SettingsObservability = {
 }
 
 export type SettingsAudit = {
-  sink: string
-  sqlitePath: string | null
+  enabled: boolean
+}
+
+export type SettingsPersistence = {
+  provider: string
+  source: string
+  connectionConfigured: boolean
 }
 
 export type SettingsInspection = {

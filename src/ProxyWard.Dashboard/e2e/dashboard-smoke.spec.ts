@@ -7,7 +7,7 @@ test.beforeEach(async ({ request }) => {
   await request.post(`${apiBaseUrl}/__test/reset`)
 })
 
-test('dashboard smoke covers overview, audit, drift, policy, and settings', async ({ page }) => {
+test('dashboard smoke covers overview, audit, drift, policy, and system', async ({ page }) => {
   const overviewRequests: string[] = []
   page.on('request', (request) => {
     const url = new URL(request.url())
@@ -146,16 +146,17 @@ test('dashboard smoke covers overview, audit, drift, policy, and settings', asyn
   await page.getByRole('button', { name: /^Validate$/i }).click()
   await expect(page.getByText('Policy valid')).toBeVisible()
 
-  await page.getByRole('button', { name: /^Settings$/i }).click()
-  await expect(page).toHaveURL(/\/settings$/)
-  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  await page.getByRole('button', { name: /^System$/i }).click()
+  await expect(page).toHaveURL(/\/system$/)
+  await expect(page.getByRole('heading', { name: 'System' })).toBeVisible()
   await expect(page.getByText('mcp-proxyward')).toBeVisible()
-  await expect(page.getByText('/app/data/proxyward.db', { exact: true })).toBeVisible()
-  await expect(page.getByText('unsupportedInspection')).toBeVisible()
+  await expect(page.getByText('sqlite:/app/data/proxyward.db', { exact: true })).toBeVisible()
+  await expect(page.getByText('unsupported response')).toBeVisible()
+  await expect(page.getByRole('switch')).toHaveCount(0)
 
   await page.reload()
-  await expect(page).toHaveURL(/\/settings$/)
-  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  await expect(page).toHaveURL(/\/system$/)
+  await expect(page.getByRole('heading', { name: 'System' })).toBeVisible()
 })
 
 test('dashboard can load directly into a routed screen', async ({ page }) => {

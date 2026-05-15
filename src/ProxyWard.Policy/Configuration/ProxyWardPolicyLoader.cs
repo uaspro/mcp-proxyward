@@ -10,7 +10,8 @@ namespace ProxyWard.Policy.Configuration;
 
 public static class ProxyWardPolicyLoader
 {
-    public const string RemovedLockfileMessage = "The 'lockfile:' config key has been removed. Tool schema lock is now persisted in the audit SQLite database. Remove this key from your policy YAML.";
+    public const string RemovedLockfileMessage = "The 'lockfile:' config key has been removed. Tool schema lock is now persisted in the persistence database. Remove this key from your policy YAML.";
+    public const string RuntimeAuditStorageMessage = "Persistence database backend is static startup configuration. Remove audit.sink/audit.sqlitePath/audit.postgresConnectionStringEnv from policy YAML and configure PROXYWARD_PERSISTENCE_PROVIDER at startup.";
 
     private static readonly IDeserializer Deserializer = new DeserializerBuilder()
         .WithNamingConvention(CamelCaseNamingConvention.Instance)
@@ -18,6 +19,16 @@ public static class ProxyWardPolicyLoader
         .Build();
 
     public static ProxyWardPolicy Load(string yaml)
+    {
+        return LoadCore(yaml, migrateStoredSnapshot: false);
+    }
+
+    public static ProxyWardPolicy LoadStoredSnapshot(string yaml)
+    {
+        return LoadCore(yaml, migrateStoredSnapshot: true);
+    }
+
+    private static ProxyWardPolicy LoadCore(string yaml, bool migrateStoredSnapshot)
     {
         RejectRemovedLockfileKey(yaml);
 
@@ -33,6 +44,10 @@ public static class ProxyWardPolicyLoader
         }
 
         raw ??= new ProxyWardPolicyYaml();
+        if (migrateStoredSnapshot)
+        {
+            MigrateLegacyRuntimeAuditStorage(raw);
+        }
 
         var errors = Validate(raw);
         if (errors.Count > 0)
@@ -94,15 +109,11 @@ public static class ProxyWardPolicyLoader
         }
         else
         {
-            if (string.IsNullOrWhiteSpace(raw.Audit.Sink))
+            if (!string.IsNullOrWhiteSpace(raw.Audit.Sink)
+                || !string.IsNullOrWhiteSpace(raw.Audit.SqlitePath)
+                || !string.IsNullOrWhiteSpace(raw.Audit.PostgresConnectionStringEnv))
             {
-                errors.Add("audit.sink is required");
-            }
-
-            if (string.Equals(raw.Audit.Sink, "sqlite", StringComparison.OrdinalIgnoreCase)
-                && string.IsNullOrWhiteSpace(raw.Audit.SqlitePath))
-            {
-                errors.Add("audit.sqlitePath is required when audit.sink is sqlite");
+                errors.Add(RuntimeAuditStorageMessage);
             }
         }
 
@@ -171,6 +182,27 @@ public static class ProxyWardPolicyLoader
         }
 
         return errors;
+    }
+
+    private static void MigrateLegacyRuntimeAuditStorage(ProxyWardPolicyYaml raw)
+    {
+        if (raw.Audit is null)
+        {
+            return;
+        }
+
+        var hasLegacyStorage = !string.IsNullOrWhiteSpace(raw.Audit.Sink)
+            || !string.IsNullOrWhiteSpace(raw.Audit.SqlitePath)
+            || !string.IsNullOrWhiteSpace(raw.Audit.PostgresConnectionStringEnv);
+        if (!hasLegacyStorage)
+        {
+            return;
+        }
+
+        raw.Audit.Enabled ??= Normalize(raw.Audit.Sink) != "none";
+        raw.Audit.Sink = null;
+        raw.Audit.SqlitePath = null;
+        raw.Audit.PostgresConnectionStringEnv = null;
     }
 
     private static void ValidateSecrets(
@@ -343,7 +375,7 @@ public static class ProxyWardPolicyLoader
                 raw.Inspection!.MaxBodyBytes,
                 ParseUnsupportedBehavior(raw.Inspection.UnsupportedStreaming),
                 ParseBatchToolCallBehavior(raw.Inspection.BatchToolCalls)),
-            new AuditOptions(raw.Audit!.Sink!, raw.Audit.SqlitePath),
+            new AuditOptions(raw.Audit!.Enabled ?? true),
             new ObservabilityOptions(
                 observability.ServiceName!,
                 new ConsoleExporterOptions(observability.Console?.Enabled ?? false),
@@ -371,8 +403,7 @@ public static class ProxyWardPolicyLoader
         {
             ["audit"] = new SortedDictionary<string, object?>(StringComparer.Ordinal)
             {
-                ["sink"] = policy.Audit.Sink,
-                ["sqlitePath"] = policy.Audit.SqlitePath
+                ["enabled"] = policy.Audit.Enabled
             },
             ["inspection"] = new SortedDictionary<string, object?>(StringComparer.Ordinal)
             {
@@ -671,8 +702,10 @@ public static class ProxyWardPolicyLoader
 
     private sealed class AuditOptionsYaml
     {
+        public bool? Enabled { get; set; }
         public string? Sink { get; set; }
         public string? SqlitePath { get; set; }
+        public string? PostgresConnectionStringEnv { get; set; }
     }
 
     private sealed class ObservabilityOptionsYaml

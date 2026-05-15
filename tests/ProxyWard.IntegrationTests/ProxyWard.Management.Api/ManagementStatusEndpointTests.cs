@@ -15,15 +15,15 @@ namespace ProxyWard.IntegrationTests;
 
 public class ManagementStatusEndpointTests
 {
-    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string PersistenceDbEnv = "PROXYWARD_DB_PATH";
     private const string ProxyControlTokenEnv = "PROXYWARD_PROXY_CONTROL_TOKEN";
 
     [Fact]
     public async Task StatusEndpointReturnsHealthyWhenAllComponentsHealthy()
     {
         var dbPath = TempDbPath();
-        await EnsureAuditDbExistsAsync(dbPath);
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        await EnsurePersistenceDbExistsAsync(dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
         Environment.SetEnvironmentVariable(ProxyControlTokenEnv, "test-token");
 
         var stub = new StubProxyControlClient
@@ -59,24 +59,25 @@ public class ManagementStatusEndpointTests
             var components = root.GetProperty("components");
             Assert.Equal("healthy", components.GetProperty("managementApi").GetProperty("status").GetString());
             Assert.Equal("healthy", components.GetProperty("proxyControl").GetProperty("status").GetString());
-            Assert.Equal("healthy", components.GetProperty("auditDb").GetProperty("status").GetString());
+            Assert.Equal("healthy", components.GetProperty("persistenceDb").GetProperty("status").GetString());
             Assert.Equal("healthy", components.GetProperty("telemetry").GetProperty("status").GetString());
             // schemaLock may be unknown if tool_schema_versions has not been bootstrapped — that does NOT degrade top status.
             var schemaLockStatus = components.GetProperty("schemaLock").GetProperty("status").GetString();
             Assert.Contains(schemaLockStatus, new[] { "healthy", "unknown" });
 
-            // Audit DB details should expose the path (already exposed today).
-            Assert.Equal(dbPath, components.GetProperty("auditDb").GetProperty("details").GetProperty("sqlitePath").GetString());
+            var persistenceDetails = components.GetProperty("persistenceDb").GetProperty("details");
+            Assert.Equal("sqlite", persistenceDetails.GetProperty("provider").GetString());
+            Assert.Equal($"sqlite:{Path.GetFullPath(dbPath)}", persistenceDetails.GetProperty("source").GetString());
 
-            // Telemetry source is audit-db.
-            Assert.Equal("audit-db", components.GetProperty("telemetry").GetProperty("details").GetProperty("source").GetString());
+            // Telemetry reads persisted audit rows from the persistence DB.
+            Assert.Equal("persistence-db", components.GetProperty("telemetry").GetProperty("details").GetProperty("source").GetString());
 
             // Proxy control details forwarded from stub probe result.
             Assert.Equal("audit", components.GetProperty("proxyControl").GetProperty("details").GetProperty("mode").GetString());
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
             Environment.SetEnvironmentVariable(ProxyControlTokenEnv, null);
         }
     }
@@ -85,8 +86,8 @@ public class ManagementStatusEndpointTests
     public async Task StatusEndpointReturnsDegradedWhenProxyControlIsUnreachable()
     {
         var dbPath = TempDbPath();
-        await EnsureAuditDbExistsAsync(dbPath);
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        await EnsurePersistenceDbExistsAsync(dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
         Environment.SetEnvironmentVariable(ProxyControlTokenEnv, "test-token");
 
         var stub = new StubProxyControlClient
@@ -114,21 +115,21 @@ public class ManagementStatusEndpointTests
 
             var components = root.GetProperty("components");
             Assert.Equal("degraded", components.GetProperty("proxyControl").GetProperty("status").GetString());
-            Assert.Equal("healthy", components.GetProperty("auditDb").GetProperty("status").GetString());
+            Assert.Equal("healthy", components.GetProperty("persistenceDb").GetProperty("status").GetString());
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
             Environment.SetEnvironmentVariable(ProxyControlTokenEnv, null);
         }
     }
 
     [Fact]
-    public async Task StatusEndpointReturnsUnhealthyWhenAuditDbIsMissing()
+    public async Task StatusEndpointReturnsUnhealthyWhenPersistenceDbIsMissing()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"proxyward-management-status-missing-{Guid.NewGuid():N}.db");
-        // Do NOT create the file — auditDb probe should fail.
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        // Do NOT create the file — persistenceDb probe should fail.
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
         Environment.SetEnvironmentVariable(ProxyControlTokenEnv, "test-token");
 
         var stub = new StubProxyControlClient
@@ -152,11 +153,11 @@ public class ManagementStatusEndpointTests
             Assert.Equal("unhealthy", root.GetProperty("status").GetString());
 
             var components = root.GetProperty("components");
-            Assert.Equal("unhealthy", components.GetProperty("auditDb").GetProperty("status").GetString());
+            Assert.Equal("unhealthy", components.GetProperty("persistenceDb").GetProperty("status").GetString());
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
             Environment.SetEnvironmentVariable(ProxyControlTokenEnv, null);
         }
     }
@@ -165,8 +166,8 @@ public class ManagementStatusEndpointTests
     public async Task StatusEndpointReportsProxyControlUnknownWhenTokenNotConfigured()
     {
         var dbPath = TempDbPath();
-        await EnsureAuditDbExistsAsync(dbPath);
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        await EnsurePersistenceDbExistsAsync(dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
         Environment.SetEnvironmentVariable(ProxyControlTokenEnv, null);
 
         // The stub should never be called, but provide one anyway for safety.
@@ -201,7 +202,7 @@ public class ManagementStatusEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -224,7 +225,7 @@ public class ManagementStatusEndpointTests
             BaseAddress = new Uri("http://proxy.local/admin/")
         };
         var options = new ManagementApiOptions(
-            AuditDatabasePath: TempDbPath(),
+            SqliteDatabasePath: TempDbPath(),
             ProxyControlBaseUrl: httpClient.BaseAddress,
             ProxyControlToken: "test-token",
             AdminToken: null,
@@ -247,7 +248,7 @@ public class ManagementStatusEndpointTests
                 services.AddSingleton<IProxyControlClient>(stub);
             }));
 
-    private static async Task EnsureAuditDbExistsAsync(string dbPath)
+    private static async Task EnsurePersistenceDbExistsAsync(string dbPath)
     {
         // Triggers schema bootstrap by writing a single throwaway row.
         using var sink = new SqliteAuditSink(dbPath);

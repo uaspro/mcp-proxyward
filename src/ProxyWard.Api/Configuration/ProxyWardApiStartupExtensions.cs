@@ -8,6 +8,7 @@ using ProxyWard.Api.Yarp;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Redaction;
 using ProxyWard.Audit.Sinks;
+using ProxyWard.Core.Persistence;
 using ProxyWard.Core.Mcp;
 using ProxyWard.Locking.Lockfiles;
 using ProxyWard.Locking.Persistence;
@@ -15,6 +16,7 @@ using ProxyWard.Locking.Tools;
 using ProxyWard.Policy.Configuration;
 using ProxyWard.Policy.Engine;
 using ProxyWard.Policy.Persistence;
+using Npgsql;
 using Yarp.ReverseProxy.Configuration;
 
 namespace ProxyWard.Api.Configuration;
@@ -23,11 +25,14 @@ public static class ProxyWardApiStartupExtensions
 {
     public static async Task AddProxyWardApiAsync(this WebApplicationBuilder builder)
     {
-        var databasePath = ResolveDatabasePath(builder.Configuration);
-        var policyStore = new SqlitePolicyStore(databasePath);
-        var snapshot = await policyStore.InitializeAndReadCurrentAsync(
-            ProxyWardDefaultPolicy.CreateYaml(databasePath),
+        var persistenceDatabase = ResolvePersistenceDatabase(builder.Configuration);
+        var persistenceServices = CreatePersistenceServices(persistenceDatabase);
+        var snapshot = await persistenceServices.PolicyStore.InitializeAndReadCurrentAsync(
+            ProxyWardDefaultPolicy.CreateYaml(),
             CancellationToken.None);
+        await EnsurePersistenceSchemasAsync(
+            persistenceServices.SchemaInitializers,
+            CancellationToken.None).ConfigureAwait(false);
         var policy = snapshot.Policy;
         var yarpConfigProvider = new DynamicProxyWardYarpConfigProvider(
             ProxyWardYarpConfig.CreateRoutes(policy),
@@ -36,7 +41,13 @@ public static class ProxyWardApiStartupExtensions
         builder.AddProxyWardObservability(policy);
 
         builder.Services.AddSingleton(policy);
-        builder.Services.AddSingleton(policyStore);
+        builder.Services.AddSingleton(persistenceDatabase);
+        if (persistenceServices.PostgresDataSource is not null)
+        {
+            builder.Services.AddSingleton<NpgsqlDataSource>(_ => persistenceServices.PostgresDataSource);
+        }
+
+        builder.Services.AddSingleton<IPolicyStore>(_ => persistenceServices.PolicyStore);
         builder.Services.AddSingleton<IProxyWardPolicyProvider>(new InMemoryProxyWardPolicyProvider(policy));
         builder.Services.AddSingleton(ProxyWardControlOptions.Load(builder.Configuration));
         builder.Services.AddSingleton(CreateToolSchemaDiffMetadataOptions(builder.Configuration));
@@ -51,11 +62,11 @@ public static class ProxyWardApiStartupExtensions
         builder.Services.AddSingleton<ResponseInspectionDriftReviewCoordinator>();
         builder.Services.AddSingleton<IToolFingerprinter, ToolFingerprinter>();
         builder.Services.AddSingleton<ITrackedToolSchemaStore>(_ =>
-            CreateTrackedToolSchemaStore(policy));
+            persistenceServices.TrackedToolSchemaStore);
         builder.Services.AddSingleton<ISchemaDriftReviewStore>(_ =>
-            CreateSchemaDriftReviewStore(policy));
+            persistenceServices.SchemaDriftReviewStore);
         builder.Services.AddSingleton<IToolSchemaDiffMetadataStore>(_ =>
-            CreateToolSchemaDiffMetadataStore(policy));
+            persistenceServices.ToolSchemaDiffMetadataStore);
         builder.Services.AddSingleton<ToolSurfaceDriftEvaluator>();
         builder.Services.AddSingleton<ServerAllowlistPolicyEvaluator>();
         builder.Services.AddSingleton<ToolPolicyEvaluator>();
@@ -65,7 +76,10 @@ public static class ProxyWardApiStartupExtensions
         builder.Services.AddSingleton<CommandArgumentRuleEvaluator>();
         builder.Services.AddSingleton<ArgumentPolicyOverrideResolver>();
         builder.Services.AddSingleton<IAuditSink>(services =>
-            CreateAuditSink(policy, services.GetRequiredService<ILoggerFactory>()));
+            CreateAuditSink(
+                services.GetRequiredService<IProxyWardPolicyProvider>(),
+                persistenceServices.AuditSink,
+                services.GetRequiredService<ILoggerFactory>()));
         builder.Services.AddScoped<ProxyWardControlAuthorizationService>();
         builder.Services.AddHttpClient();
         builder.Services.AddControllers();
@@ -86,28 +100,90 @@ public static class ProxyWardApiStartupExtensions
         app.MapReverseProxy();
     }
 
-    private static string ResolveDatabasePath(IConfiguration configuration) =>
-        Environment.GetEnvironmentVariable("PROXYWARD_DB_PATH")
-        ?? configuration["ProxyWard:DatabasePath"]
-        ?? "./data/proxyward.db";
-
-    private static ITrackedToolSchemaStore CreateTrackedToolSchemaStore(ProxyWardPolicy policy) =>
-        new SqliteTrackedToolSchemaStore(ResolveSchemaSqlitePath(policy));
-
-    private static ISchemaDriftReviewStore CreateSchemaDriftReviewStore(ProxyWardPolicy policy) =>
-        new SqliteSchemaDriftReviewStore(ResolveSchemaSqlitePath(policy));
-
-    private static IToolSchemaDiffMetadataStore CreateToolSchemaDiffMetadataStore(ProxyWardPolicy policy) =>
-        new SqliteToolSchemaDiffMetadataStore(ResolveSchemaSqlitePath(policy));
-
-    private static string ResolveSchemaSqlitePath(ProxyWardPolicy policy)
+    private static PersistenceDatabaseOptions ResolvePersistenceDatabase(IConfiguration configuration)
     {
-        if (!string.IsNullOrWhiteSpace(policy.Audit.SqlitePath))
+        var provider = NormalizeProvider(
+            Environment.GetEnvironmentVariable("PROXYWARD_PERSISTENCE_PROVIDER")
+            ?? Environment.GetEnvironmentVariable("PROXYWARD_DB_PROVIDER")
+            ?? configuration["ProxyWard:Persistence:Provider"]
+            ?? "sqlite");
+
+        if (provider == "postgres")
         {
-            return policy.Audit.SqlitePath;
+            var connectionString =
+                Environment.GetEnvironmentVariable("PROXYWARD_PERSISTENCE_CONNECTION_STRING")
+                ?? Environment.GetEnvironmentVariable("PROXYWARD_POSTGRES_CONNECTION_STRING")
+                ?? configuration["ProxyWard:Persistence:PostgresConnectionString"]
+                ?? configuration.GetConnectionString("ProxyWardPersistence");
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "PostgreSQL persistence requires PROXYWARD_PERSISTENCE_CONNECTION_STRING, PROXYWARD_POSTGRES_CONNECTION_STRING, ProxyWard:Persistence:PostgresConnectionString, or ConnectionStrings:ProxyWardPersistence.");
+            }
+
+            return PersistenceDatabaseOptions.ForPostgreSql(connectionString);
         }
 
-        return Path.Combine(Path.GetTempPath(), $"proxyward-schema-{Environment.ProcessId}.db");
+        if (provider != "sqlite")
+        {
+            throw new InvalidOperationException(
+                "Persistence provider must be 'sqlite' or 'postgres'. Configure PROXYWARD_PERSISTENCE_PROVIDER or ProxyWard:Persistence:Provider.");
+        }
+
+        var databasePath = Environment.GetEnvironmentVariable("PROXYWARD_DB_PATH")
+            ?? configuration["ProxyWard:Persistence:SqlitePath"]
+            ?? configuration["ProxyWard:DatabasePath"]
+            ?? "./data/proxyward.db";
+
+        return PersistenceDatabaseOptions.ForSqlite(databasePath);
+    }
+
+    private static ProxyWardPersistenceServices CreatePersistenceServices(PersistenceDatabaseOptions database)
+    {
+        if (database.Provider == PersistenceDatabaseProvider.PostgreSql)
+        {
+            var dataSource = NpgsqlDataSource.Create(database.PostgresConnectionString!);
+            var policyStore = new PostgresPolicyStore(dataSource);
+            var trackedToolSchemaStore = new PostgresTrackedToolSchemaStore(dataSource);
+            var schemaDriftReviewStore = new PostgresSchemaDriftReviewStore(dataSource);
+            var toolSchemaDiffMetadataStore = new PostgresToolSchemaDiffMetadataStore(dataSource);
+            var auditSink = new PostgresAuditSink(dataSource);
+
+            return new ProxyWardPersistenceServices(
+                policyStore,
+                trackedToolSchemaStore,
+                schemaDriftReviewStore,
+                toolSchemaDiffMetadataStore,
+                auditSink,
+                [
+                    policyStore,
+                    auditSink,
+                    trackedToolSchemaStore,
+                    schemaDriftReviewStore,
+                    toolSchemaDiffMetadataStore
+                ],
+                dataSource);
+        }
+
+        return new ProxyWardPersistenceServices(
+            new SqlitePolicyStore(database.SqlitePath!),
+            new SqliteTrackedToolSchemaStore(database.SqlitePath!),
+            new SqliteSchemaDriftReviewStore(database.SqlitePath!),
+            new SqliteToolSchemaDiffMetadataStore(database.SqlitePath!),
+            new SqliteAuditSink(database.SqlitePath!),
+            [],
+            PostgresDataSource: null);
+    }
+
+    private static async Task EnsurePersistenceSchemasAsync(
+        IReadOnlyList<IPersistenceSchemaInitializer> initializers,
+        CancellationToken cancellationToken)
+    {
+        foreach (var initializer in initializers)
+        {
+            await initializer.EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static ToolSchemaDiffMetadataOptions CreateToolSchemaDiffMetadataOptions(
@@ -149,15 +225,18 @@ public static class ProxyWardApiStartupExtensions
         return int.TryParse(raw, out var parsed) ? parsed : defaultValue;
     }
 
-    private static IAuditSink CreateAuditSink(ProxyWardPolicy policy, ILoggerFactory loggerFactory)
+    private static IAuditSink CreateAuditSink(
+        IProxyWardPolicyProvider policyProvider,
+        IAuditSink enabledSink,
+        ILoggerFactory loggerFactory)
     {
-        if (!string.Equals(policy.Audit.Sink, "sqlite", StringComparison.OrdinalIgnoreCase)
-            || string.IsNullOrWhiteSpace(policy.Audit.SqlitePath))
-        {
-            return new NullAuditSink();
-        }
+        return new PolicyControlledAuditSink(
+            policyProvider,
+            CreateQueuedAuditSink(enabledSink, loggerFactory));
+    }
 
-        var sink = new SqliteAuditSink(policy.Audit.SqlitePath);
+    private static IAuditSink CreateQueuedAuditSink(IAuditSink sink, ILoggerFactory loggerFactory)
+    {
         var logger = loggerFactory.CreateLogger("ProxyWard.Audit.Sinks.QueuedAuditSink");
         return new QueuedAuditSink(
             sink,
@@ -182,6 +261,21 @@ public static class ProxyWardApiStartupExtensions
             });
     }
 
+    private static string NormalizeProvider(string? value)
+    {
+        var normalized =
+        value?.Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace("_", string.Empty, StringComparison.Ordinal)
+            .Trim()
+            .ToLowerInvariant() ?? string.Empty;
+
+        return normalized switch
+        {
+            "postgresql" => "postgres",
+            _ => normalized
+        };
+    }
+
     private static string FormatAuditDecision(AuditDecision decision) =>
         decision switch
         {
@@ -190,4 +284,13 @@ public static class ProxyWardApiStartupExtensions
             AuditDecision.Warn => "warn",
             _ => "allow"
         };
+
+    private sealed record ProxyWardPersistenceServices(
+        IPolicyStore PolicyStore,
+        ITrackedToolSchemaStore TrackedToolSchemaStore,
+        ISchemaDriftReviewStore SchemaDriftReviewStore,
+        IToolSchemaDiffMetadataStore ToolSchemaDiffMetadataStore,
+        IAuditSink AuditSink,
+        IReadOnlyList<IPersistenceSchemaInitializer> SchemaInitializers,
+        NpgsqlDataSource? PostgresDataSource);
 }

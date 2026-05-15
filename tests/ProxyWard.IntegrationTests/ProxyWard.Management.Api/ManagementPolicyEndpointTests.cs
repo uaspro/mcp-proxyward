@@ -8,7 +8,7 @@ namespace ProxyWard.IntegrationTests;
 
 public class ManagementPolicyEndpointTests : IAsyncLifetime
 {
-    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string PersistenceDbEnv = "PROXYWARD_DB_PATH";
 
     private readonly string _databasePath = Path.Combine(
         Path.GetTempPath(),
@@ -18,7 +18,7 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         TestFiles.DeleteSqlite(_databasePath);
 
         return Task.CompletedTask;
@@ -28,7 +28,7 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
     public async Task PolicyEndpointReturnsYamlModelHashSourceAndReadOnlyFields()
     {
         await SeedPolicyAsync(PolicyYaml());
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
@@ -67,8 +67,7 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
         Assert.Equal(2097152, model.GetProperty("inspection").GetProperty("maxBodyBytes").GetInt32());
         Assert.Equal("warn", model.GetProperty("inspection").GetProperty("unsupportedStreaming").GetString());
         Assert.Equal("failClosed", model.GetProperty("inspection").GetProperty("batchToolCalls").GetString());
-        Assert.Equal("sqlite", model.GetProperty("audit").GetProperty("sink").GetString());
-        Assert.Equal("./data/policy-read.db", model.GetProperty("audit").GetProperty("sqlitePath").GetString());
+        Assert.True(model.GetProperty("audit").GetProperty("enabled").GetBoolean());
         Assert.Equal("mcp-proxyward-test", model.GetProperty("observability").GetProperty("serviceName").GetString());
         Assert.True(model.GetProperty("observability").GetProperty("console").GetProperty("enabled").GetBoolean());
         Assert.True(model.GetProperty("observability").GetProperty("otlp").GetProperty("enabled").GetBoolean());
@@ -137,7 +136,7 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
     [Fact]
     public async Task PolicyEndpointBootstrapsDefaultPolicyWhenDatabaseIsEmpty()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
@@ -165,8 +164,7 @@ public class ManagementPolicyEndpointTests : IAsyncLifetime
           unsupportedStreaming: warn
           batchToolCalls: failClosed
         audit:
-          sink: sqlite
-          sqlitePath: ./data/policy-read.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward-test
           console:

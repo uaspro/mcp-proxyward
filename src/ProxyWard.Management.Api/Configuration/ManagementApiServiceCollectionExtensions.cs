@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Net.Http.Headers;
+using Npgsql;
 using ProxyWard.Management.Api.Security;
 using ProxyWard.Management.Application;
 using ProxyWard.Management.Application.Audit;
@@ -17,6 +18,8 @@ using ProxyWard.Management.Infrastructure.Policy;
 using ProxyWard.Management.Infrastructure.Security;
 using ProxyWard.Management.Infrastructure.Status;
 using ProxyWard.Management.Infrastructure.Tools;
+using ProxyWard.Locking.Persistence;
+using ProxyWard.Core.Persistence;
 using ProxyWard.Policy.Persistence;
 
 namespace ProxyWard.Management.Api.Configuration;
@@ -35,6 +38,7 @@ internal static class ManagementApiServiceCollectionExtensions
         services.AddControllers();
         services.AddManagementCors(options);
         services.AddManagementOptions(options, auditReadOptions);
+        services.AddManagementPersistence(options);
         services.AddManagementAudit();
         services.AddManagementDashboard();
         services.AddManagementSchemaDrift();
@@ -79,35 +83,87 @@ internal static class ManagementApiServiceCollectionExtensions
         services.AddSingleton(auditReadOptions);
     }
 
+    private static void AddManagementPersistence(
+        this IServiceCollection services,
+        ManagementApiOptions options)
+    {
+        var database = options.EffectivePersistenceDatabase;
+        services.AddSingleton(database);
+        if (database.Provider == PersistenceDatabaseProvider.PostgreSql)
+        {
+            services.AddSingleton(_ => NpgsqlDataSource.Create(database.PostgresConnectionString!));
+        }
+
+        services.AddSingleton<IPolicyStore>(CreatePolicyStore);
+        services.AddSingleton<ITrackedToolSchemaStore>(CreateTrackedToolSchemaStore);
+        services.AddSingleton<ISchemaDriftReviewStore>(CreateSchemaDriftReviewStore);
+        services.AddSingleton<IToolSchemaDiffMetadataStore>(CreateToolSchemaDiffMetadataStore);
+    }
+
     private static void AddManagementAudit(this IServiceCollection services)
     {
-        services.AddScoped<IManagementAuditEventRepository>(services => new ManagementAuditEventRepository(
-            services.GetRequiredService<ManagementApiOptions>().AuditDatabasePath,
-            services.GetRequiredService<ManagementAuditReadOptions>()));
+        services.AddScoped<IManagementAuditEventRepository>(services =>
+        {
+            var options = services.GetRequiredService<ManagementAuditReadOptions>();
+            return CreateForPersistence<IManagementAuditEventRepository>(
+                services,
+                postgres => new PostgresManagementAuditEventRepository(postgres, options),
+                sqlitePath => new ManagementAuditEventRepository(sqlitePath, options));
+        });
     }
 
     private static void AddManagementDashboard(this IServiceCollection services)
     {
-        services.AddScoped<IProxyTelemetryReader>(services => new AuditDbProxyTelemetryReader(
-            services.GetRequiredService<ManagementApiOptions>().AuditDatabasePath,
-            services.GetRequiredService<ManagementAuditReadOptions>()));
+        services.AddScoped<IProxyTelemetryReader>(services =>
+        {
+            var options = services.GetRequiredService<ManagementAuditReadOptions>();
+            return CreateForPersistence<IProxyTelemetryReader>(
+                services,
+                postgres => new PostgresPersistenceProxyTelemetryReader(postgres, options),
+                sqlitePath => new SqlitePersistenceProxyTelemetryReader(sqlitePath, options));
+        });
     }
 
     private static void AddManagementSchemaDrift(this IServiceCollection services)
     {
-        services.AddScoped<ManagementSchemaDriftRepository>(services => new ManagementSchemaDriftRepository(
-            services.GetRequiredService<ManagementApiOptions>().AuditDatabasePath,
-            services.GetRequiredService<ManagementAuditReadOptions>()));
         services.AddScoped<IManagementSchemaDriftRepository>(services =>
-            services.GetRequiredService<ManagementSchemaDriftRepository>());
-        services.AddScoped<IManagementSchemaDriftActionService>(services => new ManagementSchemaDriftActionService(
-            services.GetRequiredService<ManagementApiOptions>().AuditDatabasePath,
-            services.GetRequiredService<ManagementSchemaDriftRepository>()));
+        {
+            var options = services.GetRequiredService<ManagementAuditReadOptions>();
+            return CreateForPersistence<IManagementSchemaDriftRepository>(
+                services,
+                postgres => new PostgresManagementSchemaDriftRepository(postgres, options),
+                sqlitePath => new ManagementSchemaDriftRepository(sqlitePath, options));
+        });
+        services.AddScoped<IManagementSchemaDriftActionService>(services =>
+        {
+            var options = services.GetRequiredService<ManagementAuditReadOptions>();
+            return CreateForPersistence<IManagementSchemaDriftActionService>(
+                services,
+                postgres =>
+                {
+                    var repository = new PostgresManagementSchemaDriftRepository(postgres, options);
+                    return new PostgresManagementSchemaDriftActionService(postgres, repository);
+                },
+                sqlitePath =>
+                {
+                    var repository = new ManagementSchemaDriftRepository(sqlitePath, options);
+                    return new ManagementSchemaDriftActionService(sqlitePath, repository);
+                });
+        });
     }
 
     private static void AddManagementTools(this IServiceCollection services)
     {
-        services.AddScoped<IManagementToolInventoryRepository, ManagementToolInventoryRepository>();
+        services.AddScoped<IManagementToolInventoryRepository>(services =>
+        {
+            var policyStore = services.GetRequiredService<IPolicyStore>();
+            return CreateForPersistence<IManagementToolInventoryRepository>(
+                services,
+                postgres => new PostgresManagementToolInventoryRepository(postgres, policyStore),
+                _ => new ManagementToolInventoryRepository(
+                    services.GetRequiredService<ManagementApiOptions>(),
+                    policyStore));
+        });
         services.AddHttpClient<IManagementToolDiscoveryService, ManagementToolDiscoveryService>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);
@@ -122,11 +178,16 @@ internal static class ManagementApiServiceCollectionExtensions
 
     private static void AddManagementPolicy(this IServiceCollection services, ManagementApiOptions options)
     {
-        services.AddSingleton(_ => new SqlitePolicyStore(options.AuditDatabasePath));
-        services.AddSingleton<IManagementPolicySnapshotStore, SqliteManagementPolicySnapshotStore>();
+        services.AddSingleton<IManagementPolicySnapshotStore, ManagementPolicySnapshotStore>();
         services.AddSingleton<IManagementPolicyYamlSanitizer, YamlManagementPolicySanitizer>();
         services.AddSingleton<IManagementPolicyModelYamlSerializer, YamlManagementPolicyModelSerializer>();
-        services.AddSingleton<IManagementPolicyAuditStore, SqliteManagementPolicyAuditStore>();
+        services.AddSingleton<IManagementPolicyAuditStore>(services =>
+        {
+            return CreateForPersistence<IManagementPolicyAuditStore>(
+                services,
+                postgres => new PostgresManagementPolicyAuditStore(postgres),
+                _ => new SqliteManagementPolicyAuditStore(options));
+        });
         services.AddScoped<ManagementPolicyReader>();
         services.AddScoped<ManagementPolicyValidationService>();
         services.AddScoped<ManagementPolicyApplyService>();
@@ -136,7 +197,17 @@ internal static class ManagementApiServiceCollectionExtensions
     private static void AddManagementSecurity(this IServiceCollection services)
     {
         services.AddScoped<ManagementWriteAuthorization>();
-        services.AddScoped<IManagementSecurityAuditWriter, SqliteManagementSecurityAuditWriter>();
+        services.AddScoped<IManagementSecurityAuditWriter>(services =>
+        {
+            return CreateForPersistence<IManagementSecurityAuditWriter>(
+                services,
+                postgres => new PostgresManagementSecurityAuditWriter(
+                    postgres,
+                    services.GetRequiredService<ILogger<PostgresManagementSecurityAuditWriter>>()),
+                _ => new SqliteManagementSecurityAuditWriter(
+                    services.GetRequiredService<ManagementApiOptions>(),
+                    services.GetRequiredService<ILogger<SqliteManagementSecurityAuditWriter>>()));
+        });
     }
 
     private static void AddManagementSettings(this IServiceCollection services)
@@ -146,7 +217,13 @@ internal static class ManagementApiServiceCollectionExtensions
 
     private static void AddManagementStatus(this IServiceCollection services, ManagementApiOptions options)
     {
-        services.AddScoped<IManagementStatusStoreProbe, SqliteManagementStatusStoreProbe>();
+        services.AddScoped<IManagementStatusStoreProbe>(services =>
+        {
+            return CreateForPersistence<IManagementStatusStoreProbe>(
+                services,
+                postgres => new PostgresManagementStatusStoreProbe(postgres),
+                _ => new SqliteManagementStatusStoreProbe(options));
+        });
         services.AddHttpClient<IProxyControlClient, HttpProxyControlClient>(client =>
         {
             client.BaseAddress = EnsureTrailingSlash(options.ProxyControlBaseUrl);
@@ -156,6 +233,43 @@ internal static class ManagementApiServiceCollectionExtensions
             AllowAutoRedirect = false
         });
         services.AddScoped<ManagementStatusService>();
+    }
+
+    private static IPolicyStore CreatePolicyStore(IServiceProvider services) =>
+        CreateForPersistence<IPolicyStore>(
+            services,
+            postgres => new PostgresPolicyStore(postgres),
+            sqlitePath => new SqlitePolicyStore(sqlitePath));
+
+    private static ITrackedToolSchemaStore CreateTrackedToolSchemaStore(IServiceProvider services) =>
+        CreateForPersistence<ITrackedToolSchemaStore>(
+            services,
+            postgres => new PostgresTrackedToolSchemaStore(postgres),
+            sqlitePath => new SqliteTrackedToolSchemaStore(sqlitePath));
+
+    private static ISchemaDriftReviewStore CreateSchemaDriftReviewStore(IServiceProvider services) =>
+        CreateForPersistence<ISchemaDriftReviewStore>(
+            services,
+            postgres => new PostgresSchemaDriftReviewStore(postgres),
+            sqlitePath => new SqliteSchemaDriftReviewStore(sqlitePath));
+
+    private static IToolSchemaDiffMetadataStore CreateToolSchemaDiffMetadataStore(IServiceProvider services) =>
+        CreateForPersistence<IToolSchemaDiffMetadataStore>(
+            services,
+            postgres => new PostgresToolSchemaDiffMetadataStore(postgres),
+            sqlitePath => new SqliteToolSchemaDiffMetadataStore(sqlitePath));
+
+    private static T CreateForPersistence<T>(
+        IServiceProvider services,
+        Func<NpgsqlDataSource, T> postgres,
+        Func<string, T> sqlite)
+    {
+        var database = services.GetRequiredService<PersistenceDatabaseOptions>();
+        return database.Provider switch
+        {
+            PersistenceDatabaseProvider.PostgreSql => postgres(services.GetRequiredService<NpgsqlDataSource>()),
+            _ => sqlite(database.SqlitePath!)
+        };
     }
 
     private static Uri EnsureTrailingSlash(Uri uri)

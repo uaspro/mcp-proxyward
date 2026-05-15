@@ -4,8 +4,7 @@ inspection:
   unsupportedStreaming: warn
   batchToolCalls: failClosed
 audit:
-  sink: sqlite
-  sqlitePath: ./data/proxyward.db
+  enabled: true
 observability:
   serviceName: mcp-proxyward
   console:

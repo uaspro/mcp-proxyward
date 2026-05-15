@@ -1,6 +1,5 @@
 audit:
-  sink: sqlite
-  sqlitePath: /app/data/proxyward.db
+  enabled: true
 inspection:
   batchToolCalls: failClosed
   maxBodyBytes: 1048576

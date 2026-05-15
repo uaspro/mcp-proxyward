@@ -17,14 +17,15 @@ public sealed class SqliteManagementStatusStoreProbe : IManagementStatusStorePro
         _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
-    public async Task<(ComponentReport AuditDb, ComponentReport SchemaLock)> ProbeAsync(CancellationToken cancellationToken)
+    public async Task<(ComponentReport PersistenceDb, ComponentReport SchemaLock)> ProbeAsync(CancellationToken cancellationToken)
     {
+        var database = _options.EffectivePersistenceDatabase;
         SqliteConnection? connection = null;
         try
         {
             var connectionString = new SqliteConnectionStringBuilder
             {
-                DataSource = Path.GetFullPath(_options.AuditDatabasePath),
+                DataSource = Path.GetFullPath(database.SqlitePath!),
                 Mode = SqliteOpenMode.ReadOnly,
                 Cache = SqliteCacheMode.Shared,
                 DefaultTimeout = CommandTimeoutSeconds
@@ -58,18 +59,18 @@ public sealed class SqliteManagementStatusStoreProbe : IManagementStatusStorePro
             return (
                 new ComponentReport(
                     ComponentStatusValues.Unhealthy,
-                    Notes: "audit DB unreachable",
-                    Details: new Dictionary<string, object?> { ["sqlitePath"] = _options.AuditDatabasePath }),
+                    Notes: "persistence DB unreachable",
+                    Details: PersistenceDetails(database)),
                 new ComponentReport(
                     ComponentStatusValues.Unknown,
-                    Notes: "audit DB unreachable",
+                    Notes: "persistence DB unreachable",
                     Details: null));
         }
 
-        var auditDb = new ComponentReport(
+        var persistenceDb = new ComponentReport(
             ComponentStatusValues.Healthy,
             Notes: null,
-            Details: new Dictionary<string, object?> { ["sqlitePath"] = _options.AuditDatabasePath });
+            Details: PersistenceDetails(database));
         var openedConnection = connection
             ?? throw new InvalidOperationException("SQLite connection was not opened.");
 
@@ -83,7 +84,7 @@ public sealed class SqliteManagementStatusStoreProbe : IManagementStatusStorePro
                     Notes: "tool_schema_versions table not initialized",
                     Details: null);
 
-                return (auditDb, schemaLock);
+                return (persistenceDb, schemaLock);
             }
 
             await using var schemaCommand = openedConnection.CreateCommand();
@@ -108,7 +109,7 @@ public sealed class SqliteManagementStatusStoreProbe : IManagementStatusStorePro
             await openedConnection.DisposeAsync().ConfigureAwait(false);
         }
 
-        return (auditDb, schemaLock);
+        return (persistenceDb, schemaLock);
     }
 
     private static async Task<bool> TableExistsAsync(
@@ -129,4 +130,12 @@ public sealed class SqliteManagementStatusStoreProbe : IManagementStatusStorePro
 
         return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
     }
+
+    private static IReadOnlyDictionary<string, object?> PersistenceDetails(
+        ProxyWard.Core.Persistence.PersistenceDatabaseOptions database) =>
+        new Dictionary<string, object?>
+        {
+            ["provider"] = database.ProviderName,
+            ["source"] = database.SourceDescription
+        };
 }

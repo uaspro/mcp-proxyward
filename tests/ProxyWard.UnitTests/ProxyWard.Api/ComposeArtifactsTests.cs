@@ -28,8 +28,7 @@ public class ComposeArtifactsTests
             ProxyWardDefaultPolicy.CreateYaml("/app/data/proxyward.db"));
 
         Assert.Equal(ProxyWardMode.Audit, policy.Mode);
-        Assert.Equal("sqlite", policy.Audit.Sink);
-        Assert.Equal("/app/data/proxyward.db", policy.Audit.SqlitePath);
+        Assert.True(policy.Audit.Enabled);
         Assert.True(policy.Observability.Otlp.Enabled);
         Assert.Equal("http://otel-collector:4317", policy.Observability.Otlp.Endpoint);
         Assert.Empty(policy.Servers);

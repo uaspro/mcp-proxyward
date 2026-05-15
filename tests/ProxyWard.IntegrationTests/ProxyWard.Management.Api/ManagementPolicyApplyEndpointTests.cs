@@ -13,7 +13,7 @@ namespace ProxyWard.IntegrationTests;
 
 public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 {
-    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string PersistenceDbEnv = "PROXYWARD_DB_PATH";
     private const string AdminTokenEnv = "PROXYWARD_MANAGEMENT_ADMIN_TOKEN";
 
     private readonly string _databasePath = Path.Combine(
@@ -24,7 +24,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         Environment.SetEnvironmentVariable(AdminTokenEnv, null);
         TestFiles.DeleteSqlite(_databasePath);
 
@@ -34,7 +34,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     [Fact]
     public async Task PolicyApplyRequiresAdminAuthorization()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         var stub = new StubProxyControlClient();
@@ -53,7 +53,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     [Fact]
     public async Task PolicyApplyValidYamlCallsYarpThenPolicySnapshotAndWritesAudit()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
         await SeedPolicyAsync(CurrentPolicyYaml());
 
@@ -121,7 +121,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     [Fact]
     public async Task PolicyApplyPreservesUpstreamQueryInYarpTransforms()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
         await SeedPolicyAsync(CurrentPolicyYaml());
 
@@ -158,7 +158,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     [Fact]
     public async Task PolicyApplyAcceptsStructuredModelRequest()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
         await SeedPolicyAsync(CurrentPolicyYaml());
 
@@ -184,7 +184,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     [Fact]
     public async Task PolicyApplyPersistsSourceForSubsequentRead()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
         await SeedPolicyAsync(CurrentPolicyYaml());
 
@@ -211,7 +211,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     [Fact]
     public async Task PolicyApplyInvalidPolicyReturnsValidationErrorsAndDoesNotCallProxy()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         var stub = new StubProxyControlClient();
@@ -236,7 +236,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     [Fact]
     public async Task PolicyApplyYarpFailureDoesNotCallPolicySnapshot()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         var stub = new StubProxyControlClient
@@ -270,7 +270,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
     public async Task PolicyApplyPolicySnapshotFailureAttemptsYarpRollback()
     {
         await SeedPolicyAsync(CurrentPolicyYaml());
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         var stub = new StubProxyControlClient
@@ -454,8 +454,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
           unsupportedStreaming: warn
           batchToolCalls: failClosed
         audit:
-          sink: sqlite
-          sqlitePath: ./data/proxyward.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward
           console:
@@ -522,8 +521,7 @@ public class ManagementPolicyApplyEndpointTests : IAsyncLifetime
               "batchToolCalls": "failClosed"
             },
             "audit": {
-              "sink": "sqlite",
-              "sqlitePath": "./data/proxyward.db"
+              "enabled": true
             },
             "observability": {
               "serviceName": "mcp-proxyward",

@@ -16,7 +16,7 @@ public sealed record ComponentReport(
 public sealed record StatusComponents(
     ComponentReport ManagementApi,
     ComponentReport ProxyControl,
-    ComponentReport AuditDb,
+    ComponentReport PersistenceDb,
     ComponentReport SchemaLock,
     ComponentReport Telemetry);
 

@@ -8,7 +8,7 @@ namespace ProxyWard.IntegrationTests;
 
 public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 {
-    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string PersistenceDbEnv = "PROXYWARD_DB_PATH";
     private const string AdminTokenEnv = "PROXYWARD_MANAGEMENT_ADMIN_TOKEN";
 
     private readonly string _databasePath = Path.Combine(
@@ -29,7 +29,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
     {
         await CreateEmptyDatabaseAsync();
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         try
         {
             await using var factory = new WebApplicationFactory<ManagementProgram>();
@@ -49,7 +49,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -68,7 +68,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         await SeedDiffMetadataAsync(first.Row.Id, """{"description":"old"}""", """{"description":"new"}""");
         await SeedDiffMetadataAsync(second.Row.Id, null, null);
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         try
         {
             await using var factory = new WebApplicationFactory<ManagementProgram>();
@@ -95,7 +95,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -112,7 +112,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
             "alpha", "issues.list", "schema", "blocked",
             new DateTimeOffset(2026, 5, 10, 10, 2, 0, TimeSpan.Zero));
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         try
         {
             await using var factory = new WebApplicationFactory<ManagementProgram>();
@@ -135,7 +135,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -147,7 +147,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
             new DateTimeOffset(2026, 5, 10, 10, 0, 0, TimeSpan.Zero));
         await SeedDiffMetadataAsync(review.Row.Id, """{"description":"old"}""", """{"description":"new"}""");
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         try
         {
             await using var factory = new WebApplicationFactory<ManagementProgram>();
@@ -173,7 +173,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -184,7 +184,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
             "alpha", "repos.search", "description", "pending",
             new DateTimeOffset(2026, 5, 10, 10, 0, 0, TimeSpan.Zero));
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         try
         {
             await using var factory = new WebApplicationFactory<ManagementProgram>();
@@ -199,7 +199,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -210,7 +210,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
             "alpha", "repos.search", "description", "pending",
             new DateTimeOffset(2026, 5, 10, 10, 0, 0, TimeSpan.Zero));
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         try
         {
             await using var factory = new WebApplicationFactory<ManagementProgram>();
@@ -222,7 +222,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -233,7 +233,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
             "alpha", "repos.search", "description", "pending",
             new DateTimeOffset(2026, 5, 10, 10, 0, 0, TimeSpan.Zero));
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
         try
         {
@@ -249,7 +249,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
             Environment.SetEnvironmentVariable(AdminTokenEnv, null);
         }
     }
@@ -264,7 +264,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
             "alpha", "repos.search", "schema", "pending",
             new DateTimeOffset(2026, 5, 10, 10, 0, 0, TimeSpan.Zero));
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
         try
         {
@@ -307,7 +307,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
             Environment.SetEnvironmentVariable(AdminTokenEnv, null);
         }
     }
@@ -319,7 +319,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
             "alpha", "repos.search", "description", "pending",
             new DateTimeOffset(2026, 5, 10, 10, 0, 0, TimeSpan.Zero));
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
         try
         {
@@ -336,7 +336,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
             Environment.SetEnvironmentVariable(AdminTokenEnv, null);
         }
     }
@@ -346,7 +346,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
     {
         await CreateEmptyDatabaseAsync();
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
         try
         {
@@ -363,7 +363,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
             Environment.SetEnvironmentVariable(AdminTokenEnv, null);
         }
     }

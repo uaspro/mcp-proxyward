@@ -1,10 +1,28 @@
 using System.Globalization;
 using Microsoft.Data.Sqlite;
+using ProxyWard.Core.Persistence;
 using ProxyWard.Policy.Configuration;
 
 namespace ProxyWard.Policy.Persistence;
 
-public sealed class SqlitePolicyStore
+public interface IPolicyStore
+{
+    string SourceDescription { get; }
+
+    Task<StoredPolicySnapshot> InitializeAndReadCurrentAsync(
+        string defaultYaml,
+        CancellationToken cancellationToken = default);
+
+    Task<StoredPolicySnapshot?> ReadCurrentAsync(CancellationToken cancellationToken = default);
+
+    Task<StoredPolicySnapshot> SaveAsync(
+        string yaml,
+        string? requestedBy = null,
+        string? note = null,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class SqlitePolicyStore : IPolicyStore, IPersistenceSchemaInitializer
 {
     private readonly string _databasePath;
     private readonly string _connectionString;
@@ -26,11 +44,13 @@ public sealed class SqlitePolicyStore
 
     public string DatabasePath => _databasePath;
 
+    public string SourceDescription => $"sqlite:{_databasePath}#policy_snapshots";
+
     public async Task<StoredPolicySnapshot> InitializeAndReadCurrentAsync(
         string defaultYaml,
         CancellationToken cancellationToken = default)
     {
-        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureSchemaAsync(cancellationToken).ConfigureAwait(false);
         var current = await ReadCurrentAsync(cancellationToken).ConfigureAwait(false);
         if (current is not null)
         {
@@ -57,13 +77,23 @@ public sealed class SqlitePolicyStore
             LIMIT 1;
             """;
 
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        PolicySnapshotReadResult? result;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
-            return null;
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            result = ReadSnapshot(reader);
         }
 
-        return ReadSnapshot(reader);
+        if (result.RequiresNormalization)
+        {
+            await UpdateNormalizedSnapshotAsync(connection, result.Snapshot, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result.Snapshot;
     }
 
     public async Task<StoredPolicySnapshot> SaveAsync(
@@ -115,7 +145,7 @@ public sealed class SqlitePolicyStore
             Note: NormalizeText(note));
     }
 
-    private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
+    public async Task EnsureSchemaAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         await EnsureSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
@@ -170,27 +200,58 @@ public sealed class SqlitePolicyStore
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static StoredPolicySnapshot ReadSnapshot(SqliteDataReader reader)
+    private static PolicySnapshotReadResult ReadSnapshot(SqliteDataReader reader)
     {
+        var policyHash = reader.GetString(2);
         var yaml = reader.GetString(3);
-        var policy = ProxyWardPolicyLoader.Load(yaml);
-        return new StoredPolicySnapshot(
+        var policy = ProxyWardPolicyLoader.LoadStoredSnapshot(yaml);
+        var normalizedYaml = ProxyWardPolicySerializer.ToYaml(policy);
+        var snapshot = new StoredPolicySnapshot(
             Id: reader.GetInt64(0),
             CreatedAtUtc: DateTimeOffset.Parse(
                 reader.GetString(1),
                 CultureInfo.InvariantCulture,
                 DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
-            PolicyHash: reader.GetString(2),
-            Yaml: yaml,
+            PolicyHash: policy.VersionHash,
+            Yaml: normalizedYaml,
             Policy: policy,
             RequestedBy: reader.IsDBNull(4) ? null : reader.GetString(4),
             Note: reader.IsDBNull(5) ? null : reader.GetString(5));
+        return new PolicySnapshotReadResult(snapshot, policyHash, yaml);
+    }
+
+    private static async Task UpdateNormalizedSnapshotAsync(
+        SqliteConnection connection,
+        StoredPolicySnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE policy_snapshots
+            SET policy_hash = $policy_hash,
+                yaml = $yaml
+            WHERE id = $id;
+            """;
+        command.Parameters.AddWithValue("$policy_hash", snapshot.PolicyHash);
+        command.Parameters.AddWithValue("$yaml", snapshot.Yaml);
+        command.Parameters.AddWithValue("$id", snapshot.Id);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static string? NormalizeText(string? value)
     {
         var trimmed = value?.Trim();
         return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
+
+    private sealed record PolicySnapshotReadResult(
+        StoredPolicySnapshot Snapshot,
+        string StoredPolicyHash,
+        string StoredYaml)
+    {
+        public bool RequiresNormalization =>
+            !string.Equals(StoredPolicyHash, Snapshot.PolicyHash, StringComparison.Ordinal)
+            || !string.Equals(StoredYaml, Snapshot.Yaml, StringComparison.Ordinal);
     }
 }
 

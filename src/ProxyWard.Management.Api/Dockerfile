@@ -23,7 +23,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
 ENV ASPNETCORE_URLS=http://+:8081 \
-    PROXYWARD_MANAGEMENT_AUDIT_DB_PATH=/app/data/proxyward.db
+    PROXYWARD_PERSISTENCE_PROVIDER=sqlite \
+    PROXYWARD_DB_PATH=/app/data/proxyward.db
 
 RUN mkdir -p /app/config /app/data
 

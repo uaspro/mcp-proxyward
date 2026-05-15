@@ -26,7 +26,7 @@ public sealed class SqliteManagementSecurityAuditWriter : IManagementSecurityAud
     {
         try
         {
-            using var sink = new SqliteAuditSink(_options.AuditDatabasePath);
+            using var sink = new SqliteAuditSink(_options.SqliteDatabasePath);
             await sink.WriteAsync(
                 new AuditEvent(
                     Timestamp: failure.TimestampUtc,

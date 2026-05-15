@@ -15,7 +15,7 @@ namespace ProxyWard.IntegrationTests;
 
 public class ManagementPolicyModeEndpointTests : IAsyncLifetime
 {
-    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string PersistenceDbEnv = "PROXYWARD_DB_PATH";
     private const string AdminTokenEnv = "PROXYWARD_MANAGEMENT_ADMIN_TOKEN";
 
     private static readonly DateTimeOffset WindowFrom = new(2026, 5, 10, 10, 0, 0, TimeSpan.Zero);
@@ -29,7 +29,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         Environment.SetEnvironmentVariable(AdminTokenEnv, null);
         TestFiles.DeleteSqlite(_databasePath);
         return Task.CompletedTask;
@@ -39,7 +39,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
     public async Task ImpactEndpointReturnsWouldBlockDriftAffectedToolsAndConfirmationToken()
     {
         await SeedImpactDataAsync();
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
 
         var stub = new StubProxyControlClient
         {
@@ -87,7 +87,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
     public async Task ModeSwitchRequiresAdminAuthorization()
     {
         await SeedImpactDataAsync();
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         var stub = new StubProxyControlClient();
@@ -106,7 +106,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
     public async Task AuditToEnforceSwitchRequiresMatchingConfirmationToken()
     {
         await SeedImpactDataAsync();
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         var stub = new StubProxyControlClient
@@ -139,7 +139,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
     public async Task ConfirmedModeSwitchCallsProxyAndWritesAuditEvent()
     {
         await SeedImpactDataAsync();
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         var stub = new StubProxyControlClient
@@ -203,7 +203,7 @@ public class ManagementPolicyModeEndpointTests : IAsyncLifetime
     public async Task ConfirmedModeSwitchWritesAuditWhenReadOnlySharedCacheConnectionExists()
     {
         await CreateEmptyDatabaseAsync();
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
         Environment.SetEnvironmentVariable(AdminTokenEnv, "test-admin-token");
 
         await using var readOnlyConnection = new SqliteConnection(new SqliteConnectionStringBuilder

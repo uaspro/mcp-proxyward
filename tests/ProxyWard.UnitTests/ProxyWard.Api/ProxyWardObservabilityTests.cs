@@ -151,8 +151,7 @@ public class ProxyWardObservabilityTests
               unsupportedStreaming: warn
               batchToolCalls: failClosed
             audit:
-              sink: sqlite
-              sqlitePath: ./proxyward.db
+              enabled: true
             {{observabilityOverride}}
               console:
                 enabled: false

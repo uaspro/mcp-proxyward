@@ -14,9 +14,9 @@ public class ManagementApiHostTests
     [Fact]
     public async Task StatusEndpointReturnsConfiguredManagementMetadata()
     {
-        var auditDbPath = Path.Combine(Path.GetTempPath(), $"proxyward-management-{Guid.NewGuid():N}.db");
-        await EnsureAuditDbExistsAsync(auditDbPath);
-        Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", auditDbPath);
+        var persistenceDbPath = Path.Combine(Path.GetTempPath(), $"proxyward-management-{Guid.NewGuid():N}.db");
+        await EnsurePersistenceDbExistsAsync(persistenceDbPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", persistenceDbPath);
         Environment.SetEnvironmentVariable("PROXYWARD_PROXY_CONTROL_URL", "http://127.0.0.1:8089");
 
         try
@@ -32,7 +32,7 @@ public class ManagementApiHostTests
             using var payload = await JsonDocument.ParseAsync(stream);
             var root = payload.RootElement;
 
-            // Top-level status: healthy when audit DB is reachable, even though proxyControl is unknown
+            // Top-level status: healthy when persistence DB is reachable, even though proxyControl is unknown
             // (no PROXYWARD_PROXY_CONTROL_TOKEN configured). unknown components do not degrade top.
             Assert.Equal("healthy", root.GetProperty("status").GetString());
             Assert.Equal("MCP ProxyWard Management API", root.GetProperty("service").GetString());
@@ -40,22 +40,22 @@ public class ManagementApiHostTests
             var components = root.GetProperty("components");
             Assert.Equal("healthy", components.GetProperty("managementApi").GetProperty("status").GetString());
             Assert.Equal("unknown", components.GetProperty("proxyControl").GetProperty("status").GetString());
-            Assert.Equal("healthy", components.GetProperty("auditDb").GetProperty("status").GetString());
+            Assert.Equal("healthy", components.GetProperty("persistenceDb").GetProperty("status").GetString());
+            var persistenceDetails = components.GetProperty("persistenceDb").GetProperty("details");
+            Assert.Equal("sqlite", persistenceDetails.GetProperty("provider").GetString());
+            Assert.Equal($"sqlite:{Path.GetFullPath(persistenceDbPath)}", persistenceDetails.GetProperty("source").GetString());
             Assert.Equal(
-                auditDbPath,
-                components.GetProperty("auditDb").GetProperty("details").GetProperty("sqlitePath").GetString());
-            Assert.Equal(
-                "audit-db",
+                "persistence-db",
                 components.GetProperty("telemetry").GetProperty("details").GetProperty("source").GetString());
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
             Environment.SetEnvironmentVariable("PROXYWARD_PROXY_CONTROL_URL", null);
         }
     }
 
-    private static async Task EnsureAuditDbExistsAsync(string dbPath)
+    private static async Task EnsurePersistenceDbExistsAsync(string dbPath)
     {
         using var sink = new SqliteAuditSink(dbPath);
         await sink.WriteAsync(new AuditEvent(

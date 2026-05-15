@@ -86,7 +86,7 @@ function getStatusRows(status: StatusResponse | null): { name: string; report: C
     return [
       { name: 'Management API', report: { status: 'unknown', notes: null, details: null }, icon: Activity },
       { name: 'Proxy control', report: { status: 'unknown', notes: null, details: null }, icon: Shield },
-      { name: 'Audit DB', report: { status: 'unknown', notes: null, details: null }, icon: FileCode2 },
+      { name: 'Persistence DB', report: { status: 'unknown', notes: null, details: null }, icon: FileCode2 },
       { name: 'Telemetry', report: { status: 'unknown', notes: null, details: null }, icon: AlertTriangle },
     ]
   }
@@ -94,7 +94,7 @@ function getStatusRows(status: StatusResponse | null): { name: string; report: C
   return [
     { name: 'Management API', report: status.components.managementApi, icon: Activity },
     { name: 'Proxy control', report: status.components.proxyControl, icon: Shield },
-    { name: 'Audit DB', report: status.components.auditDb, icon: FileCode2 },
+    { name: 'Persistence DB', report: status.components.persistenceDb, icon: FileCode2 },
     { name: 'Telemetry', report: status.components.telemetry, icon: AlertTriangle },
   ]
 }

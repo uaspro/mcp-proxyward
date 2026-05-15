@@ -12,7 +12,7 @@ namespace ProxyWard.IntegrationTests;
 
 public class ManagementOverviewEndpointTests
 {
-    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string PersistenceDbEnv = "PROXYWARD_DB_PATH";
     private const string MaxSampleSizeEnv = "PROXYWARD_MANAGEMENT_OVERVIEW_MAX_SAMPLE_SIZE";
 
     [Fact]
@@ -23,7 +23,7 @@ public class ManagementOverviewEndpointTests
         var windowTo = windowFrom.AddSeconds(120);
 
         await SeedFixedRowsAsync(dbPath, windowFrom);
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
 
         try
         {
@@ -48,7 +48,7 @@ public class ManagementOverviewEndpointTests
 
             // Metadata
             var metadata = root.GetProperty("metadata");
-            Assert.Equal("audit-db", metadata.GetProperty("source").GetString());
+            Assert.Equal("persistence-db", metadata.GetProperty("source").GetString());
             Assert.False(metadata.GetProperty("partial").GetBoolean());
             Assert.False(string.IsNullOrEmpty(metadata.GetProperty("asOfUtc").GetString()));
 
@@ -92,7 +92,7 @@ public class ManagementOverviewEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -107,7 +107,7 @@ public class ManagementOverviewEndpointTests
 
         var queryFrom = windowStart;
         var queryTo = windowStart.AddSeconds(120);
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
 
         try
         {
@@ -138,7 +138,7 @@ public class ManagementOverviewEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -171,7 +171,7 @@ public class ManagementOverviewEndpointTests
                 correlationId: "corr-in-window"), CancellationToken.None);
         }
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
 
         try
         {
@@ -195,7 +195,7 @@ public class ManagementOverviewEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -208,7 +208,7 @@ public class ManagementOverviewEndpointTests
 
         await SeedFixedRowsAsync(dbPath, windowFrom);
 
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
         Environment.SetEnvironmentVariable(MaxSampleSizeEnv, "2");
 
         try
@@ -235,7 +235,7 @@ public class ManagementOverviewEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
             Environment.SetEnvironmentVariable(MaxSampleSizeEnv, null);
         }
     }
@@ -248,7 +248,7 @@ public class ManagementOverviewEndpointTests
         var windowTo = windowFrom.AddSeconds(120);
 
         await SeedMalformedOverviewRowAsync(dbPath, windowFrom.AddSeconds(15));
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
 
         try
         {
@@ -271,7 +271,7 @@ public class ManagementOverviewEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -286,7 +286,7 @@ public class ManagementOverviewEndpointTests
     public async Task OverviewEndpointReturnsBadRequestForInvalidArguments(string url)
     {
         var dbPath = TempDbPath();
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
 
         try
         {
@@ -305,7 +305,7 @@ public class ManagementOverviewEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -317,7 +317,7 @@ public class ManagementOverviewEndpointTests
         var windowFrom = windowTo.AddDays(-30);
 
         await SeedSingleRowAsync(dbPath, windowTo.AddDays(-1), AuditDecision.Allow);
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
 
         try
         {
@@ -340,7 +340,7 @@ public class ManagementOverviewEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 
@@ -348,9 +348,9 @@ public class ManagementOverviewEndpointTests
     public async Task OverviewEndpointAppliesDefaultsWhenWindowAndBucketUnspecified()
     {
         var dbPath = TempDbPath();
-        // Ensure the audit DB schema exists with a row outside the default 1h window.
+        // Ensure the persistence DB schema exists with a row outside the default 1h window.
         await SeedSingleRowAsync(dbPath, DateTimeOffset.UtcNow.AddDays(-30), AuditDecision.Allow);
-        Environment.SetEnvironmentVariable(AuditDbEnv, dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
 
         try
         {
@@ -367,11 +367,11 @@ public class ManagementOverviewEndpointTests
 
             Assert.Equal(60, root.GetProperty("bucket").GetProperty("sizeSeconds").GetInt32());
             Assert.Equal(3600.0, root.GetProperty("window").GetProperty("durationSeconds").GetDouble(), 0);
-            Assert.Equal("audit-db", root.GetProperty("metadata").GetProperty("source").GetString());
+            Assert.Equal("persistence-db", root.GetProperty("metadata").GetProperty("source").GetString());
         }
         finally
         {
-            Environment.SetEnvironmentVariable(AuditDbEnv, null);
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         }
     }
 

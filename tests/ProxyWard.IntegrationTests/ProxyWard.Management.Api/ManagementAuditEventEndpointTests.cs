@@ -16,7 +16,7 @@ public class ManagementAuditEventEndpointTests
     {
         var dbPath = TempDbPath();
         await SeedDecisionRowsAsync(dbPath);
-        Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", dbPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", dbPath);
 
         try
         {
@@ -42,7 +42,7 @@ public class ManagementAuditEventEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -51,7 +51,7 @@ public class ManagementAuditEventEndpointTests
     {
         var dbPath = TempDbPath();
         await SeedDecisionRowsAsync(dbPath);
-        Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", dbPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", dbPath);
 
         try
         {
@@ -75,7 +75,7 @@ public class ManagementAuditEventEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -84,7 +84,7 @@ public class ManagementAuditEventEndpointTests
     {
         var dbPath = TempDbPath();
         await SeedDecisionRowsAsync(dbPath);
-        Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", dbPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", dbPath);
 
         try
         {
@@ -107,7 +107,7 @@ public class ManagementAuditEventEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -116,7 +116,7 @@ public class ManagementAuditEventEndpointTests
     {
         var dbPath = TempDbPath();
         await SeedDecisionRowsAsync(dbPath);
-        Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", dbPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", dbPath);
 
         try
         {
@@ -129,7 +129,7 @@ public class ManagementAuditEventEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 
@@ -138,7 +138,7 @@ public class ManagementAuditEventEndpointTests
     {
         var dbPath = TempDbPath();
         await SeedMalformedRowAsync(dbPath);
-        Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", dbPath);
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", dbPath);
 
         try
         {
@@ -163,7 +163,7 @@ public class ManagementAuditEventEndpointTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PROXYWARD_MANAGEMENT_AUDIT_DB_PATH", null);
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         }
     }
 

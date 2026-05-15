@@ -4,7 +4,7 @@ namespace ProxyWard.Management.Application.Policy;
 
 public interface IManagementPolicySnapshotStore
 {
-    string DatabasePath { get; }
+    string SourceDescription { get; }
 
     Task<ManagementStoredPolicySnapshot> InitializeAndReadCurrentAsync(
         string defaultYaml,

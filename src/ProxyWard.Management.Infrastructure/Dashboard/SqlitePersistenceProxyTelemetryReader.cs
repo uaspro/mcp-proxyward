@@ -5,14 +5,14 @@ using ProxyWard.Management.Application.Dashboard;
 
 namespace ProxyWard.Management.Infrastructure.Dashboard;
 
-public sealed class AuditDbProxyTelemetryReader : IProxyTelemetryReader
+public sealed class SqlitePersistenceProxyTelemetryReader : IProxyTelemetryReader
 {
-    private const string MetadataSource = "audit-db";
+    private const string MetadataSource = "persistence-db";
 
     private readonly string _connectionString;
     private readonly ManagementAuditReadOptions _options;
 
-    public AuditDbProxyTelemetryReader(string sqlitePath, ManagementAuditReadOptions options)
+    public SqlitePersistenceProxyTelemetryReader(string sqlitePath, ManagementAuditReadOptions options)
     {
         if (string.IsNullOrWhiteSpace(sqlitePath))
         {

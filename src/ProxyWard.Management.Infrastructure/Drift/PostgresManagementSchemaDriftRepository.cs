@@ -1,0 +1,541 @@
+using System.Globalization;
+using Npgsql;
+using ProxyWard.Management.Application.Audit;
+using ProxyWard.Management.Application.Drift;
+
+namespace ProxyWard.Management.Infrastructure.Drift;
+
+public sealed class PostgresManagementSchemaDriftRepository : IManagementSchemaDriftRepository, IAsyncDisposable, IDisposable
+{
+    public const string DiffModeMetadata = "metadata";
+    public const string DiffModeHash = "hash";
+    public const string UnavailableHash = "unavailable";
+
+    private readonly NpgsqlDataSource _dataSource;
+    private readonly ManagementAuditReadOptions _options;
+    private readonly bool _ownsDataSource;
+    private bool _disposed;
+
+    public PostgresManagementSchemaDriftRepository(
+        string connectionString,
+        ManagementAuditReadOptions? options = null)
+        : this(CreateDataSource(connectionString), options, ownsDataSource: true)
+    {
+    }
+
+    public PostgresManagementSchemaDriftRepository(
+        NpgsqlDataSource dataSource,
+        ManagementAuditReadOptions? options = null)
+        : this(dataSource, options, ownsDataSource: false)
+    {
+    }
+
+    private PostgresManagementSchemaDriftRepository(
+        NpgsqlDataSource dataSource,
+        ManagementAuditReadOptions? options,
+        bool ownsDataSource)
+    {
+        _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
+        _ownsDataSource = ownsDataSource;
+        _options = options ?? new ManagementAuditReadOptions();
+        if (_options.MaxPageSize <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxPageSize must be greater than zero.");
+        }
+    }
+
+    public async Task<ManagementSchemaDriftPage> QueryAsync(
+        ManagementSchemaDriftQuery query,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+
+        var normalizedQuery = NormalizeQuery(query);
+        var pageSize = NormalizePageSize(normalizedQuery.PageSize);
+        var offset = Math.Max(0, normalizedQuery.Offset);
+        var filter = BuildFilter(normalizedQuery);
+        var impactFilter = BuildImpactFilter(normalizedQuery);
+
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        if (!await TableExistsAsync(connection, "schema_drift_reviews", cancellationToken).ConfigureAwait(false))
+        {
+            return new ManagementSchemaDriftPage(
+                offset,
+                pageSize,
+                TotalCount: 0,
+                new ManagementSchemaDriftWindow(normalizedQuery.FromUtc, normalizedQuery.ToUtc),
+                Items: []);
+        }
+
+        var diffMetadataTableExists = await TableExistsAsync(
+            connection,
+            "tool_schema_diff_metadata",
+            cancellationToken).ConfigureAwait(false);
+        var totalCount = await CountAsync(connection, filter, cancellationToken).ConfigureAwait(false);
+        var items = await ReadItemsAsync(
+            connection,
+            filter,
+            impactFilter,
+            diffMetadataTableExists,
+            offset,
+            pageSize,
+            cancellationToken).ConfigureAwait(false);
+
+        return new ManagementSchemaDriftPage(
+            offset,
+            pageSize,
+            totalCount,
+            new ManagementSchemaDriftWindow(normalizedQuery.FromUtc, normalizedQuery.ToUtc),
+            items);
+    }
+
+    public async Task<ManagementSchemaDriftFilterOptions> GetFilterOptionsAsync(
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        if (!await TableExistsAsync(connection, "schema_drift_reviews", cancellationToken).ConfigureAwait(false))
+        {
+            return new ManagementSchemaDriftFilterOptions(Servers: [], Tools: []);
+        }
+
+        var servers = await ReadFilterOptionsAsync(connection, "server_id", cancellationToken).ConfigureAwait(false);
+        var tools = await ReadFilterOptionsAsync(connection, "tool_name", cancellationToken).ConfigureAwait(false);
+
+        return new ManagementSchemaDriftFilterOptions(servers, tools);
+    }
+
+    public async Task<ManagementSchemaDriftDetail?> GetByIdAsync(
+        long id,
+        DateTimeOffset? fromUtc,
+        DateTimeOffset? toUtc,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+
+        if (id <= 0)
+        {
+            return null;
+        }
+
+        var query = new ManagementSchemaDriftQuery(FromUtc: fromUtc, ToUtc: toUtc);
+        var impactFilter = BuildImpactFilter(query);
+
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        if (!await TableExistsAsync(connection, "schema_drift_reviews", cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        var diffMetadataTableExists = await TableExistsAsync(
+            connection,
+            "tool_schema_diff_metadata",
+            cancellationToken).ConfigureAwait(false);
+
+        var diffJoin = diffMetadataTableExists
+            ? "LEFT JOIN tool_schema_diff_metadata d ON d.drift_review_id = r.id"
+            : string.Empty;
+        var diffColumns = diffMetadataTableExists
+            ? """
+                d.id,
+                d.before_json,
+                d.after_json,
+                d.before_hash,
+                d.after_hash,
+                d.created_at_utc,
+                """
+            : """
+                NULL AS diff_id,
+                NULL AS before_json,
+                NULL AS after_json,
+                NULL AS before_hash,
+                NULL AS after_hash,
+                NULL AS diff_created_at_utc,
+                """;
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT
+                r.id,
+                r.server_id,
+                r.tool_name,
+                r.field_name,
+                r.from_version,
+                r.to_version,
+                r.status,
+                r.reasons,
+                r.policy_version,
+                r.detected_at_utc,
+                r.reviewed_at_utc,
+                r.reviewed_by,
+                r.review_note,
+                {diffColumns}
+                (
+                    SELECT COUNT(*)
+                    FROM schema_drift_reviews impact
+                    WHERE impact.server_id = r.server_id
+                      AND impact.tool_name = r.tool_name
+                      {impactFilter.WhereClause}
+                ) AS impact_count
+            FROM schema_drift_reviews r
+            {diffJoin}
+            WHERE r.id = @id
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("id", id);
+        AddParameters(command, impactFilter.Parameters);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        return ReadDetail(reader);
+    }
+
+    private int NormalizePageSize(int requestedPageSize)
+    {
+        var requested = requestedPageSize <= 0 ? 50 : requestedPageSize;
+        return Math.Min(requested, _options.MaxPageSize);
+    }
+
+    private static ManagementSchemaDriftQuery NormalizeQuery(ManagementSchemaDriftQuery query) =>
+        query with
+        {
+            Status = NormalizeText(query.Status),
+            ServerId = NormalizeText(query.ServerId),
+            ToolName = NormalizeText(query.ToolName)
+        };
+
+    private static string? NormalizeText(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
+
+    private static async Task<bool> TableExistsAsync(
+        NpgsqlConnection connection,
+        string tableName,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT to_regclass(@table_name) IS NOT NULL;";
+        command.Parameters.AddWithValue("table_name", tableName);
+
+        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    }
+
+    private static async Task<long> CountAsync(
+        NpgsqlConnection connection,
+        SqlFilter filter,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM schema_drift_reviews r{filter.WhereClause};";
+        AddParameters(command, filter.Parameters);
+
+        var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return Convert.ToInt64(value, CultureInfo.InvariantCulture);
+    }
+
+    private static async Task<IReadOnlyList<ManagementSchemaDriftItem>> ReadItemsAsync(
+        NpgsqlConnection connection,
+        SqlFilter filter,
+        SqlFilter impactFilter,
+        bool diffMetadataTableExists,
+        int offset,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var diffJoin = diffMetadataTableExists
+            ? "LEFT JOIN tool_schema_diff_metadata d ON d.drift_review_id = r.id"
+            : string.Empty;
+        var diffColumns = diffMetadataTableExists
+            ? """
+                d.id,
+                d.before_json,
+                d.after_json,
+                d.before_hash,
+                d.after_hash,
+                d.created_at_utc,
+                """
+            : """
+                NULL AS diff_id,
+                NULL AS before_json,
+                NULL AS after_json,
+                NULL AS before_hash,
+                NULL AS after_hash,
+                NULL AS diff_created_at_utc,
+                """;
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT
+                r.id,
+                r.server_id,
+                r.tool_name,
+                r.field_name,
+                r.from_version,
+                r.to_version,
+                r.status,
+                r.reasons,
+                r.policy_version,
+                r.detected_at_utc,
+                r.reviewed_at_utc,
+                r.reviewed_by,
+                r.review_note,
+                {diffColumns}
+                (
+                    SELECT COUNT(*)
+                    FROM schema_drift_reviews impact
+                    WHERE impact.server_id = r.server_id
+                      AND impact.tool_name = r.tool_name
+                      {impactFilter.WhereClause}
+                ) AS impact_count
+            FROM schema_drift_reviews r
+            {diffJoin}
+            {filter.WhereClause}
+            ORDER BY r.detected_at_utc DESC, r.id DESC
+            LIMIT @limit OFFSET @offset;
+            """;
+        AddParameters(command, filter.Parameters);
+        AddParameters(command, impactFilter.Parameters);
+        command.Parameters.AddWithValue("limit", pageSize);
+        command.Parameters.AddWithValue("offset", offset);
+
+        var items = new List<ManagementSchemaDriftItem>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            items.Add(ReadItem(reader));
+        }
+
+        return items;
+    }
+
+    private static async Task<IReadOnlyList<ManagementSchemaDriftFilterOption>> ReadFilterOptionsAsync(
+        NpgsqlConnection connection,
+        string columnName,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT {columnName}, COUNT(*)
+            FROM schema_drift_reviews
+            WHERE {columnName} IS NOT NULL
+              AND TRIM({columnName}) <> ''
+            GROUP BY {columnName}
+            ORDER BY LOWER({columnName}) ASC, {columnName} ASC;
+            """;
+
+        var options = new List<ManagementSchemaDriftFilterOption>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            options.Add(new ManagementSchemaDriftFilterOption(
+                reader.GetString(0),
+                reader.GetInt64(1)));
+        }
+
+        return options;
+    }
+
+    private static ManagementSchemaDriftItem ReadItem(NpgsqlDataReader reader)
+    {
+        var hasDiffMetadata = !reader.IsDBNull(13);
+        var beforeJson = reader.IsDBNull(14) ? null : reader.GetString(14);
+        var afterJson = reader.IsDBNull(15) ? null : reader.GetString(15);
+        var diffMode = beforeJson is not null || afterJson is not null
+            ? DiffModeMetadata
+            : DiffModeHash;
+
+        return new ManagementSchemaDriftItem(
+            Id: reader.GetInt64(0),
+            ServerId: reader.GetString(1),
+            ToolName: reader.GetString(2),
+            FieldName: reader.GetString(3),
+            FromVersion: reader.GetInt32(4),
+            ToVersion: reader.GetInt32(5),
+            Status: reader.GetString(6),
+            Reasons: SplitReasons(reader.GetString(7)),
+            PolicyVersion: reader.IsDBNull(8) ? null : reader.GetString(8),
+            DetectedAtUtc: ParseTimestamp(reader.GetString(9)),
+            ReviewedAtUtc: reader.IsDBNull(10) ? null : ParseTimestamp(reader.GetString(10)),
+            ReviewedBy: reader.IsDBNull(11) ? null : reader.GetString(11),
+            ReviewNote: reader.IsDBNull(12) ? null : reader.GetString(12),
+            ImpactCount: reader.GetInt64(19),
+            HasDiffMetadata: hasDiffMetadata,
+            DiffMode: diffMode);
+    }
+
+    private static ManagementSchemaDriftDetail ReadDetail(NpgsqlDataReader reader)
+    {
+        var item = ReadItem(reader);
+        var beforeJson = reader.IsDBNull(14) ? null : reader.GetString(14);
+        var afterJson = reader.IsDBNull(15) ? null : reader.GetString(15);
+        var beforeHash = reader.IsDBNull(16) ? UnavailableHash : reader.GetString(16);
+        var afterHash = reader.IsDBNull(17) ? UnavailableHash : reader.GetString(17);
+        var createdAtUtc = reader.IsDBNull(18)
+            ? (DateTimeOffset?)null
+            : ParseTimestamp(reader.GetString(18));
+
+        return new ManagementSchemaDriftDetail(
+            item.Id,
+            item.ServerId,
+            item.ToolName,
+            item.FieldName,
+            item.FromVersion,
+            item.ToVersion,
+            item.Status,
+            item.Reasons,
+            item.PolicyVersion,
+            item.DetectedAtUtc,
+            item.ReviewedAtUtc,
+            item.ReviewedBy,
+            item.ReviewNote,
+            item.ImpactCount,
+            item.HasDiffMetadata,
+            item.DiffMode,
+            new ManagementSchemaDriftDiff(
+                beforeJson,
+                afterJson,
+                beforeHash,
+                afterHash,
+                createdAtUtc,
+                item.DiffMode));
+    }
+
+    private static IReadOnlyList<string> SplitReasons(string reasons) =>
+        reasons.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static DateTimeOffset ParseTimestamp(string raw) =>
+        DateTimeOffset.Parse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+
+    private static SqlFilter BuildFilter(ManagementSchemaDriftQuery query)
+    {
+        var where = new List<string>();
+        var parameters = new List<SqlParameterValue>();
+
+        AddDateFilter(where, parameters, "r.detected_at_utc", ">=", "from_utc", query.FromUtc);
+        AddDateFilter(where, parameters, "r.detected_at_utc", "<=", "to_utc", query.ToUtc);
+        AddTextFilter(where, parameters, "r.status", "status", query.Status);
+        AddTextFilter(where, parameters, "r.server_id", "server_id", query.ServerId);
+        AddTextFilter(where, parameters, "r.tool_name", "tool_name", query.ToolName);
+
+        return new SqlFilter(
+            where.Count == 0 ? string.Empty : " WHERE " + string.Join(" AND ", where),
+            parameters);
+    }
+
+    private static SqlFilter BuildImpactFilter(ManagementSchemaDriftQuery query)
+    {
+        var where = new List<string>();
+        var parameters = new List<SqlParameterValue>();
+
+        AddDateFilter(where, parameters, "impact.detected_at_utc", ">=", "impact_from_utc", query.FromUtc);
+        AddDateFilter(where, parameters, "impact.detected_at_utc", "<=", "impact_to_utc", query.ToUtc);
+
+        return new SqlFilter(
+            where.Count == 0 ? string.Empty : " AND " + string.Join(" AND ", where),
+            parameters);
+    }
+
+    private static void AddDateFilter(
+        List<string> where,
+        List<SqlParameterValue> parameters,
+        string column,
+        string op,
+        string parameterName,
+        DateTimeOffset? value)
+    {
+        if (value is null)
+        {
+            return;
+        }
+
+        where.Add($"{column} {op} @{parameterName}");
+        parameters.Add(new SqlParameterValue(
+            parameterName,
+            value.Value.UtcDateTime.ToString("o", CultureInfo.InvariantCulture)));
+    }
+
+    private static void AddTextFilter(
+        List<string> where,
+        List<SqlParameterValue> parameters,
+        string column,
+        string parameterName,
+        string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        where.Add($"{column} = @{parameterName}");
+        parameters.Add(new SqlParameterValue(parameterName, value.Trim()));
+    }
+
+    private static void AddParameters(
+        NpgsqlCommand command,
+        IReadOnlyList<SqlParameterValue> parameters)
+    {
+        foreach (var parameter in parameters)
+        {
+            command.Parameters.AddWithValue(parameter.Name, parameter.Value);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        if (_ownsDataSource)
+        {
+            await _dataSource.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        if (_ownsDataSource)
+        {
+            _dataSource.Dispose();
+        }
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+        {
+            throw new ObjectDisposedException(nameof(PostgresManagementSchemaDriftRepository));
+        }
+    }
+
+    private static NpgsqlDataSource CreateDataSource(string connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new ArgumentException("connectionString is required.", nameof(connectionString));
+        }
+
+        return NpgsqlDataSource.Create(connectionString);
+    }
+
+    private sealed record SqlFilter(
+        string WhereClause,
+        IReadOnlyList<SqlParameterValue> Parameters);
+
+    private sealed record SqlParameterValue(string Name, object Value);
+}

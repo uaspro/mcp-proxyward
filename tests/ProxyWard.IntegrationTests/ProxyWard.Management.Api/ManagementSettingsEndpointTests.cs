@@ -8,7 +8,7 @@ namespace ProxyWard.IntegrationTests;
 
 public class ManagementSettingsEndpointTests : IAsyncLifetime
 {
-    private const string AuditDbEnv = "PROXYWARD_MANAGEMENT_AUDIT_DB_PATH";
+    private const string PersistenceDbEnv = "PROXYWARD_DB_PATH";
 
     private readonly string _databasePath = Path.Combine(
         Path.GetTempPath(),
@@ -18,7 +18,7 @@ public class ManagementSettingsEndpointTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        Environment.SetEnvironmentVariable(AuditDbEnv, null);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
         TestFiles.DeleteSqlite(_databasePath);
 
         return Task.CompletedTask;
@@ -28,7 +28,7 @@ public class ManagementSettingsEndpointTests : IAsyncLifetime
     public async Task SettingsEndpointReturnsReadOnlyPolicyBackedSettings()
     {
         await new SqlitePolicyStore(_databasePath).SaveAsync(PolicyYaml());
-        Environment.SetEnvironmentVariable(AuditDbEnv, _databasePath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, _databasePath);
 
         await using var factory = new WebApplicationFactory<ManagementProgram>();
         using var client = factory.CreateClient();
@@ -49,8 +49,12 @@ public class ManagementSettingsEndpointTests : IAsyncLifetime
         Assert.Equal(0.75, observability.GetProperty("tracesRatio").GetDouble());
 
         var audit = root.GetProperty("audit");
-        Assert.Equal("sqlite", audit.GetProperty("sink").GetString());
-        Assert.Equal("./data/settings.db", audit.GetProperty("sqlitePath").GetString());
+        Assert.True(audit.GetProperty("enabled").GetBoolean());
+
+        var persistence = root.GetProperty("persistence");
+        Assert.Equal("sqlite", persistence.GetProperty("provider").GetString());
+        Assert.Equal($"sqlite:{Path.GetFullPath(_databasePath)}", persistence.GetProperty("source").GetString());
+        Assert.True(persistence.GetProperty("connectionConfigured").GetBoolean());
 
         var inspection = root.GetProperty("inspection");
         Assert.Equal(1048576, inspection.GetProperty("maxBodyBytes").GetInt32());
@@ -76,8 +80,7 @@ public class ManagementSettingsEndpointTests : IAsyncLifetime
           unsupportedStreaming: block
           batchToolCalls: failClosed
         audit:
-          sink: sqlite
-          sqlitePath: ./data/settings.db
+          enabled: true
         observability:
           serviceName: mcp-proxyward-settings
           console:
