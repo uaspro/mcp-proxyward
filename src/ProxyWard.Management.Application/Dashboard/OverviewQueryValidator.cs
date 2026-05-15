@@ -1,8 +1,6 @@
-using ProxyWard.Management.Application.Dashboard;
+namespace ProxyWard.Management.Application.Dashboard;
 
-namespace ProxyWard.Management.Api.Dashboard;
-
-internal static class OverviewQueryValidator
+public static class OverviewQueryValidator
 {
     private const int MinBucketSeconds = 10;
     private const int DefaultBucketSeconds = 60;
@@ -105,7 +103,7 @@ internal static class OverviewQueryValidator
     }
 }
 
-internal readonly record struct OverviewValidation(string? Error, string? Message, OverviewQuery? Query)
+public readonly record struct OverviewValidation(string? Error, string? Message, OverviewQuery? Query)
 {
     public static OverviewValidation Success(OverviewQuery query) => new(null, null, query);
     public static OverviewValidation Failure(string error, string message) => new(error, message, null);

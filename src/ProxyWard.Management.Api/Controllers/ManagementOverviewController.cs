@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using ProxyWard.Management.Api.Dashboard;
 using ProxyWard.Management.Application.Dashboard;
 
 namespace ProxyWard.Management.Api.Controllers;

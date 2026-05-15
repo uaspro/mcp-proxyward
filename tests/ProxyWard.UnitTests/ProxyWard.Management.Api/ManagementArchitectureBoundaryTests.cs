@@ -1,5 +1,6 @@
 using System.Xml.Linq;
 using ProxyWard.Management.Application;
+using ProxyWard.Management.Application.Dashboard;
 
 namespace ProxyWard.UnitTests;
 
@@ -45,6 +46,50 @@ public class ManagementArchitectureBoundaryTests
             projectReferences,
             include => include.Contains("ProxyWard.Audit", StringComparison.OrdinalIgnoreCase));
         Assert.Empty(sourceOffenders);
+    }
+
+    [Fact]
+    public void ManagementApiDoesNotOwnApplicationDashboardValidation()
+    {
+        var misplacedFiles = Directory.Exists(RepoPath("src/ProxyWard.Management.Api/Dashboard"))
+            ? Directory
+                .EnumerateFiles(
+                    RepoPath("src/ProxyWard.Management.Api/Dashboard"),
+                    "*.cs",
+                    SearchOption.AllDirectories)
+                .Select(file => Path.GetRelativePath(RepoRoot.Value, file))
+                .ToArray()
+            : [];
+
+        Assert.Empty(misplacedFiles);
+        Assert.Equal(typeof(OverviewQuery).Assembly, typeof(OverviewQueryValidator).Assembly);
+    }
+
+    [Fact]
+    public void ManagementApiInfrastructureReferencesStayInConfiguration()
+    {
+        var offenders = Directory
+            .EnumerateFiles(
+                RepoPath("src/ProxyWard.Management.Api"),
+                "*.cs",
+                SearchOption.AllDirectories)
+            .Where(file => !Path
+                .GetRelativePath(RepoPath("src/ProxyWard.Management.Api"), file)
+                .Replace(Path.DirectorySeparatorChar, '/')
+                .StartsWith("Configuration/", StringComparison.Ordinal))
+            .Where(file =>
+            {
+                var source = File.ReadAllText(file);
+                return source.Contains("ProxyWard.Management.Infrastructure", StringComparison.Ordinal)
+                    || source.Contains("ProxyWard.Proxy.Infrastructure", StringComparison.Ordinal)
+                    || source.Contains("Microsoft.Data.Sqlite", StringComparison.Ordinal)
+                    || source.Contains("Npgsql", StringComparison.Ordinal)
+                    || source.Contains("YamlDotNet", StringComparison.Ordinal);
+            })
+            .Select(file => Path.GetRelativePath(RepoRoot.Value, file))
+            .ToArray();
+
+        Assert.Empty(offenders);
     }
 
     [Fact]
