@@ -10,6 +10,7 @@ namespace ProxyWard.Management.Infrastructure.Audit;
 
 public sealed class ManagementAuditEventRepository : IManagementAuditEventRepository
 {
+    private readonly string _sqlitePath;
     private readonly string _connectionString;
     private readonly ManagementAuditReadOptions _options;
 
@@ -33,9 +34,10 @@ public sealed class ManagementAuditEventRepository : IManagementAuditEventReposi
             throw new ArgumentOutOfRangeException(nameof(options), "MaxExportRowCount must be greater than zero.");
         }
 
+        _sqlitePath = Path.GetFullPath(sqlitePath);
         _connectionString = new SqliteConnectionStringBuilder
         {
-            DataSource = Path.GetFullPath(sqlitePath),
+            DataSource = _sqlitePath,
             Mode = SqliteOpenMode.ReadOnly,
             Cache = SqliteCacheMode.Shared
         }.ToString();
@@ -49,9 +51,19 @@ public sealed class ManagementAuditEventRepository : IManagementAuditEventReposi
         var offset = Math.Max(0, query.Offset);
         var filter = BuildFilter(query);
 
+        if (!File.Exists(_sqlitePath))
+        {
+            return EmptyPage(offset, pageSize);
+        }
+
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await SqliteAuditSchema.ConfigureReadConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+
+        if (!await AuditEventsTableExistsAsync(connection, cancellationToken).ConfigureAwait(false))
+        {
+            return EmptyPage(offset, pageSize);
+        }
 
         var totalCount = await CountAsync(connection, filter, cancellationToken).ConfigureAwait(false);
         var items = await ReadItemsAsync(connection, filter, offset, pageSize, cancellationToken).ConfigureAwait(false);
@@ -66,9 +78,19 @@ public sealed class ManagementAuditEventRepository : IManagementAuditEventReposi
         var rowCap = _options.MaxExportRowCount;
         var filter = BuildFilter(query);
 
+        if (!File.Exists(_sqlitePath))
+        {
+            yield break;
+        }
+
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await SqliteAuditSchema.ConfigureReadConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+
+        if (!await AuditEventsTableExistsAsync(connection, cancellationToken).ConfigureAwait(false))
+        {
+            yield break;
+        }
 
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
@@ -111,9 +133,19 @@ public sealed class ManagementAuditEventRepository : IManagementAuditEventReposi
             return null;
         }
 
+        if (!File.Exists(_sqlitePath))
+        {
+            return null;
+        }
+
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await SqliteAuditSchema.ConfigureReadConnectionAsync(connection, cancellationToken).ConfigureAwait(false);
+
+        if (!await AuditEventsTableExistsAsync(connection, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
 
         var filter = new SqlFilter(
             " WHERE id = $id",
@@ -122,10 +154,29 @@ public sealed class ManagementAuditEventRepository : IManagementAuditEventReposi
         return items.Count == 0 ? null : items[0];
     }
 
+    private static ManagementAuditEventPage EmptyPage(int offset, int pageSize) =>
+        new(offset, pageSize, TotalCount: 0, Items: []);
+
     private int NormalizePageSize(int requestedPageSize)
     {
         var requested = requestedPageSize <= 0 ? 50 : requestedPageSize;
         return Math.Min(requested, _options.MaxPageSize);
+    }
+
+    private static async Task<bool> AuditEventsTableExistsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name = 'audit_events'
+            LIMIT 1;
+            """;
+
+        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
     }
 
     private static async Task<long> CountAsync(

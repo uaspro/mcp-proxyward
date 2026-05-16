@@ -143,6 +143,54 @@ public class ManagementOverviewEndpointTests
     }
 
     [Fact]
+    public async Task OverviewEndpointReturnsEmptySnapshotWhenPersistenceDbIsUninitialized()
+    {
+        var dbPath = TempDbPath();
+        var windowFrom = new DateTimeOffset(2026, 5, 6, 10, 0, 0, TimeSpan.Zero);
+        var windowTo = windowFrom.AddSeconds(120);
+        await CreateEmptySqliteDatabaseAsync(dbPath);
+        Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<ManagementProgram>();
+            using var client = factory.CreateClient();
+
+            var url = $"/api/overview?fromUtc={IsoZ(windowFrom)}&toUtc={IsoZ(windowTo)}&bucketSeconds=10";
+            using var response = await client.GetAsync(url);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+            var root = payload.RootElement;
+
+            Assert.Equal(0.0, root.GetProperty("requestRate").GetDouble());
+            Assert.Equal(0.0, root.GetProperty("blockRate").GetDouble());
+            Assert.Equal(0.0, root.GetProperty("wouldBlockRate").GetDouble());
+            Assert.Equal(0.0, root.GetProperty("errorRate").GetDouble());
+            Assert.Equal(JsonValueKind.Null, root.GetProperty("latencyP95Ms").ValueKind);
+            Assert.Empty(root.GetProperty("topReasons").EnumerateArray());
+            Assert.Empty(root.GetProperty("topTools").EnumerateArray());
+            Assert.All(
+                root.GetProperty("series").EnumerateArray(),
+                point => Assert.Equal(0, point.GetProperty("total").GetInt32()));
+
+            var metadata = root.GetProperty("metadata");
+            Assert.Equal("persistence-db", metadata.GetProperty("source").GetString());
+            Assert.True(metadata.GetProperty("partial").GetBoolean());
+            Assert.Contains(
+                "no audit events in window",
+                metadata.GetProperty("notes").GetString(),
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(PersistenceDbEnv, null);
+        }
+    }
+
+    [Fact]
     public async Task OverviewEndpointSignalsIngestLagWhenNewestInWindowIsOlderThanThreshold()
     {
         var dbPath = TempDbPath();
@@ -530,6 +578,16 @@ public class ManagementOverviewEndpointTests
             """;
         insert.Parameters.AddWithValue("$timestamp_utc", timestamp.UtcDateTime.ToString("o", CultureInfo.InvariantCulture));
         await insert.ExecuteNonQueryAsync();
+    }
+
+    private static async Task CreateEmptySqliteDatabaseAsync(string dbPath)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = SqliteOpenMode.ReadWriteCreate
+        }.ToString());
+        await connection.OpenAsync();
     }
 
     private static string TempDbPath() =>

@@ -9,6 +9,7 @@ public sealed class SqlitePersistenceProxyTelemetryReader : IProxyTelemetryReade
 {
     private const string MetadataSource = "persistence-db";
 
+    private readonly string _sqlitePath;
     private readonly string _connectionString;
     private readonly ManagementAuditReadOptions _options;
 
@@ -25,9 +26,10 @@ public sealed class SqlitePersistenceProxyTelemetryReader : IProxyTelemetryReade
             throw new ArgumentOutOfRangeException(nameof(options), "MaxOverviewSampleSize must be greater than zero.");
         }
 
+        _sqlitePath = Path.GetFullPath(sqlitePath);
         _connectionString = new SqliteConnectionStringBuilder
         {
-            DataSource = Path.GetFullPath(sqlitePath),
+            DataSource = _sqlitePath,
             Mode = SqliteOpenMode.ReadOnly,
             Cache = SqliteCacheMode.Shared
         }.ToString();
@@ -42,11 +44,21 @@ public sealed class SqlitePersistenceProxyTelemetryReader : IProxyTelemetryReade
         var windowSeconds = (query.ToUtc - query.FromUtc).TotalSeconds;
         var bucketSeconds = query.BucketSeconds;
 
+        if (!File.Exists(_sqlitePath))
+        {
+            return CreateEmptyResponse(query);
+        }
+
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await ConfigureBusyTimeoutAsync(connection, cancellationToken).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var sqliteTransaction = (SqliteTransaction)transaction;
+
+        if (!await AuditEventsTableExistsAsync(connection, sqliteTransaction, cancellationToken).ConfigureAwait(false))
+        {
+            return CreateEmptyResponse(query);
+        }
 
         var counts = await ReadAggregateCountsAsync(connection, sqliteTransaction, fromIso, toIso, cancellationToken)
             .ConfigureAwait(false);
@@ -141,6 +153,69 @@ public sealed class SqlitePersistenceProxyTelemetryReader : IProxyTelemetryReade
             TopReasons: topReasons,
             TopTools: topTools,
             Series: series);
+    }
+
+    private static OverviewResponse CreateEmptyResponse(OverviewQuery query)
+    {
+        var windowSeconds = (query.ToUtc - query.FromUtc).TotalSeconds;
+        var series = CreateEmptySeries(query.FromUtc, query.ToUtc, query.BucketSeconds);
+
+        return new OverviewResponse(
+            Window: new OverviewWindow(query.FromUtc, query.ToUtc, windowSeconds),
+            Bucket: new OverviewBucket(query.BucketSeconds, series.Count),
+            Metadata: new OverviewMetadata(MetadataSource, AsOfUtc: null, Partial: true, Notes: "no audit events in window"),
+            RequestRate: 0.0,
+            BlockRate: 0.0,
+            WouldBlockRate: 0.0,
+            ErrorRate: 0.0,
+            LatencyP95Ms: null,
+            TopReasons: [],
+            TopTools: [],
+            Series: series);
+    }
+
+    private static IReadOnlyList<OverviewSeriesPoint> CreateEmptySeries(
+        DateTimeOffset windowFromUtc,
+        DateTimeOffset windowToUtc,
+        int bucketSeconds)
+    {
+        var windowSeconds = (windowToUtc - windowFromUtc).TotalSeconds;
+        var bucketCount = (int)Math.Ceiling(windowSeconds / bucketSeconds);
+        if (bucketCount < 1)
+        {
+            bucketCount = 1;
+        }
+
+        var points = new List<OverviewSeriesPoint>(bucketCount);
+        for (var i = 0; i < bucketCount; i++)
+        {
+            points.Add(new OverviewSeriesPoint(
+                BucketStartUtc: windowFromUtc.AddSeconds(i * (double)bucketSeconds),
+                Allow: 0,
+                Block: 0,
+                WouldBlock: 0,
+                Warn: 0,
+                Total: 0));
+        }
+
+        return points;
+    }
+
+    private static async Task<bool> AuditEventsTableExistsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = CreateCommand(connection, transaction);
+        command.CommandText = """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name = 'audit_events'
+            LIMIT 1;
+            """;
+
+        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
     }
 
     private static async Task<AggregateCounts> ReadAggregateCountsAsync(

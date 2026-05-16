@@ -47,6 +47,35 @@ public class ManagementAuditEventEndpointTests
     }
 
     [Fact]
+    public async Task AuditEventsEndpointReturnsEmptyPageWhenPersistenceDbIsUninitialized()
+    {
+        var dbPath = TempDbPath();
+        Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", dbPath);
+
+        try
+        {
+            await using var factory = new WebApplicationFactory<ManagementProgram>();
+            using var client = factory.CreateClient();
+
+            using var response = await client.GetAsync("/api/audit/events?pageSize=8");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+            var root = payload.RootElement;
+
+            Assert.Equal(0, root.GetProperty("totalCount").GetInt64());
+            Assert.Equal(8, root.GetProperty("pageSize").GetInt32());
+            Assert.Empty(root.GetProperty("items").EnumerateArray());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
+        }
+    }
+
+    [Fact]
     public async Task AuditEventsEndpointAppliesFiltersAndPagination()
     {
         var dbPath = TempDbPath();
