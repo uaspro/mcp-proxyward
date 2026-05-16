@@ -85,7 +85,7 @@ public class ProxyControlEndpointTests
     {
         const string expectedToken = "test-control-token";
         const string suppliedToken = "wrong-token";
-        var databasePath = Path.Combine(Path.GetTempPath(), $"proxyward-control-auth-{Guid.NewGuid():N}.db");
+        var databasePath = TestFiles.NewSqlitePath("proxyward-control-auth");
         await new SqlitePolicyStore(databasePath).SaveAsync(ValidYaml);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", databasePath);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", "true");
@@ -702,6 +702,7 @@ public class ProxyControlEndpointTests
 
     private static void ClearProxyWardEnvironment()
     {
+        TestFiles.DeleteTempSqlite(Environment.GetEnvironmentVariable("PROXYWARD_DB_PATH"));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", null);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_ENABLED", null);
         Environment.SetEnvironmentVariable("PROXYWARD_CONTROL_TOKEN", null);

@@ -4,6 +4,7 @@ internal sealed class TestEnvironment : IDisposable
 {
     private readonly Dictionary<string, string?> _originalValues = new(StringComparer.Ordinal);
     private readonly Stack<string> _changedNames = new();
+    private readonly Stack<string> _tempSqlitePaths = new();
 
     private TestEnvironment()
     {
@@ -19,6 +20,12 @@ internal sealed class TestEnvironment : IDisposable
             _changedNames.Push(name);
         }
 
+        if (string.Equals(name, "PROXYWARD_DB_PATH", StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(value))
+        {
+            TestFiles.TrackTempSqlite(value);
+            _tempSqlitePaths.Push(value);
+        }
+
         Environment.SetEnvironmentVariable(name, value);
         return this;
     }
@@ -28,6 +35,11 @@ internal sealed class TestEnvironment : IDisposable
         while (_changedNames.TryPop(out var name))
         {
             Environment.SetEnvironmentVariable(name, _originalValues[name]);
+        }
+
+        while (_tempSqlitePaths.TryPop(out var path))
+        {
+            TestFiles.DeleteTempSqlite(path);
         }
     }
 }

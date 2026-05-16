@@ -196,7 +196,7 @@ public class ManagementAuditEventExportEndpointTests
             BatchSize: 0);
 
     private static string TempDbPath() =>
-        Path.Combine(Path.GetTempPath(), $"proxyward-management-audit-export-{Guid.NewGuid():N}.db");
+        TestFiles.NewSqlitePath("proxyward-management-audit-export");
 
     private static readonly DateTimeOffset Timestamp = new(2026, 5, 6, 10, 0, 0, TimeSpan.Zero);
 }

@@ -14,7 +14,7 @@ public class ManagementApiHostTests
     [Fact]
     public async Task StatusEndpointReturnsConfiguredManagementMetadata()
     {
-        var persistenceDbPath = Path.Combine(Path.GetTempPath(), $"proxyward-management-{Guid.NewGuid():N}.db");
+        var persistenceDbPath = TestFiles.NewSqlitePath("proxyward-management");
         await EnsurePersistenceDbExistsAsync(persistenceDbPath);
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", persistenceDbPath);
         Environment.SetEnvironmentVariable("PROXYWARD_PROXY_CONTROL_URL", "http://127.0.0.1:8089");

@@ -96,7 +96,7 @@ public class ManagementAuditEventRepositoryTests
     }
 
     private static string TempDbPath() =>
-        Path.Combine(Path.GetTempPath(), $"proxyward-management-audit-{Guid.NewGuid():N}.db");
+        TestFiles.NewSqlitePath("proxyward-management-audit");
 
     private static AuditEvent CreateEvent(
         long index,

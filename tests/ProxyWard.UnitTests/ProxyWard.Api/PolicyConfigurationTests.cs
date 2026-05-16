@@ -95,7 +95,7 @@ public class PolicyConfigurationTests
     [Fact]
     public async Task SqlitePolicyStoreNormalizesLegacyStoredSnapshotHash()
     {
-        var dbPath = Path.Combine(Path.GetTempPath(), $"proxyward-policy-{Guid.NewGuid():N}.db");
+        var dbPath = TestSqliteFiles.NewPath("proxyward-policy");
         try
         {
             var store = new SqlitePolicyStore(dbPath);
@@ -157,14 +157,7 @@ public class PolicyConfigurationTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            foreach (var path in new[] { dbPath, dbPath + "-wal", dbPath + "-shm" })
-            {
-                if (File.Exists(path))
-                {
-                    File.Delete(path);
-                }
-            }
+            TestSqliteFiles.Delete(dbPath);
         }
     }
 

@@ -123,25 +123,13 @@ public class ObservabilityExportIntegrationTests
 
     private static string WriteTempPolicy(string yaml)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"proxyward-export-{Guid.NewGuid():N}.yaml");
+        var path = TestFiles.NewSqlitePath("proxyward-export");
         new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
     }
 
-    private static void DeleteIfExists(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch
-        {
-            // Best-effort cleanup; Windows can briefly hold temp files after host disposal.
-        }
-    }
+    private static void DeleteIfExists(string path) =>
+        TestFiles.DeleteSqlite(path);
 
     private static string CreatePolicy(string upstreamBaseAddress, string exporterOptions) =>
         $$"""

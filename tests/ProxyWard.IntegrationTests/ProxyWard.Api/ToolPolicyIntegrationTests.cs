@@ -651,7 +651,7 @@ public class ToolPolicyIntegrationTests
     private static string WriteTempPolicy(string yaml)
     {
         var path = NextPolicyDatabasePath.Value
-            ?? Path.Combine(Path.GetTempPath(), $"proxyward-{Guid.NewGuid():N}.db");
+            ?? TestFiles.NewSqlitePath();
         NextPolicyDatabasePath.Value = null;
         new ProxyWard.Policy.Persistence.SqlitePolicyStore(path).SaveAsync(yaml).GetAwaiter().GetResult();
         return path;
@@ -659,25 +659,13 @@ public class ToolPolicyIntegrationTests
 
     private static string NewTempSqlitePath()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"proxyward-audit-{Guid.NewGuid():N}.db");
+        var path = TestFiles.NewSqlitePath("proxyward-audit");
         NextPolicyDatabasePath.Value = path;
         return path;
     }
 
-    private static void DeleteIfExists(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch
-        {
-            // Best-effort cleanup; SQLite shared cache may delay file release on Windows.
-        }
-    }
+    private static void DeleteIfExists(string path) =>
+        TestFiles.DeleteSqlite(path);
 
     private static string CreatePolicy(
         string mode,

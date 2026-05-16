@@ -6,34 +6,13 @@ namespace ProxyWard.UnitTests;
 
 public class SqliteTrackedToolSchemaStoreTests : IAsyncLifetime
 {
-    private readonly string _databasePath = Path.Combine(
-        Path.GetTempPath(),
-        $"proxyward-schema-{Guid.NewGuid():N}.db");
+    private readonly string _databasePath = TestSqliteFiles.NewPath("proxyward-schema");
 
     public Task InitializeAsync() => Task.CompletedTask;
 
     public Task DisposeAsync()
     {
-        foreach (var path in new[]
-        {
-            _databasePath,
-            $"{_databasePath}-shm",
-            $"{_databasePath}-wal"
-        })
-        {
-            if (File.Exists(path))
-            {
-                try
-                {
-                    File.Delete(path);
-                }
-                catch
-                {
-                    // Best-effort cleanup; SQLite may still hold the file briefly.
-                }
-            }
-        }
-
+        TestSqliteFiles.Delete(_databasePath);
         return Task.CompletedTask;
     }
 

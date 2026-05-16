@@ -533,7 +533,7 @@ public class ManagementOverviewEndpointTests
     }
 
     private static string TempDbPath() =>
-        Path.Combine(Path.GetTempPath(), $"proxyward-management-overview-{Guid.NewGuid():N}.db");
+        TestFiles.NewSqlitePath("proxyward-management-overview");
 
     private static string IsoZ(DateTimeOffset dt) =>
         Uri.EscapeDataString(dt.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", CultureInfo.InvariantCulture));

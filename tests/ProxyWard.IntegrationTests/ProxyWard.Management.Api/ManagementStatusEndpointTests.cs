@@ -127,7 +127,7 @@ public class ManagementStatusEndpointTests
     [Fact]
     public async Task StatusEndpointReturnsUnhealthyWhenPersistenceDbIsMissing()
     {
-        var dbPath = Path.Combine(Path.GetTempPath(), $"proxyward-management-status-missing-{Guid.NewGuid():N}.db");
+        var dbPath = TestFiles.NewSqlitePath("proxyward-management-status-missing");
         // Do NOT create the file — persistenceDb probe should fail.
         Environment.SetEnvironmentVariable(PersistenceDbEnv, dbPath);
         Environment.SetEnvironmentVariable(ProxyControlTokenEnv, "test-token");
@@ -270,7 +270,7 @@ public class ManagementStatusEndpointTests
     }
 
     private static string TempDbPath() =>
-        Path.Combine(Path.GetTempPath(), $"proxyward-management-status-{Guid.NewGuid():N}.db");
+        TestFiles.NewSqlitePath("proxyward-management-status");
 
     private sealed class StubProxyControlClient : IProxyControlClient
     {
