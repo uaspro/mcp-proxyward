@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using Microsoft.Net.Http.Headers;
 using ProxyWard.Management.Application.Audit;
 
 namespace ProxyWard.Management.Api.Controllers;
@@ -102,7 +103,7 @@ public sealed class ManagementAuditController : ControllerBase
             $"attachment; filename=\"{AuditExportFileName}\"";
         Response.Headers.CacheControl = "no-store";
         Response.Headers.Pragma = "no-cache";
-        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        Response.Headers[HeaderNames.XContentTypeOptions] = "nosniff";
         HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
 
         var serializerOptions = new JsonSerializerOptions(_jsonOptions.Value.SerializerOptions)

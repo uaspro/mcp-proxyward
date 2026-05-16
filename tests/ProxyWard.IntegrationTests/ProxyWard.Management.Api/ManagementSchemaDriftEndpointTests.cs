@@ -242,7 +242,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 
             using var response = await client.PostAsync(
                 $"/api/schema/drifts/{review.Row.Id}/approve",
-                new StringContent("""{"reviewedBy":"alice"}""", Encoding.UTF8, "application/json"));
+                new StringContent("""{"reviewedBy":"alice"}""", Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
             Assert.Equal("pending", await ReadReviewStatusAsync(review.Row.Id));
@@ -275,7 +275,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 
             using var response = await client.PostAsync(
                 $"/api/schema/drifts/{review.Row.Id}/{action}",
-                new StringContent("""{"reviewedBy":"alice","reviewNote":"reviewed"}""", Encoding.UTF8, "application/json"));
+                new StringContent("""{"reviewedBy":"alice","reviewNote":"reviewed"}""", Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -330,7 +330,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 
             using var response = await client.PostAsync(
                 "/api/schema/drifts/9999/block",
-                new StringContent("{}", Encoding.UTF8, "application/json"));
+                new StringContent("{}", Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         }
@@ -357,7 +357,7 @@ public class ManagementSchemaDriftEndpointTests : IAsyncLifetime
 
             using var response = await client.PostAsync(
                 "/api/schema/drifts/9999/block",
-                new StringContent("{}", Encoding.UTF8, "application/json"));
+                new StringContent("{}", Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         }

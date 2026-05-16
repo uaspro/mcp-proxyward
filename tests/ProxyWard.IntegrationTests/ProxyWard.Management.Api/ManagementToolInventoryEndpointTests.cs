@@ -386,13 +386,13 @@ public class ManagementToolInventoryEndpointTests : IAsyncLifetime
                 return;
             }
 
-            if (!context.Request.Headers.Accept.ToString().Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))
+            if (!context.Request.Headers.Accept.ToString().Contains(MediaTypeNames.Text.EventStream, StringComparison.OrdinalIgnoreCase))
             {
                 context.Response.StatusCode = StatusCodes.Status406NotAcceptable;
                 return;
             }
 
-            context.Response.ContentType = "text/event-stream";
+            context.Response.ContentType = MediaTypeNames.Text.EventStream;
             await context.Response.WriteAsync(CreateHuggingFaceStyleEventStream()).ConfigureAwait(false);
         });
 

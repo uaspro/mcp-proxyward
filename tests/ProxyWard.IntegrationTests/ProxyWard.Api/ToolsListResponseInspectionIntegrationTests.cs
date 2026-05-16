@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Net.Http.Headers;
 using ProxyWard.Api.Observability;
 using ProxyWard.Core.Policies;
 using ProxyWard.Locking.Persistence;
@@ -30,7 +31,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -42,7 +43,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -74,7 +75,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var policyYaml = CreatePolicyWithHiddenTools(
             "enforce",
@@ -94,7 +95,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadAsStringAsync();
@@ -125,7 +126,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(context => WriteCompressedResponseAsync(context, responseBody, "application/json", "gzip"));
+        await using var upstream = await StartUpstreamAsync(context => WriteCompressedResponseAsync(context, responseBody, MediaTypeNames.Application.Json, "gzip"));
         var dbPath = NewTempSqlitePath();
         var policyYaml = CreatePolicyWithHiddenTools(
             "enforce",
@@ -144,7 +145,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(["gzip"], response.Content.Headers.ContentEncoding.ToArray());
@@ -180,7 +181,7 @@ public class ToolsListResponseInspectionIntegrationTests
             data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}}]}}
 
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Text.EventStream, setLength: false));
         var dbPath = NewTempSqlitePath();
         var policyYaml = CreatePolicyWithHiddenTools(
             "enforce",
@@ -199,10 +200,10 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
+            Assert.Equal(MediaTypeNames.Text.EventStream, response.Content.Headers.ContentType?.MediaType);
             var body = await response.Content.ReadAsStringAsync();
             Assert.Contains("event: endpoint", body, StringComparison.Ordinal);
             Assert.Contains("issues.list", body, StringComparison.Ordinal);
@@ -225,7 +226,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}},{"name":"repos.delete","description":"Delete repository","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var policyYaml = CreatePolicyWithToolDefault(
             "enforce",
@@ -246,7 +247,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadAsStringAsync();
@@ -278,7 +279,7 @@ public class ToolsListResponseInspectionIntegrationTests
             data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}},{"name":"repos.delete","description":"Delete repository","inputSchema":{"type":"object"}}]}}
 
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Text.EventStream, setLength: false));
         var dbPath = NewTempSqlitePath();
         var policyYaml = CreatePolicyWithToolDefault(
             "enforce",
@@ -299,10 +300,10 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
+            Assert.Equal(MediaTypeNames.Text.EventStream, response.Content.Headers.ContentType?.MediaType);
             var body = await response.Content.ReadAsStringAsync();
             Assert.DoesNotContain("repos.search", body, StringComparison.Ordinal);
             Assert.Contains("issues.list", body, StringComparison.Ordinal);
@@ -327,7 +328,7 @@ public class ToolsListResponseInspectionIntegrationTests
             data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Find repositories","inputSchema":{"type":"object"}},{"name":"issues.list","description":"List issues","inputSchema":{"type":"object"}}]}}
 
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Text.EventStream, setLength: false));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 4096, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -339,7 +340,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -370,7 +371,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Find repositories","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -391,7 +392,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
@@ -413,7 +414,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"hf.whoami","title":"Hugging Face User Info","description":"Show user info","inputSchema":{"type":"object"}},{"name":"space.search","title":"Space Search","description":"Find spaces","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(context => WriteCompressedResponseAsync(context, responseBody, "application/json", "gzip"));
+        await using var upstream = await StartUpstreamAsync(context => WriteCompressedResponseAsync(context, responseBody, MediaTypeNames.Application.Json, "gzip"));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -425,7 +426,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
@@ -465,7 +466,7 @@ public class ToolsListResponseInspectionIntegrationTests
             $"data: {{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"tools\":[{toolJson}]}}}}",
             ""
         ]);
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Text.EventStream, setLength: false));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 8192, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -477,7 +478,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -509,7 +510,7 @@ public class ToolsListResponseInspectionIntegrationTests
             data: /mcp/messages?sessionId=huggingface-co
 
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Text.EventStream, setLength: false));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -521,7 +522,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -564,7 +565,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             Assert.Equal(string.Empty, await response.Content.ReadAsStringAsync());
@@ -592,7 +593,7 @@ public class ToolsListResponseInspectionIntegrationTests
         var responseBody = "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\""
             + new string('x', 2048)
             + "\"}]}}\n\n";
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "text/event-stream", setLength: false));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Text.EventStream, setLength: false));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 512, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -604,7 +605,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
             var body = await response.Content.ReadAsStringAsync();
@@ -629,7 +630,7 @@ public class ToolsListResponseInspectionIntegrationTests
         var responseBody = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\""
             + new string('x', 2048)
             + "\"}]}}";
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 128, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -641,7 +642,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
             var body = await response.Content.ReadAsStringAsync();
@@ -666,7 +667,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"New description","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         await SeedSchemaVersionAsync(
             dbPath,
@@ -683,7 +684,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -743,7 +744,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}},{"name":"issues.list","title":"Issues","description":"List issues","inputSchema":{"type":"object","properties":{"state":{"type":"string"}}}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         await SeedSchemaVersionAsync(
             dbPath,
@@ -768,7 +769,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadAsStringAsync();
@@ -829,7 +830,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         await SeedReviewedCurrentSchemaAsync(dbPath, "github", $"{upstream.BaseAddress}/mcp", status: "approved");
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
@@ -842,7 +843,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -867,7 +868,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}},{"name":"issues.list","title":"Issues","description":"List issues","inputSchema":{"type":"object","properties":{"state":{"type":"string"}}}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var review = await SeedReviewedCurrentSchemaAsync(
             dbPath,
@@ -885,7 +886,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadAsStringAsync();
@@ -926,7 +927,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         await SeedSchemaVersionAsync(
             dbPath,
@@ -950,7 +951,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -978,7 +979,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"New description","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         await SeedSchemaVersionAsync(
             dbPath,
@@ -995,10 +996,10 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var first = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
             using var second = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, first.StatusCode);
             Assert.Equal(HttpStatusCode.OK, second.StatusCode);
@@ -1022,7 +1023,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"New description","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         await SeedSchemaVersionAsync(
             dbPath,
@@ -1048,7 +1049,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -1076,7 +1077,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -1088,7 +1089,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -1116,7 +1117,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy(mode, "warn", 4096, upstream.BaseAddress, dbPath));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -1137,7 +1138,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -1163,7 +1164,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
 
         await RunToolsListOnceAsync(
@@ -1187,7 +1188,7 @@ public class ToolsListResponseInspectionIntegrationTests
         const string responseBody = """
             {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"repos.search","title":"Search","description":"Description","inputSchema":{"type":"object"}}]}}
             """;
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
 
         await RunToolsListOnceAsync(
@@ -1251,7 +1252,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
         var compressedBytes = compressed.ToArray();
         context.Response.ContentType = contentType;
-        context.Response.Headers["Content-Encoding"] = contentEncoding;
+        context.Response.Headers[HeaderNames.ContentEncoding] = contentEncoding;
         context.Response.ContentLength = compressedBytes.Length;
         await context.Response.Body.WriteAsync(compressedBytes);
     }
@@ -1459,7 +1460,7 @@ public class ToolsListResponseInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 route,
-                new StringContent(ToolsListRequest, Encoding.UTF8, "application/json"));
+                new StringContent(ToolsListRequest, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }

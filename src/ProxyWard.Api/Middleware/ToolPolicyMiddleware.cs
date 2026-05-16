@@ -320,7 +320,7 @@ public sealed class ToolPolicyMiddleware(
         if (responses.Count > 0)
         {
             context.Response.StatusCode = StatusCodes.Status200OK;
-            context.Response.ContentType = "application/json";
+            context.Response.ContentType = MediaTypeNames.Application.Json;
             await context.Response.WriteAsync(responses.ToJsonString(), context.RequestAborted);
             return;
         }
@@ -366,7 +366,7 @@ public sealed class ToolPolicyMiddleware(
             toolName: null);
 
         context.Response.StatusCode = StatusCodes.Status200OK;
-        context.Response.ContentType = "application/json";
+        context.Response.ContentType = MediaTypeNames.Application.Json;
         await context.Response.WriteAsync(response.ToJsonString(), context.RequestAborted);
     }
 

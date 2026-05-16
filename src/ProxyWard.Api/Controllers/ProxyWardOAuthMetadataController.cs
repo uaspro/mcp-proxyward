@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Net.Http.Headers;
 using ProxyWard.Api.OAuth;
 using ProxyWard.Policy.Configuration;
 using ProxyWard.Proxy.Application.Runtime;
@@ -72,9 +73,9 @@ public sealed class ProxyWardOAuthMetadataController : ControllerBase
             Request.QueryString);
         using var upstreamRequest = new HttpRequestMessage(HttpMethod.Get, upstreamMetadataUri);
 
-        if (Request.Headers.TryGetValue("Accept", out var accept))
+        if (Request.Headers.TryGetValue(HeaderNames.Accept, out var accept))
         {
-            upstreamRequest.Headers.TryAddWithoutValidation("Accept", accept.ToArray());
+            upstreamRequest.Headers.TryAddWithoutValidation(HeaderNames.Accept, accept.ToArray());
         }
 
         using var response = await httpClientFactory
@@ -83,7 +84,7 @@ public sealed class ProxyWardOAuthMetadataController : ControllerBase
             .ConfigureAwait(false);
 
         var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
+        var contentType = response.Content.Headers.ContentType?.ToString() ?? MediaTypeNames.Application.Json;
         if (!response.IsSuccessStatusCode)
         {
             return new ContentResult
@@ -117,7 +118,7 @@ public sealed class ProxyWardOAuthMetadataController : ControllerBase
         return new ContentResult
         {
             Content = metadata?.ToJsonString(JsonOptions) ?? "{}",
-            ContentType = "application/json",
+            ContentType = MediaTypeNames.Application.Json,
             StatusCode = (int)response.StatusCode
         };
     }

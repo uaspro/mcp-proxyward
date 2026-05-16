@@ -7,7 +7,7 @@ namespace ProxyWard.PerformanceTests;
 
 internal static class PerformanceRunner
 {
-    private static readonly MediaTypeHeaderValue JsonMediaType = new("application/json");
+    private static readonly MediaTypeHeaderValue JsonMediaType = new(MediaTypeNames.Application.Json);
 
     public static void RunScenario(
         string scenarioName,

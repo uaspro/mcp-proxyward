@@ -7,8 +7,8 @@ namespace ProxyWard.Api.Middleware;
 
 internal static class ToolsListResponseFilter
 {
-    private const string JsonContentType = "application/json";
-    private const string EventStreamContentType = "text/event-stream";
+    private const string JsonContentType = MediaTypeNames.Application.Json;
+    private const string EventStreamContentType = MediaTypeNames.Text.EventStream;
 
     public static HashSet<string> CreateToolNameSet(IEnumerable<string?> toolNames)
     {
@@ -231,6 +231,6 @@ internal static class ToolsListResponseFilter
             ? contentType[..delimiterIndex]
             : contentType;
 
-        return string.Equals(mediaType.Trim(), "text/event-stream", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(mediaType.Trim(), MediaTypeNames.Text.EventStream, StringComparison.OrdinalIgnoreCase);
     }
 }

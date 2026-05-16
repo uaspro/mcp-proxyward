@@ -62,7 +62,7 @@ public class ToolDefinitionExtractorTests
 
             """);
 
-        var result = extractor.Extract(body, "text/event-stream; charset=utf-8");
+        var result = extractor.Extract(body, MediaTypeNames.Text.EventStream + "; charset=utf-8");
 
         Assert.True(result.Success);
         var tool = Assert.Single(result.Tools);
@@ -75,7 +75,7 @@ public class ToolDefinitionExtractorTests
     {
         var extractor = new ToolDefinitionExtractor();
 
-        var result = extractor.Extract(Encoding.UTF8.GetBytes("   "), "application/json");
+        var result = extractor.Extract(Encoding.UTF8.GetBytes("   "), MediaTypeNames.Application.Json);
 
         Assert.False(result.Success);
         Assert.True(result.Skipped);
@@ -93,7 +93,7 @@ public class ToolDefinitionExtractorTests
 
             """);
 
-        var result = extractor.Extract(body, "text/event-stream");
+        var result = extractor.Extract(body, MediaTypeNames.Text.EventStream);
 
         Assert.False(result.Success);
         Assert.True(result.Skipped);

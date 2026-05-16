@@ -116,7 +116,7 @@ internal static class SyntheticUpstreamHost
         }
 
         var compressedBytes = compressed.ToArray();
-        context.Response.ContentType = "application/json";
+        context.Response.ContentType = MediaTypeNames.Application.Json;
         context.Response.Headers.ContentEncoding = "gzip";
         context.Response.ContentLength = compressedBytes.Length;
         await context.Response.Body.WriteAsync(compressedBytes, context.RequestAborted).ConfigureAwait(false);

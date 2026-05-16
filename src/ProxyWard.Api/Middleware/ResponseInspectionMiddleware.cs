@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Net.Http.Headers;
 using ProxyWard.Api.Observability;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Redaction;
@@ -138,7 +139,7 @@ public sealed class ResponseInspectionMiddleware(
             result = ExtractToolsListResponse(
                 body,
                 context.Response.ContentType,
-                context.Response.Headers["Content-Encoding"].ToString(),
+                context.Response.Headers[HeaderNames.ContentEncoding].ToString(),
                 policy.Inspection.MaxBodyBytes);
             if (result.Skipped)
             {
@@ -266,7 +267,7 @@ public sealed class ResponseInspectionMiddleware(
                 if (ToolsListResponseFilter.TryCreateFilteredResponse(
                     body,
                     context.Response.ContentType,
-                    context.Response.Headers["Content-Encoding"].ToString(),
+                    context.Response.Headers[HeaderNames.ContentEncoding].ToString(),
                     policy.Inspection.MaxBodyBytes,
                     removedToolNames,
                     out var filteredBody))
@@ -338,7 +339,7 @@ public sealed class ResponseInspectionMiddleware(
                 if (ToolsListResponseFilter.TryCreateFilteredResponse(
                     body,
                     context.Response.ContentType,
-                    context.Response.Headers["Content-Encoding"].ToString(),
+                    context.Response.Headers[HeaderNames.ContentEncoding].ToString(),
                     policy.Inspection.MaxBodyBytes,
                     removedToolNames,
                     out var filteredBody))
@@ -932,7 +933,7 @@ public sealed class ResponseInspectionMiddleware(
                 "MCP ProxyWard blocked this tool response");
 
             context.Response.StatusCode = StatusCodes.Status200OK;
-            context.Response.ContentType = "application/json";
+            context.Response.ContentType = MediaTypeNames.Application.Json;
             await context.Response.WriteAsync(response.ToJsonString(), context.RequestAborted);
             return;
         }

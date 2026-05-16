@@ -259,8 +259,8 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
     private static HttpRequestMessage CreateJsonRpcRequest(Uri upstream, object payload, string? sessionId)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, upstream);
-        request.Headers.Accept.ParseAdd("application/json");
-        request.Headers.Accept.ParseAdd("text/event-stream");
+        request.Headers.Accept.ParseAdd(MediaTypeNames.Application.Json);
+        request.Headers.Accept.ParseAdd(MediaTypeNames.Text.EventStream);
         request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", DefaultMcpProtocol);
         if (!string.IsNullOrWhiteSpace(sessionId))
         {
@@ -270,7 +270,7 @@ public sealed class ManagementToolDiscoveryService : IManagementToolDiscoverySer
         request.Content = new StringContent(
             JsonSerializer.Serialize(payload, JsonOptions),
             Encoding.UTF8,
-            "application/json");
+            MediaTypeNames.Application.Json);
         return request;
     }
 

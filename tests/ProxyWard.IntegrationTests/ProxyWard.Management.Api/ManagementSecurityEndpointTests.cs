@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Net.Http.Headers;
 using ProxyWard.Management.Application.Status;
 using ManagementProgram = ProxyWard.Management.Api.Program;
 
@@ -113,9 +114,9 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
         await using var factory = CreateFactory(new StubProxyControlClient());
         using var client = factory.CreateClient();
 
-        using var response = await client.SendAsync(CreatePreflight("https://evil.example", "PATCH"));
+        using var response = await client.SendAsync(CreatePreflight("https://evil.example", HttpMethod.Patch.Method));
 
-        Assert.False(response.Headers.Contains("Access-Control-Allow-Origin"));
+        Assert.False(response.Headers.Contains(HeaderNames.AccessControlAllowOrigin));
     }
 
     [Fact]
@@ -126,17 +127,17 @@ public class ManagementSecurityEndpointTests : IAsyncLifetime
         await using var factory = CreateFactory(new StubProxyControlClient());
         using var client = factory.CreateClient();
 
-        using var response = await client.SendAsync(CreatePreflight("http://localhost:5173", "PATCH"));
+        using var response = await client.SendAsync(CreatePreflight("http://localhost:5173", HttpMethod.Patch.Method));
 
-        Assert.True(response.Headers.TryGetValues("Access-Control-Allow-Origin", out var origins));
+        Assert.True(response.Headers.TryGetValues(HeaderNames.AccessControlAllowOrigin, out var origins));
         Assert.Equal("http://localhost:5173", Assert.Single(origins));
     }
 
     private static HttpRequestMessage CreatePreflight(string origin, string method)
     {
         var request = new HttpRequestMessage(HttpMethod.Options, "/api/policy/mode");
-        request.Headers.TryAddWithoutValidation("Origin", origin);
-        request.Headers.TryAddWithoutValidation("Access-Control-Request-Method", method);
+        request.Headers.TryAddWithoutValidation(HeaderNames.Origin, origin);
+        request.Headers.TryAddWithoutValidation(HeaderNames.AccessControlRequestMethod, method);
         return request;
     }
 

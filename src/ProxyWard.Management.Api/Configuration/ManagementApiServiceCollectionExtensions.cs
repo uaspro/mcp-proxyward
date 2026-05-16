@@ -67,7 +67,12 @@ internal static class ManagementApiServiceCollectionExtensions
                 }
 
                 policy
-                    .WithMethods("GET", "POST", "PUT", "PATCH", "OPTIONS")
+                    .WithMethods(
+                        HttpMethods.Get,
+                        HttpMethods.Post,
+                        HttpMethods.Put,
+                        HttpMethods.Patch,
+                        HttpMethods.Options)
                     .WithHeaders(HeaderNames.Accept, HeaderNames.Authorization, HeaderNames.ContentType)
                     .SetPreflightMaxAge(TimeSpan.FromHours(1));
             });

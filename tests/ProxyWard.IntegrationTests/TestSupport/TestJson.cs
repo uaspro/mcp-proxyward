@@ -7,7 +7,7 @@ namespace ProxyWard.IntegrationTests;
 internal static class TestJson
 {
     public static StringContent Content(string json) =>
-        new(json, Encoding.UTF8, "application/json");
+        new(json, Encoding.UTF8, MediaTypeNames.Application.Json);
 
     public static async Task<JsonDocument> ReadAsync(HttpResponseMessage response)
     {

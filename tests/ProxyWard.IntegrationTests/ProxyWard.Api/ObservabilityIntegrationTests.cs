@@ -41,7 +41,7 @@ public class ObservabilityIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, upstream.RequestCount);
@@ -107,7 +107,7 @@ public class ObservabilityIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent("plain text", Encoding.UTF8, "text/plain"));
+                new StringContent("plain text", Encoding.UTF8, MediaTypeNames.Text.Plain));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, upstream.RequestCount);
@@ -174,7 +174,7 @@ public class ObservabilityIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(0, upstream.RequestCount);
@@ -261,7 +261,7 @@ public class ObservabilityIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, upstream.RequestCount);
@@ -316,7 +316,7 @@ public class ObservabilityIntegrationTests
 
                 using var response = await client.PostAsync(
                     "/github/mcp",
-                    new StringContent("""{"jsonrpc":"2.0","id":701,"method":"tools/call","params":{"name":"shell.exec","arguments":{"command":"echo safe"}}}""", Encoding.UTF8, "application/json"));
+                    new StringContent("""{"jsonrpc":"2.0","id":701,"method":"tools/call","params":{"name":"shell.exec","arguments":{"command":"echo safe"}}}""", Encoding.UTF8, MediaTypeNames.Application.Json));
 
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                 Assert.Equal(0, upstream.RequestCount);
@@ -347,7 +347,7 @@ public class ObservabilityIntegrationTests
 
                 using var response = await client.PostAsync(
                     "/github/mcp",
-                    new StringContent("""{"jsonrpc":"2.0","id":702,"method":"tools/call","params":{"name":"shell.exec","arguments":{"command":"echo safe"}}}""", Encoding.UTF8, "application/json"));
+                    new StringContent("""{"jsonrpc":"2.0","id":702,"method":"tools/call","params":{"name":"shell.exec","arguments":{"command":"echo safe"}}}""", Encoding.UTF8, MediaTypeNames.Application.Json));
 
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                 Assert.Equal(1, upstream.RequestCount);
@@ -397,7 +397,7 @@ public class ObservabilityIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""", Encoding.UTF8, "application/json"));
+                new StringContent("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""", Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, upstream.RequestCount);
@@ -453,7 +453,7 @@ public class ObservabilityIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""", Encoding.UTF8, "application/json"));
+                new StringContent("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""", Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
@@ -475,7 +475,7 @@ public class ObservabilityIntegrationTests
     private static async Task WriteResponseAsync(
         HttpContext context,
         string body,
-        string contentType = "application/json")
+        string contentType = MediaTypeNames.Application.Json)
     {
         var bytes = Encoding.UTF8.GetBytes(body);
         context.Response.ContentType = contentType;

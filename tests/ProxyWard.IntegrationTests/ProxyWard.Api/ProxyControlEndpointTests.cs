@@ -297,7 +297,7 @@ public class ProxyControlEndpointTests
 
             using var applyResponse = await client.PatchAsync(
                 "/control/mode",
-                new StringContent("""{"mode":"enforce"}""", Encoding.UTF8, "application/json"));
+                new StringContent("""{"mode":"enforce"}""", Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, applyResponse.StatusCode);
 
@@ -340,7 +340,7 @@ public class ProxyControlEndpointTests
 
             using var applyResponse = await client.PatchAsync(
                 "/control/mode",
-                new StringContent("""{"mode":"observe"}""", Encoding.UTF8, "application/json"));
+                new StringContent("""{"mode":"observe"}""", Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.BadRequest, applyResponse.StatusCode);
 
@@ -379,7 +379,7 @@ public class ProxyControlEndpointTests
                 new StringContent(
                     CreateYarpConfigJson("dynamic", "/dynamic/mcp", $"{upstream.BaseAddress}/mcp"),
                     Encoding.UTF8,
-                    "application/json"));
+                    MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, applyResponse.StatusCode);
 
@@ -424,7 +424,7 @@ public class ProxyControlEndpointTests
                 new StringContent(
                     CreateYarpConfigJsonWithQueryTransforms("dynamic", "/dynamic/mcp", $"{upstream.BaseAddress}/mcp"),
                     Encoding.UTF8,
-                    "application/json"));
+                    MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, applyResponse.StatusCode);
 
@@ -467,7 +467,7 @@ public class ProxyControlEndpointTests
 
             using var applyResponse = await client.PutAsync(
                 "/control/yarp-config",
-                new StringContent("""{"routes":[],"clusters":[]}""", Encoding.UTF8, "application/json"));
+                new StringContent("""{"routes":[],"clusters":[]}""", Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, applyResponse.StatusCode);
 
@@ -513,7 +513,7 @@ public class ProxyControlEndpointTests
                     }
                     """,
                     Encoding.UTF8,
-                    "application/json"));
+                    MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.BadRequest, applyResponse.StatusCode);
 
@@ -571,7 +571,7 @@ public class ProxyControlEndpointTests
                     }
                     """,
                     Encoding.UTF8,
-                    "application/json"));
+                    MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.BadRequest, applyResponse.StatusCode);
 

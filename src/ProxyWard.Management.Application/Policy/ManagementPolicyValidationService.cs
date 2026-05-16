@@ -196,7 +196,7 @@ public sealed class ManagementPolicyValidationService
         return string.Equals(mediaType, "application/x-yaml", StringComparison.OrdinalIgnoreCase)
             || string.Equals(mediaType, "application/yaml", StringComparison.OrdinalIgnoreCase)
             || string.Equals(mediaType, "text/yaml", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(mediaType, "text/plain", StringComparison.OrdinalIgnoreCase);
+            || string.Equals(mediaType, MediaTypeNames.Text.Plain, StringComparison.OrdinalIgnoreCase);
     }
 
     private ManagementPolicyValidationError MapPolicyError(string message) =>

@@ -25,7 +25,7 @@ public class McpMessageParserTests
             }
             """);
 
-        var result = parser.Parse(body, "application/json; charset=utf-8");
+        var result = parser.Parse(body, MediaTypeNames.Application.Json + "; charset=utf-8");
 
         Assert.Equal(JsonRpcParseStatus.Parsed, result.Status);
         Assert.False(result.IsBatch);
@@ -51,7 +51,7 @@ public class McpMessageParserTests
             ]
             """);
 
-        var result = parser.Parse(body, "application/json");
+        var result = parser.Parse(body, MediaTypeNames.Application.Json);
 
         Assert.Equal(JsonRpcParseStatus.Parsed, result.Status);
         Assert.True(result.IsBatch);
@@ -65,7 +65,7 @@ public class McpMessageParserTests
         var parser = new McpMessageParser();
         var body = Encoding.UTF8.GetBytes("""{ "jsonrpc": "2.0", "method": """);
 
-        var result = parser.Parse(body, "application/json");
+        var result = parser.Parse(body, MediaTypeNames.Application.Json);
 
         Assert.Equal(JsonRpcParseStatus.Malformed, result.Status);
         Assert.Empty(result.Messages);
@@ -78,7 +78,7 @@ public class McpMessageParserTests
         var parser = new McpMessageParser();
         var body = Encoding.UTF8.GetBytes("[]");
 
-        var result = parser.Parse(body, "application/json");
+        var result = parser.Parse(body, MediaTypeNames.Application.Json);
 
         Assert.Equal(JsonRpcParseStatus.Malformed, result.Status);
         Assert.Empty(result.Messages);
@@ -91,7 +91,7 @@ public class McpMessageParserTests
         var parser = new McpMessageParser();
         var body = Encoding.UTF8.GetBytes("""{ "jsonrpc": "2.0", "method": "tools/list" }""");
 
-        var result = parser.Parse(body, "text/plain");
+        var result = parser.Parse(body, MediaTypeNames.Text.Plain);
 
         Assert.Equal(JsonRpcParseStatus.UnsupportedContentType, result.Status);
         Assert.Empty(result.Messages);

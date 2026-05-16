@@ -34,7 +34,7 @@ public class AuditEventIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, upstream.RequestCount);
@@ -84,7 +84,7 @@ public class AuditEventIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, upstream.RequestCount);
@@ -145,7 +145,7 @@ public class AuditEventIntegrationTests
         Assert.Equal("enforce", blockRow.Mode);
         Assert.Equal("block", blockRow.Decision);
         Assert.Equal("github", blockRow.ServerId);
-        Assert.Equal("GET /github/mcp", blockRow.Method);
+        Assert.Equal($"{HttpMethod.Get.Method} /github/mcp", blockRow.Method);
         Assert.Null(blockRow.ToolName);
         Assert.Contains("server_not_allowed", blockRow.Reasons, StringComparison.Ordinal);
         Assert.False(string.IsNullOrEmpty(blockRow.PolicyVersion));

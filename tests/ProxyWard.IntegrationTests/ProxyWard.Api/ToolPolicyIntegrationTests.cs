@@ -35,7 +35,7 @@ public class ToolPolicyIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(0, upstream.RequestCount);
@@ -94,7 +94,7 @@ public class ToolPolicyIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, upstream.RequestCount);
@@ -137,7 +137,7 @@ public class ToolPolicyIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(0, upstream.RequestCount);
@@ -193,7 +193,7 @@ public class ToolPolicyIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(0, upstream.RequestCount);
@@ -241,7 +241,7 @@ public class ToolPolicyIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(0, upstream.RequestCount);
@@ -289,7 +289,7 @@ public class ToolPolicyIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(0, upstream.RequestCount);
@@ -339,7 +339,7 @@ public class ToolPolicyIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             Assert.Equal(0, upstream.RequestCount);
@@ -389,7 +389,7 @@ public class ToolPolicyIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, upstream.RequestCount);
@@ -453,7 +453,7 @@ public class ToolPolicyIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(0, upstream.RequestCount);
@@ -532,7 +532,7 @@ public class ToolPolicyIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, upstream.RequestCount);
@@ -595,7 +595,7 @@ public class ToolPolicyIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(body, Encoding.UTF8, "application/json"));
+                new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, upstream.RequestCount);

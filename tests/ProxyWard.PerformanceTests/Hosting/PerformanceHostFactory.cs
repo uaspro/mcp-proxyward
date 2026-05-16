@@ -79,7 +79,7 @@ internal static class PerformanceHostFactory
     {
         var bytes = Encoding.UTF8.GetBytes(json);
         context.Response.StatusCode = StatusCodes.Status200OK;
-        context.Response.ContentType = "application/json";
+        context.Response.ContentType = MediaTypeNames.Application.Json;
         context.Response.ContentLength = bytes.Length;
         await context.Response.Body.WriteAsync(bytes, context.RequestAborted).ConfigureAwait(false);
     }

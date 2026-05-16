@@ -24,14 +24,14 @@ public class RequestInspectionIntegrationTests
 
         using var response = await client.PostAsync(
             "/github/mcp",
-            new StringContent(body, Encoding.UTF8, "application/json"));
+            new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(1, upstream.RequestCount);
 
         using var payload = await TestJson.ReadAsync(response);
 
-        Assert.Equal("POST", payload.RootElement.GetProperty("method").GetString());
+        Assert.Equal(HttpMethod.Post.Method, payload.RootElement.GetProperty("method").GetString());
         Assert.Equal(body, payload.RootElement.GetProperty("body").GetString());
     }
 
@@ -47,7 +47,7 @@ public class RequestInspectionIntegrationTests
         await using var factory = new WebApplicationFactory<Program>();
         using var client = factory.CreateClient();
         using var content = new StreamContent(new NonSeekableMemoryStream(Encoding.UTF8.GetBytes(body)));
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        content.Headers.ContentType = new MediaTypeHeaderValue(MediaTypeNames.Application.Json);
 
         using var response = await client.PostAsync("/github/mcp", content);
 
@@ -79,7 +79,7 @@ public class RequestInspectionIntegrationTests
 
         using var response = await client.PostAsync(
             "/github/mcp",
-            new StringContent(body, Encoding.UTF8, "text/plain"));
+            new StringContent(body, Encoding.UTF8, MediaTypeNames.Text.Plain));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(1, upstream.RequestCount);
@@ -110,7 +110,7 @@ public class RequestInspectionIntegrationTests
 
         using var response = await client.PostAsync(
             "/github/mcp",
-            new StringContent(body, Encoding.UTF8, "application/json"));
+            new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
         Assert.Equal(0, upstream.RequestCount);
@@ -133,7 +133,7 @@ public class RequestInspectionIntegrationTests
 
         using var response = await client.PostAsync(
             "/unknown/mcp",
-            new StringContent(body, Encoding.UTF8, "application/json"));
+            new StringContent(body, Encoding.UTF8, MediaTypeNames.Application.Json));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         Assert.Equal(0, upstream.RequestCount);

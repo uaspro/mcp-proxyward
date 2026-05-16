@@ -1,3 +1,4 @@
+using Microsoft.Net.Http.Headers;
 using ProxyWard.Policy.Configuration;
 
 namespace ProxyWard.Api.Middleware;
@@ -24,7 +25,7 @@ internal static class ToolsListResponseWriter
         return ToolsListResponseFilter.TryCreateFilteredResponse(
             body,
             context.Response.ContentType,
-            context.Response.Headers["Content-Encoding"].ToString(),
+            context.Response.Headers[HeaderNames.ContentEncoding].ToString(),
             policy.Inspection.MaxBodyBytes,
             toolName => hiddenToolNames.Contains(toolName)
                 || (hideDefaultTools && !visibleToolNames.Contains(toolName)),
@@ -77,15 +78,15 @@ internal static class ToolsListResponseWriter
         context.Response.ContentLength = response.Body.Length;
         if (string.IsNullOrWhiteSpace(response.ContentEncoding))
         {
-            context.Response.Headers.Remove("Content-Encoding");
+            context.Response.Headers.Remove(HeaderNames.ContentEncoding);
         }
         else
         {
             context.Response.Headers.ContentEncoding = response.ContentEncoding;
         }
 
-        context.Response.Headers.Remove("ETag");
-        context.Response.Headers.Remove("Content-MD5");
+        context.Response.Headers.Remove(HeaderNames.ETag);
+        context.Response.Headers.Remove(HeaderNames.ContentMD5);
 
         await destination.WriteAsync(response.Body, context.RequestAborted);
     }

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Net.Http.Headers;
 using Microsoft.AspNetCore.Mvc.Testing;
 using ProxyWard.Audit.Events;
 using ProxyWard.Audit.Sinks;
@@ -31,7 +32,7 @@ public class ManagementAuditEventExportEndpointTests
             Assert.Equal("application/x-ndjson", response.Content.Headers.ContentType?.MediaType);
             Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
             Assert.Equal("no-cache", Assert.Single(response.Headers.Pragma).Name);
-            Assert.True(response.Headers.TryGetValues("X-Content-Type-Options", out var contentTypeOptions));
+            Assert.True(response.Headers.TryGetValues(HeaderNames.XContentTypeOptions, out var contentTypeOptions));
             Assert.Equal("nosniff", Assert.Single(contentTypeOptions));
             Assert.Equal(
                 "attachment",

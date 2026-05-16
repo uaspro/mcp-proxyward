@@ -12,11 +12,11 @@ internal static class HttpContentTypes
     {
         var mediaType = Sanitize(contentType);
         return IsJsonMediaType(mediaType)
-            || mediaType.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase);
+            || mediaType.Equals(MediaTypeNames.Text.EventStream, StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsStreaming(string? contentType) =>
-        Sanitize(contentType).Equals("text/event-stream", StringComparison.OrdinalIgnoreCase);
+        Sanitize(contentType).Equals(MediaTypeNames.Text.EventStream, StringComparison.OrdinalIgnoreCase);
 
     public static string Sanitize(string? contentType)
     {
@@ -31,6 +31,6 @@ internal static class HttpContentTypes
     }
 
     private static bool IsJsonMediaType(string mediaType) =>
-        mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase)
+        mediaType.Equals(MediaTypeNames.Application.Json, StringComparison.OrdinalIgnoreCase)
         || mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase);
 }

@@ -40,7 +40,7 @@ internal static class PreflightProbe
             try
             {
                 using var content = new ByteArrayContent(Payload);
-                content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                content.Headers.ContentType = new MediaTypeHeaderValue(MediaTypeNames.Application.Json);
 
                 using var response = await http.PostAsync("/mcp", content).ConfigureAwait(false);
                 if (response.IsSuccessStatusCode)

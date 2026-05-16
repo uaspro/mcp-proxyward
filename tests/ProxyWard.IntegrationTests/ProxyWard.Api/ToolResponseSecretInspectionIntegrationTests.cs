@@ -18,7 +18,7 @@ public class ToolResponseSecretInspectionIntegrationTests
     {
         const string secret = "ghp_literal_secret";
         var responseBody = CreateToolResponse(7, secret);
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath, blockReturn: true, patterns: ["ghp_"]));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -30,7 +30,7 @@ public class ToolResponseSecretInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(CreateToolCallRequest(7), Encoding.UTF8, "application/json"));
+                new StringContent(CreateToolCallRequest(7), Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, upstream.RequestCount);
@@ -65,7 +65,7 @@ public class ToolResponseSecretInspectionIntegrationTests
     {
         const string secret = "github_pat_regex_secret_123";
         var responseBody = CreateToolResponse(8, secret);
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy(
             "enforce",
@@ -84,7 +84,7 @@ public class ToolResponseSecretInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(CreateToolCallRequest(8), Encoding.UTF8, "application/json"));
+                new StringContent(CreateToolCallRequest(8), Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadAsStringAsync();
@@ -109,7 +109,7 @@ public class ToolResponseSecretInspectionIntegrationTests
     {
         const string secret = "ghp_audit_secret";
         var responseBody = CreateToolResponse(9, secret);
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("audit", "warn", 4096, upstream.BaseAddress, dbPath, blockReturn: true, patterns: ["ghp_"]));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -121,7 +121,7 @@ public class ToolResponseSecretInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(CreateToolCallRequest(9), Encoding.UTF8, "application/json"));
+                new StringContent(CreateToolCallRequest(9), Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -144,7 +144,7 @@ public class ToolResponseSecretInspectionIntegrationTests
     {
         const string secret = "ghp_allowed_secret";
         var responseBody = CreateToolResponse(10, secret);
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, "application/json"));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, responseBody, MediaTypeNames.Application.Json));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "warn", 4096, upstream.BaseAddress, dbPath, blockReturn: false, patterns: ["ghp_"]));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -156,7 +156,7 @@ public class ToolResponseSecretInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(CreateToolCallRequest(10), Encoding.UTF8, "application/json"));
+                new StringContent(CreateToolCallRequest(10), Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(responseBody, await response.Content.ReadAsStringAsync());
@@ -177,7 +177,7 @@ public class ToolResponseSecretInspectionIntegrationTests
         const string secret = "ghp_stream_secret";
         var streamBody = "event: message\n"
             + $"data: {CreateToolResponse(11, secret)}\n\n";
-        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, streamBody, "text/event-stream", setLength: false));
+        await using var upstream = await StartUpstreamAsync(ctx => WriteResponseAsync(ctx, streamBody, MediaTypeNames.Text.EventStream, setLength: false));
         var dbPath = NewTempSqlitePath();
         var policyPath = WriteTempPolicy(CreatePolicy("enforce", "block", 4096, upstream.BaseAddress, dbPath, blockReturn: true, patterns: ["ghp_"]));
         Environment.SetEnvironmentVariable("PROXYWARD_DB_PATH", policyPath);
@@ -189,7 +189,7 @@ public class ToolResponseSecretInspectionIntegrationTests
 
             using var response = await client.PostAsync(
                 "/github/mcp",
-                new StringContent(CreateToolCallRequest(11), Encoding.UTF8, "application/json"));
+                new StringContent(CreateToolCallRequest(11), Encoding.UTF8, MediaTypeNames.Application.Json));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadAsStringAsync();

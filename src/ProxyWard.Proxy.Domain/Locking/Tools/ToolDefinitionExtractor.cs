@@ -166,7 +166,7 @@ public sealed class ToolDefinitionExtractor : IToolDefinitionExtractor
             ? contentType[..delimiterIndex]
             : contentType;
 
-        return string.Equals(mediaType.Trim(), "text/event-stream", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(mediaType.Trim(), MediaTypeNames.Text.EventStream, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsJsonRpcSseMessage(ServerSentEvent serverSentEvent) =>

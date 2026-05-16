@@ -90,7 +90,7 @@ public sealed class McpMessageParser : IMcpMessageParser
 
         mediaType = mediaType.Trim();
 
-        return mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase)
+        return mediaType.Equals(MediaTypeNames.Application.Json, StringComparison.OrdinalIgnoreCase)
             || mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase);
     }
 }

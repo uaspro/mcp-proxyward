@@ -100,7 +100,7 @@ public sealed class HttpProxyControlClient : IProxyControlClient
         request.Content = new StringContent(
             JsonSerializer.Serialize(new { mode }, JsonOptions),
             Encoding.UTF8,
-            "application/json");
+            MediaTypeNames.Application.Json);
         using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
         return await ReadStatusAsync(response, cancellationToken).ConfigureAwait(false);
     }
@@ -123,7 +123,7 @@ public sealed class HttpProxyControlClient : IProxyControlClient
         request.Content = new StringContent(
             JsonSerializer.Serialize(requestBody, JsonOptions),
             Encoding.UTF8,
-            "application/json");
+            MediaTypeNames.Application.Json);
         using var response = await SendAsync(request, cancellationToken).ConfigureAwait(false);
         return await ReadYarpStatusAsync(response, cancellationToken).ConfigureAwait(false);
     }

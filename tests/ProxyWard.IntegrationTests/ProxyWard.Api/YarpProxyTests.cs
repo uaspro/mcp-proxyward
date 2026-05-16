@@ -23,7 +23,7 @@ public class YarpProxyTests
 
         Assert.Equal("/mcp/tools/list", payload.RootElement.GetProperty("path").GetString());
         Assert.Equal("?cursor=abc", payload.RootElement.GetProperty("query").GetString());
-        Assert.Equal("GET", payload.RootElement.GetProperty("method").GetString());
+        Assert.Equal(HttpMethod.Get.Method, payload.RootElement.GetProperty("method").GetString());
 
         using var exactResponse = await client.GetAsync("/github/mcp?ping=1");
 
@@ -85,7 +85,7 @@ public class YarpProxyTests
         using var payload = await TestJson.ReadOkAsync(response);
 
         Assert.Equal(expectedUpstreamPath, payload.RootElement.GetProperty("path").GetString());
-        Assert.Equal("GET", payload.RootElement.GetProperty("method").GetString());
+        Assert.Equal(HttpMethod.Get.Method, payload.RootElement.GetProperty("method").GetString());
     }
 
     [Fact]
